@@ -1,18 +1,20 @@
 mod db;
 mod schema;
 mod models;
+mod ingest;
 
 use log::error;
-use rocket::{get, routes, launch, Request, Response};
+use rocket::{get, launch, routes, Request, Response};
+use rocket::fairing::AdHoc;
 use rocket::http::Status;
 use rocket::log::private::warn;
 use rocket::response::Responder;
 use rocket_dyn_templates::{context, Template};
-use rocket_db_pools::{Database, diesel::PgPool, Connection};
+use rocket_db_pools::{diesel::PgPool, Connection, Database};
 use thiserror::Error;
 use serde::Serialize;
 
-#[derive(Database)]
+#[derive(Database, Clone)]
 #[database("mmoldb")]
 struct Db(PgPool);
 
@@ -64,4 +66,13 @@ fn rocket() -> _ {
         .mount("/static", rocket::fs::FileServer::from("static"))
         .attach(Template::fairing())
         .attach(Db::init())
+        .attach(AdHoc::on_liftoff("Ingest", |rocket| {
+            let pool = Db::fetch(&rocket)
+                .expect("Rocket is not managing a Db pool")
+                .clone();
+            
+            rocket::tokio::spawn(async move { ingest::ingest_task(pool).await });
+            
+            Box::pin(async {})
+        }))
 }

@@ -1,11 +1,11 @@
 use chrono::NaiveDateTime;
 use rocket_db_pools::diesel::prelude::*;
-use crate::schema::ingests::date_finished;
-// #[derive(Insertable)]
-// #[diesel(table_name = ingests)]
-// struct Ingest {
-//     date_created: DateTime<Utc>,
-// }
+
+#[derive(Insertable)]
+#[diesel(table_name = crate::schema::ingests)]
+pub struct NewIngest {
+    pub date_started: NaiveDateTime,
+}
 
 #[derive(Queryable, Selectable)]
 #[diesel(table_name = crate::schema::ingests)]
