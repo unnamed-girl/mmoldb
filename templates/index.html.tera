@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>MMOLDB Status</title>
+    <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+    <h1 class="main-title card">MMOLDB Status</h1>
+
+    <section class="card">
+        <h2 class="about-heading">About</h2>
+        <p class="about">
+            <strong>MMOLDB</strong> will be a datablase-like for
+            <a href="https://mmolb.com/">MMOLB</a>. It's in very
+            early development.
+        </p>
+    </section>
+
+    <section class="card">
+        <h2 class="ingests-heading">Latest ingests:</h2>
+        <p class="no-ingests">No ingests so far</p>
+    </section>
+</body>
+</html>
