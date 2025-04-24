@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>MMOLDB Error</title>
+    <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+    <h1 class="main-title card">MMOLDB Error</h1>
+
+    <section class="card">
+        <h2 class="error-heading">Error</h2>
+        <p class="error">
+            {{ error_text }}
+        </p>
+    </section>
+</body>
+</html>
