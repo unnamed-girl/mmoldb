@@ -8,9 +8,13 @@ rocket = "0.5.1"
 rocket_dyn_templates = { version = "0.2.0", features = ["tera"] }
 rocket_db_pools = { version = "0.2.0", features = ["diesel_postgres"] }
 diesel = { version = "2.1.1", features = ["chrono"] }
-diesel_migrations = "2.1.0"
 chrono = { version = "0.4.40", features = ["serde"] }
 thiserror = "2.0.12"
 log = "0.4.27"
 serde = { version = "1.0.219", features = ["derive"] }
 reqwest = { version = "0.12.15", features = ["json"] }
+chrono-humanize = "0.2.3"
+reqwest-middleware = "0.4.2"
+http-cache-reqwest = "0.15.1"
+strum = { version = "0.27.1", features = ["derive"] }
+mmolb_parsing = { git = "https://github.com/unnamed-girl/mmolb_parsing.git" }

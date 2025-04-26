@@ -1,8 +1,11 @@
 mod db;
-mod schema;
+mod data_schema;
+mod taxa_schema;
 mod models;
 mod ingest;
 
+use chrono::{TimeZone, Utc};
+use chrono_humanize::HumanTime;
 use log::error;
 use rocket::{get, launch, routes, Request, Response};
 use rocket::fairing::AdHoc;
@@ -45,11 +48,14 @@ impl<'r, 'o: 'r> Responder<'r, 'o> for AppError {
 async fn index(mut db: Connection<Db>) -> Result<Template, AppError> {
     #[derive(Serialize)]
     struct IngestContext {
-
+        age: String,
     }
 
     let ingests: Vec<_> = db::latest_ingests(&mut db).await?.into_iter()
-        .map(|ingest| IngestContext {})
+        .map(|ingest| IngestContext {
+            age: HumanTime::from(Utc.from_utc_datetime(&ingest.date_started))
+                .to_text_en(chrono_humanize::Accuracy::Precise, chrono_humanize::Tense::Past),
+        })
         .collect();
 
     Ok(Template::render("index", context! {

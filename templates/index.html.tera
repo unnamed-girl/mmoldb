@@ -19,7 +19,18 @@
 
     <section class="card">
         <h2 class="ingests-heading">Latest ingests:</h2>
+
+        {% if ingests %}
+        <ul class="ingests">
+            {% for ingest in ingests %}
+                <li class="ingest">
+                    Ingest started {{ ingest.age }}
+                </li>
+            {% endfor %}
+        </ul>
+        {% else %}
         <p class="no-ingests">No ingests so far</p>
+        {% endif %}
     </section>
 </body>
 </html>

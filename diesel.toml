@@ -1,8 +1,14 @@
 # For documentation on how to configure this file,
 # see https://diesel.rs/guides/configuring-diesel-cli
 
-[print_schema]
-file = "src/schema.rs"
+[print_schema.data]
+file = "src/data_schema.rs"
+schema = "data"
+custom_type_derives = ["diesel::query_builder::QueryId", "Clone"]
+
+[print_schema.taxa]
+file = "src/taxa_schema.rs"
+schema = "taxa"
 custom_type_derives = ["diesel::query_builder::QueryId", "Clone"]
 
 [migrations_directory]
