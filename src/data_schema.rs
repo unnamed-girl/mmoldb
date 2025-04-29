@@ -2,6 +2,17 @@
 
 pub mod data {
     diesel::table! {
+        data.event_baserunners (id) {
+            id -> Int8,
+            event_id -> Int8,
+            baserunner_name -> Text,
+            base_before -> Nullable<Int4>,
+            base_after -> Nullable<Int4>,
+            steal -> Bool,
+        }
+    }
+
+    diesel::table! {
         data.events (id) {
             id -> Int8,
             ingest -> Int8,
@@ -30,9 +41,11 @@ pub mod data {
         }
     }
 
+    diesel::joinable!(event_baserunners -> events (event_id));
     diesel::joinable!(events -> ingests (ingest));
 
     diesel::allow_tables_to_appear_in_same_query!(
+        event_baserunners,
         events,
         ingests,
     );

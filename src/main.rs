@@ -77,8 +77,12 @@ fn rocket() -> _ {
                 .expect("Rocket is not managing a Db pool")
                 .clone();
             
-            rocket::tokio::spawn(async move { ingest::ingest_task(pool).await });
-            
-            Box::pin(async {})
+            Box::pin(async {
+                ingest::launch_ingest_task(pool).await
+                    .expect("TODO Figure out how to expose this as an error ")
+                    .await
+                    .expect("TODO What's this error")
+                    .await;
+            })
         }))
 }

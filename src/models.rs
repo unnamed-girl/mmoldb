@@ -2,6 +2,13 @@ use chrono::NaiveDateTime;
 use rocket_db_pools::diesel::prelude::*;
 
 #[derive(Insertable)]
+#[diesel(table_name = crate::taxa_schema::taxa::event_type)]
+pub struct NewEventType<'a> {
+    pub name: &'a str,
+    pub display_name: &'a str,
+}
+
+#[derive(Insertable)]
 #[diesel(table_name = crate::data_schema::data::ingests)]
 pub struct NewIngest {
     pub date_started: NaiveDateTime,
@@ -19,19 +26,29 @@ pub struct Ingest {
 #[derive(Insertable)]
 #[diesel(table_name = crate::data_schema::data::events)]
 pub struct NewEvent<'a> {
-    ingest: i64,
-    game_id: &'a str,
-    game_event_index: i64,
-    inning: i64,
-    top_of_inning: bool,
-    event_type: i64,
-    count_balls: i64,
-    count_strikes: i64,
-    outs_before: i64,
-    outs_after: i64,
-    ends_inning: bool,
-    batter_count: i64,
-    batter_name: &'a str,
-    pitcher_name: &'a str,
-    fielder_names: Vec<&'a str>,
+    pub ingest: i64,
+    pub game_id: &'a str,
+    pub game_event_index: i32,
+    pub inning: i32,
+    pub top_of_inning: bool,
+    pub event_type: i64,
+    pub count_balls: i32,
+    pub count_strikes: i32,
+    pub outs_before: i32,
+    pub outs_after: i32,
+    pub ends_inning: bool,
+    pub batter_count: i32,
+    pub batter_name: &'a str,
+    pub pitcher_name: &'a str,
+    pub fielder_names: Vec<&'a str>,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = crate::data_schema::data::event_baserunners)]
+pub struct NewBaserunner<'a> {
+    pub event_id: i64,
+    pub baserunner_name: &'a str,
+    pub base_before: Option<i32>,
+    pub base_after: Option<i32>,
+    pub steal: bool,
 }
