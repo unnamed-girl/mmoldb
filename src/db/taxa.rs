@@ -10,8 +10,10 @@ use crate::models::NewEventType;
 #[derive(Debug, enum_map::Enum, Eq, PartialEq, Hash, Copy, Clone, strum::Display, strum::EnumMessage)]
 pub enum TaxaEventType {
     Ball,
-    Strike,
-    Foul,
+    StrikeLooking,
+    StrikeSwinging,
+    FoulTip,
+    FoulBall,
     Hit,
     Out,
 }

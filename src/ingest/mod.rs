@@ -1,8 +1,7 @@
 mod http;
 mod sim;
 
-use std::backtrace::Backtrace;
-pub use sim::{EventDetail, EventTypeDetail};
+pub use sim::EventDetail;
 
 use chrono::{DateTime, Utc};
 use chrono::serde::ts_milliseconds;
@@ -10,10 +9,8 @@ use log::info;
 use reqwest_middleware::ClientWithMiddleware;
 use rocket::tokio;
 use rocket::tokio::task::JoinHandle;
-use rocket_db_pools::diesel::AsyncConnection;
-use rocket_db_pools::diesel::pooled_connection::PoolError;
+use rocket_db_pools::diesel::prelude::*;
 use rocket_db_pools::diesel::scoped_futures::ScopedFutureExt;
-use rocket_db_pools::Pool;
 use crate::{db, Db};
 use serde::Deserialize;
 use thiserror::Error;
@@ -57,7 +54,7 @@ type GamesResponse = Vec<CashewsGameResponse>;
 #[derive(Debug, Error)]
 pub enum IngestSetupError {
     #[error(transparent)]
-    SetupConnectionAcquisitionFailed(#[from] deadpool::managed::PoolError<PoolError>),
+    SetupConnectionAcquisitionFailed(#[from] rocket_db_pools::diesel::pooled_connection::deadpool::PoolError),
 
     #[error(transparent)]
     TaxaSetupError(#[from] diesel::result::Error),
