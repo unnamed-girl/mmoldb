@@ -1,6 +1,6 @@
+use http_cache_reqwest::{CACacheManager, Cache, CacheMode, HttpCache, HttpCacheOptions};
 use reqwest::Client;
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
-use http_cache_reqwest::{Cache, CacheMode, CACacheManager, HttpCache, HttpCacheOptions};
 
 pub fn get_caching_http_client() -> ClientWithMiddleware {
     ClientBuilder::new(Client::new())

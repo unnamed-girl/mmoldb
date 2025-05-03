@@ -1,23 +1,23 @@
-use std::fmt::Debug;
+use crate::db::{TaxaEventType, TaxaHitType};
 use log::{debug, info, warn};
-use mmolb_parsing::enums::{Distance, FoulType, HomeAway, StrikeType, TopBottom};
 use mmolb_parsing::ParsedEvent;
+use mmolb_parsing::enums::{Distance, FoulType, HomeAway, StrikeType, TopBottom};
 use mmolb_parsing::parsed_event::{ParsedEventDiscriminants, PositionedPlayer};
+use std::fmt::Debug;
 use strum::IntoDiscriminant;
 use thiserror::Error;
-use crate::db::{TaxaEventType, TaxaHitType};
 
 #[derive(Debug, Error)]
 pub enum SimError {
     #[error("This game had no events")]
     NoEvents,
-    
+
     #[error("Not enough events. Expected {expected:?} event after {previous:?}")]
     NotEnoughEvents {
         expected: &'static [ParsedEventDiscriminants],
         previous: ParsedEventDiscriminants,
     },
-    
+
     #[error("Expected {expected:?} event after {previous:?}, but received {received:?}")]
     UnexpectedEventType {
         expected: &'static [ParsedEventDiscriminants],
@@ -46,7 +46,7 @@ pub struct EventDetail<'a> {
     pub detail_type: TaxaEventType,
     pub hit_type: Option<TaxaHitType>,
 
-    pub advances: Vec<()>
+    pub advances: Vec<()>,
 }
 
 #[derive(Debug)]
@@ -59,18 +59,18 @@ enum GamePhase {
 }
 
 #[derive(Debug)]
-pub struct Game<'g, IterT: Iterator<Item=(usize, ParsedEvent<&'g str>)>> {
+pub struct Game<'g, IterT: Iterator<Item = (usize, ParsedEvent<&'g str>)>> {
     // Should never change
     events: ParsedEventIter<'g, IterT>,
     game_id: &'g str,
-    
-    // Should not change most of the time, but may change occasionally 
+
+    // Should not change most of the time, but may change occasionally
     // due to augments
     away_pitcher_name: &'g str,
     home_pitcher_name: &'g str,
     away_lineup: Vec<PositionedPlayer<&'g str>>,
     home_lineup: Vec<PositionedPlayer<&'g str>>,
-    
+
     // Change all the time
     prev_event_type: ParsedEventDiscriminants,
     phase: GamePhase,
@@ -86,32 +86,35 @@ pub struct Game<'g, IterT: Iterator<Item=(usize, ParsedEvent<&'g str>)>> {
 }
 
 #[derive(Debug)]
-struct ParsedEventIter<'game, IterT: Iterator<Item=(usize, ParsedEvent<&'game str>)>> {
+struct ParsedEventIter<'game, IterT: Iterator<Item = (usize, ParsedEvent<&'game str>)>> {
     inner: IterT,
     prev_event_type: Option<ParsedEventDiscriminants>,
 }
 
-impl<'game, IterT: Iterator<Item=(usize, ParsedEvent<&'game str>)>> ParsedEventIter<'game, IterT> {
-    pub fn new(iter: IterT) -> Self { 
+impl<'game, IterT> ParsedEventIter<'game, IterT>
+where
+    IterT: Iterator<Item = (usize, ParsedEvent<&'game str>)>,
+{
+    pub fn new(iter: IterT) -> Self {
         Self {
             prev_event_type: None,
             inner: iter,
-        } 
+        }
     }
-    
-    pub fn next(&mut self, expected: &'static [ParsedEventDiscriminants]) -> Result<(usize, ParsedEvent<&'game str>), SimError> {
+
+    pub fn next(
+        &mut self,
+        expected: &'static [ParsedEventDiscriminants],
+    ) -> Result<(usize, ParsedEvent<&'game str>), SimError> {
         match self.inner.next() {
             Some((i, val)) => {
                 self.prev_event_type = Some(val.discriminant());
                 Ok((i, val))
-            },
+            }
             None => match self.prev_event_type {
                 None => Err(SimError::NoEvents),
-                Some(previous) => Err(SimError::NotEnoughEvents {
-                    expected,
-                    previous,
-                }),
-            }
+                Some(previous) => Err(SimError::NotEnoughEvents { expected, previous }),
+            },
         }
     }
 }
@@ -134,7 +137,7 @@ macro_rules! extract_next {
     };
 }
 
-struct EventDetailBuilder<'a, 'g, IterT: Iterator<Item=(usize, ParsedEvent<&'g str>)>> {
+struct EventDetailBuilder<'a, 'g, IterT: Iterator<Item = (usize, ParsedEvent<&'g str>)>> {
     game: &'a Game<'g, IterT>,
     contact_event_index: Option<usize>,
     game_event_index: usize,
@@ -142,7 +145,10 @@ struct EventDetailBuilder<'a, 'g, IterT: Iterator<Item=(usize, ParsedEvent<&'g s
     hit_type: Option<TaxaHitType>,
 }
 
-impl<'a, 'g, IterT: Iterator<Item=(usize, ParsedEvent<&'g str>)>> EventDetailBuilder<'a, 'g, IterT> {
+impl<'a, 'g, IterT> EventDetailBuilder<'a, 'g, IterT>
+where
+    IterT: Iterator<Item = (usize, ParsedEvent<&'g str>)>,
+{
     fn contact_event_index(mut self, contact_event_index: usize) -> Self {
         self.contact_event_index = Some(contact_event_index);
         self
@@ -180,38 +186,39 @@ impl<'a, 'g, IterT: Iterator<Item=(usize, ParsedEvent<&'g str>)>> EventDetailBui
             advances: self.advances,
         }
     }
-
 }
 
 impl<'g, IterT> Game<'g, IterT>
-where IterT: Iterator<Item=(usize, ParsedEvent<&'g str>)> {
+where
+    IterT: Iterator<Item = (usize, ParsedEvent<&'g str>)>,
+{
     // TODO Figure out how to accept a simple iterator of ParsedEvent and
     //   do the enumerate myself
     pub fn new(game_id: &'g str, events: IterT) -> Result<Game<'g, IterT>, SimError> {
         let mut events = ParsedEventIter::new(events);
 
-        // TODO Every time there's a { .. } in the match arm of an 
+        // TODO Every time there's a { .. } in the match arm of an
         //   extract_next!, extract the data and issue a warning if it
         //   doesn't match what it should
         extract_next!(
             events,
             [ParsedEventDiscriminants::LiveNow] (_, ParsedEvent::LiveNow { .. }) => ()
         )?;
-        
+
         let (home_pitcher_name, away_pitcher_name) = extract_next!(
             events,
-            [ParsedEventDiscriminants::PitchingMatchup] 
+            [ParsedEventDiscriminants::PitchingMatchup]
             (_, ParsedEvent::PitchingMatchup { home_pitcher, away_pitcher, .. }) => {
                 (home_pitcher, away_pitcher)
             }
         )?;
-        
+
         let away_lineup = extract_next!(
             events,
             [ParsedEventDiscriminants::Lineup]
             (_, ParsedEvent::Lineup { side: HomeAway::Away, players }) => players
         )?;
-        
+
         let home_lineup = extract_next!(
             events,
             [ParsedEventDiscriminants::Lineup]
@@ -265,33 +272,41 @@ where IterT: Iterator<Item=(usize, ParsedEvent<&'g str>)> {
             TopBottom::Bottom => &self.home_lineup,
         }
     }
-    
+
     fn active_pitcher_name(&self) -> &'g str {
         match self.inning_half {
             TopBottom::Top => &self.away_pitcher_name,
             TopBottom::Bottom => &self.home_pitcher_name,
         }
     }
-    
+
     fn check_count(&self, (balls, strikes): (u8, u8)) {
         if self.count_balls != balls {
-            warn!("Unexpected number of balls in {}: expected {}, but saw {balls}", self.game_id, self.count_balls);
+            warn!(
+                "Unexpected number of balls in {}: expected {}, but saw {balls}",
+                self.game_id, self.count_balls
+            );
         }
         if self.count_strikes != strikes {
-            warn!("Unexpected number of strikes in {}: expected {}, but saw {strikes}", self.game_id, self.count_strikes);
+            warn!(
+                "Unexpected number of strikes in {}: expected {}, but saw {strikes}",
+                self.game_id, self.count_strikes
+            );
         }
     }
-    
+
     fn check_batter(&self, batter_name: &str) {
         if let Some(stored_batter_name) = self.batter_name {
             if stored_batter_name != batter_name {
-                warn!("Unexpected batter name in Hit: Expected {stored_batter_name}, but saw {batter_name} ");
+                warn!(
+                    "Unexpected batter name in Hit: Expected {stored_batter_name}, but saw {batter_name} "
+                );
             }
         } else {
             warn!("Unexpected batter name in Hit: Expected no batter, but saw {batter_name} ");
         }
     }
-    
+
     fn detail_builder<'a>(&'a self, game_event_index: usize) -> EventDetailBuilder<'a, 'g, IterT> {
         EventDetailBuilder {
             game: self,
@@ -319,12 +334,14 @@ where IterT: Iterator<Item=(usize, ParsedEvent<&'g str>)> {
         }
     }
 
-    // TODO Every time there's a { .. } in the match arm of an 
-    //   extract_next!, extract the data. If it's redundant with 
-    //   something else, check it against that other thing and issue a 
+    // TODO Every time there's a { .. } in the match arm of an
+    //   extract_next!, extract the data. If it's redundant with
+    //   something else, check it against that other thing and issue a
     //   warning if it doesn't match. Otherwise, record the data.
     pub fn next(&mut self) -> Result<Option<EventDetail>, SimError>
-        where IterT: Debug {
+    where
+        IterT: Debug,
+    {
         self.previous_outs = self.outs;
         match self.phase {
             GamePhase::ExpectInningStart => extract_next!(
@@ -488,7 +505,7 @@ where IterT: Iterator<Item=(usize, ParsedEvent<&'g str>)> {
                 (index, ParsedEvent::BatterToBase { batter, distance, ..  }) => {
                     self.check_batter(batter);
                     self.finish_pa();
-                    
+
                     match match distance {
                         Distance::Single => { Some(TaxaHitType::Single) }
                         Distance::Double => { Some(TaxaHitType::Double) }
@@ -516,7 +533,7 @@ where IterT: Iterator<Item=(usize, ParsedEvent<&'g str>)> {
                 (index, ParsedEvent::FieldingError { batter, .. }) => {
                     self.check_batter(batter);
                     self.finish_pa();
-                    
+
                     self.detail_builder(index)
                         .contact_event_index(contact_event_index)
                         .build_some(TaxaEventType::FieldingError)
@@ -539,11 +556,11 @@ where IterT: Iterator<Item=(usize, ParsedEvent<&'g str>)> {
                     if number != self.inning_number {
                         warn!("Unexpected inning number in {}: expected {}, but saw {number}", self.game_id, self.inning_number);
                     }
-    
+
                     if side != self.inning_half {
                         warn!("Unexpected inning side in {}: expected {:?}, but saw {side:?}", self.game_id, self.inning_half);
                     }
-    
+
                     self.phase = GamePhase::ExpectInningStart;
                     None
                 },

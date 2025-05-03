@@ -3,21 +3,21 @@ mod db;
 mod data_schema;
 #[rustfmt::skip] // This is a generated file
 mod taxa_schema;
-mod models;
 mod ingest;
+mod models;
 
 use chrono::{TimeZone, Utc};
 use chrono_humanize::HumanTime;
 use log::error;
-use rocket::{get, launch, routes, Request, Response};
 use rocket::fairing::AdHoc;
 use rocket::http::Status;
 use rocket::log::private::warn;
 use rocket::response::Responder;
-use rocket_dyn_templates::{context, Template};
-use rocket_db_pools::{diesel::PgPool, Connection, Database};
-use thiserror::Error;
+use rocket::{Request, Response, get, launch, routes};
+use rocket_db_pools::{Connection, Database, diesel::PgPool};
+use rocket_dyn_templates::{Template, context};
 use serde::Serialize;
+use thiserror::Error;
 
 #[derive(Database, Clone)]
 #[database("mmoldb")]
@@ -34,9 +34,14 @@ impl<'r, 'o: 'r> Responder<'r, 'o> for AppError {
         error!("{:#?}", self);
 
         // TODO Figure out how to properly turn a thiserror enum into a Template
-        let rendered = Template::show(req.rocket(), "error", context! {
-            error_text: format!("{:#?}", self),
-        }).unwrap();
+        let rendered = Template::show(
+            req.rocket(),
+            "error",
+            context! {
+                error_text: format!("{:#?}", self),
+            },
+        )
+        .unwrap();
 
         Response::build()
             .status(Status::InternalServerError)
@@ -53,16 +58,23 @@ async fn index(mut db: Connection<Db>) -> Result<Template, AppError> {
         age: String,
     }
 
-    let ingests: Vec<_> = db::latest_ingests(&mut db).await?.into_iter()
+    let ingests: Vec<_> = db::latest_ingests(&mut db)
+        .await?
+        .into_iter()
         .map(|ingest| IngestContext {
-            age: HumanTime::from(Utc.from_utc_datetime(&ingest.date_started))
-                .to_text_en(chrono_humanize::Accuracy::Precise, chrono_humanize::Tense::Past),
+            age: HumanTime::from(Utc.from_utc_datetime(&ingest.date_started)).to_text_en(
+                chrono_humanize::Accuracy::Precise,
+                chrono_humanize::Tense::Past,
+            ),
         })
         .collect();
 
-    Ok(Template::render("index", context! {
-        ingests: ingests,
-    }))
+    Ok(Template::render(
+        "index",
+        context! {
+            ingests: ingests,
+        },
+    ))
 }
 
 #[launch]
@@ -78,9 +90,10 @@ fn rocket() -> _ {
             let pool = Db::fetch(&rocket)
                 .expect("Rocket is not managing a Db pool")
                 .clone();
-            
+
             Box::pin(async {
-                ingest::launch_ingest_task(pool).await
+                ingest::launch_ingest_task(pool)
+                    .await
                     .expect("TODO Figure out how to expose this as an error ")
                     .await
                     .expect("TODO What's this error")

@@ -1,13 +1,15 @@
-use std::collections::HashSet;
-use diesel::{QueryResult, ExpressionMethods};
+use crate::models::NewEventType;
+use diesel::{ExpressionMethods, QueryResult};
 use enum_map::EnumMap;
 use rocket_db_pools::diesel::{AsyncPgConnection, RunQueryDsl};
+use std::collections::HashSet;
 use strum::EnumMessage;
-use crate::models::NewEventType;
 
 // strum's Display is used as the code-friendly name and EnumMessage as
 // the human-friendly name (with fallback to Display)
-#[derive(Debug, enum_map::Enum, Eq, PartialEq, Hash, Copy, Clone, strum::Display, strum::EnumMessage)]
+#[derive(
+    Debug, enum_map::Enum, Eq, PartialEq, Hash, Copy, Clone, strum::Display, strum::EnumMessage,
+)]
 pub enum TaxaEventType {
     Ball,
     StrikeLooking,
@@ -21,7 +23,9 @@ pub enum TaxaEventType {
     FieldingError,
     HitByPitch,
 }
-#[derive(Debug, enum_map::Enum, Eq, PartialEq, Hash, Copy, Clone, strum::Display, strum::EnumMessage)]
+#[derive(
+    Debug, enum_map::Enum, Eq, PartialEq, Hash, Copy, Clone, strum::Display, strum::EnumMessage,
+)]
 pub enum TaxaHitType {
     Single,
     Double,
@@ -34,9 +38,11 @@ pub struct Taxa {
 }
 
 impl Taxa {
-    async fn make_mapping_for<EnumT>(conn: &mut AsyncPgConnection) -> QueryResult<EnumMap<EnumT, i64>>
+    async fn make_mapping_for<EnumT>(
+        conn: &mut AsyncPgConnection,
+    ) -> QueryResult<EnumMap<EnumT, i64>>
     where
-        EnumT: enum_map::EnumArray<i64> + std::fmt::Display + EnumMessage + Eq + std::hash::Hash
+        EnumT: enum_map::EnumArray<i64> + std::fmt::Display + EnumMessage + Eq + std::hash::Hash,
     {
         use crate::taxa_schema::taxa::event_type::dsl::*;
 
@@ -44,8 +50,7 @@ impl Taxa {
 
         for (taxa, key) in mapping.iter_mut() {
             let code_friendly_name = format!("{}", taxa);
-            let human_friendly_name = taxa.get_message()
-                .unwrap_or_else(|| &code_friendly_name);
+            let human_friendly_name = taxa.get_message().unwrap_or_else(|| &code_friendly_name);
             let n = NewEventType {
                 name: &code_friendly_name,
                 display_name: &human_friendly_name,
@@ -64,13 +69,21 @@ impl Taxa {
         // Final safety check: Mapping should hold all distinct values
         // Implemented as # of unique keys == # of unique values
         assert_eq!(
-            mapping.iter().map(|(key, _)| key).collect::<HashSet<_>>().len(),
-            mapping.iter().map(|(_, value)| value).collect::<HashSet<_>>().len(),
+            mapping
+                .iter()
+                .map(|(key, _)| key)
+                .collect::<HashSet<_>>()
+                .len(),
+            mapping
+                .iter()
+                .map(|(_, value)| value)
+                .collect::<HashSet<_>>()
+                .len(),
         );
 
         Ok(mapping)
     }
-    
+
     pub async fn new(conn: &mut AsyncPgConnection) -> QueryResult<Self> {
         Ok(Self {
             event_type_mapping: Self::make_mapping_for::<TaxaEventType>(conn).await?,

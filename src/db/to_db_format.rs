@@ -2,7 +2,11 @@ use crate::db::taxa::{Taxa, TaxaEventType};
 use crate::ingest::EventDetail;
 use crate::models::{NewBaserunner, NewEvent};
 
-pub fn event_to_row<'e>(taxa: &Taxa, ingest_id: i64, event: &'e EventDetail<'e>) -> (NewEvent<'e>, Vec<NewBaserunner<'e>>) {
+pub fn event_to_row<'e>(
+    taxa: &Taxa,
+    ingest_id: i64,
+    event: &'e EventDetail<'e>,
+) -> (NewEvent<'e>, Vec<NewBaserunner<'e>>) {
     let event = NewEvent {
         ingest: ingest_id,
         game_id: event.game_id,
@@ -24,7 +28,12 @@ pub fn event_to_row<'e>(taxa: &Taxa, ingest_id: i64, event: &'e EventDetail<'e>)
     (event, Vec::new())
 }
 
-fn basic_event<'e>(taxa: &Taxa, ingest_id: i64, event: &'e EventDetail<'e>, event_type: TaxaEventType) -> (NewEvent<'e>, Vec<NewBaserunner<'e>>) {
+fn basic_event<'e>(
+    taxa: &Taxa,
+    ingest_id: i64,
+    event: &'e EventDetail<'e>,
+    event_type: TaxaEventType,
+) -> (NewEvent<'e>, Vec<NewBaserunner<'e>>) {
     let new_event = NewEvent {
         ingest: ingest_id,
         game_id: event.game_id,
