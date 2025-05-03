@@ -57,6 +57,9 @@ enum GamePhase {
     ExpectFairBallOutcome(usize),
     ExpectInningEnd,
     ExpectMoundVisitOutcome,
+    ExpectGameEnd,
+    ExpectFinalScore,
+    Finished,
 }
 
 #[derive(Debug)]
@@ -150,11 +153,11 @@ macro_rules! extract_next_game_event {
 macro_rules! game_event {
     // This arm matches when there isn't a trailing comma, adds the
     // trailing comma, and forwards to the other arm
-    // ($game_obj:expr, $iter:expr, $([$expected:expr] $p:pat => $e:expr),+) => {
-    //     game_event!($iter, $([$expected] $p => $e,)+)
-    // };
+    ($game_obj:expr, $iter:expr, $([$expected:expr] $p:pat => $e:expr),*) => {
+        game_event!($iter, $([$expected] $p => $e,)+)
+    };
     // This arm matches when there is a trailing comma
-    (($previous_event:expr, $event:expr), $([$expected:expr] $p:pat => $e:expr,)+) => {{
+    (($previous_event:expr, $event:expr), $([$expected:expr] $p:pat => $e:expr,)*) => {{
         // This is wrapped in Some because SimError::UnexpectedEventType
         // takes an Option to handle the case when the error is at the
         // first event (and therefore there is no previous event).
@@ -167,34 +170,6 @@ macro_rules! game_event {
         match $event {
             $($p => {
                 Ok($e)
-            })*
-            other => Err(SimError::UnexpectedEventType {
-                expected,
-                previous,
-                received: other.discriminant(),
-            })
-        }
-    }};
-}
-
-macro_rules! game_event_from_iterator {
-    // This arm matches when there isn't a trailing comma, adds the
-    // trailing comma, and forwards to the other arm
-    ($iter:expr, $([$expected:expr] $p:pat => $e:expr),+) => {
-        game_event!($iter, $([$expected] $p => $e,)+)
-    };
-    // This arm matches a trailing comma
-    ($game_obj:expr, $event:expr, $([$expected:expr] $p:pat => $e:expr,)+) => {{
-        let event = 
-        
-        let previous: ParsedEventDiscriminants = $game_obj.prev_event_type;
-        let expected: &[ParsedEventDiscriminants] = &[$($expected,)*];
-
-        match $event {
-            $($p => {
-                let result = $e;
-                $game_obj.prev_event_type = $event.discriminant();
-                Ok($e),
             })*
             other => Err(SimError::UnexpectedEventType {
                 expected,
@@ -442,7 +417,6 @@ impl<'g> Game<'g>
                     self.phase = GamePhase::ExpectMoundVisitOutcome;
                     None
                 },
-
             ),
             GamePhase::ExpectNowBatting => game_event!(
                 (previous_event, event),
@@ -467,7 +441,13 @@ impl<'g> Game<'g>
                     self.phase = GamePhase::ExpectPitch;
                     None
                 },
-            ),
+                [ParsedEventDiscriminants::MoundVisit]
+                // TODO handle every single member of this variant
+                ParsedEvent::MoundVisit { .. } => {
+                    self.phase = GamePhase::ExpectMoundVisitOutcome;
+                    None
+                },
+             ),
             GamePhase::ExpectPitch => game_event!(
                 (previous_event, event),
                 [ParsedEventDiscriminants::Ball]
@@ -620,6 +600,29 @@ impl<'g> Game<'g>
                         .contact_event_index(contact_event_index)
                         .build_some(TaxaEventType::HomeRun)
                 },
+                [ParsedEventDiscriminants::DoublePlay]
+                // TODO handle every single member of this variant
+                ParsedEvent::DoublePlay { batter, .. } => {
+                    self.check_batter(batter);
+                    self.finish_pa();
+                    self.add_out();
+                    self.add_out(); // It's a double play -- we add two outs
+
+                    self.detail_builder(index)
+                        .contact_event_index(contact_event_index)
+                        .build_some(TaxaEventType::DoublePlay)
+                },
+                [ParsedEventDiscriminants::ForceOut]
+                // TODO handle every single member of this variant
+                ParsedEvent::ForceOut { batter, .. } => {
+                    self.check_batter(batter);
+                    self.finish_pa();
+                    self.add_out();
+
+                    self.detail_builder(index)
+                        .contact_event_index(contact_event_index)
+                        .build_some(TaxaEventType::Out) // TODO Different out types?
+                },
             ),
             GamePhase::ExpectInningEnd => game_event!(
                 (previous_event, event),
@@ -633,7 +636,12 @@ impl<'g> Game<'g>
                         warn!("Unexpected inning side in {}: expected {:?}, but saw {side:?}", self.game_id, self.inning_half);
                     }
 
-                    self.phase = GamePhase::ExpectInningStart;
+                    // TODO Implement the full extra innings rule
+                    if number == 9 {
+                        self.phase = GamePhase::ExpectGameEnd;
+                    } else {
+                        self.phase = GamePhase::ExpectInningStart;
+                    }
                     None
                 },
             ),
@@ -657,6 +665,26 @@ impl<'g> Game<'g>
                     self.phase = GamePhase::ExpectNowBatting;
                     None
                 },
+            ),
+            GamePhase::ExpectGameEnd => game_event!(
+                (previous_event, event),
+                [ParsedEventDiscriminants::PitcherSwap]
+                ParsedEvent::GameOver => {
+                    self.phase = GamePhase::ExpectFinalScore;
+                    None
+                },
+            ),
+            GamePhase::ExpectFinalScore => game_event!(
+                (previous_event, event),
+                [ParsedEventDiscriminants::Recordkeeping]
+                // TODO handle every single member of this variant
+                ParsedEvent::Recordkeeping { .. } => {
+                    self.phase = GamePhase::Finished;
+                    None
+                },
+            ),
+            GamePhase::Finished => game_event!(
+                (previous_event, event),
             ),
         }?;
         

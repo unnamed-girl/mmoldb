@@ -22,6 +22,7 @@ pub enum TaxaEventType {
     HomeRun,
     FieldingError,
     HitByPitch,
+    DoublePlay,
 }
 #[derive(
     Debug, enum_map::Enum, Eq, PartialEq, Hash, Copy, Clone, strum::Display, strum::EnumMessage,

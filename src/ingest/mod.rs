@@ -204,6 +204,8 @@ pub async fn ingest_task(pool: Db, client: ClientWithMiddleware, taxa: Taxa) {
             })
             .await
             .expect("TODO Error handling");
+            
+            break; // TEMP: Only process one (1) game
         }
     }
 
