@@ -1,5 +1,7 @@
 mod db;
+#[rustfmt::skip] // This is a generated file
 mod data_schema;
+#[rustfmt::skip] // This is a generated file
 mod taxa_schema;
 mod models;
 mod ingest;
