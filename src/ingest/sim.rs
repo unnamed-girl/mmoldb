@@ -156,7 +156,7 @@ macro_rules! extract_next_game_event {
 
 macro_rules! game_event {
     // This is the main arm, and matches when there is a trailing comma.
-    // It needs to be first, otherwise the other two arms will be 
+    // It needs to be first, otherwise the other two arms will be
     // infinitely mutually recursive.
     (($previous_event:expr, $event:expr), $([$expected:expr] $p:pat => $e:expr,)*) => {{
         // This is wrapped in Some because SimError::UnexpectedEventType
@@ -250,9 +250,17 @@ impl<'g> Game<'g> {
         let (away_team_name, away_team_emoji, home_team_name, home_team_emoji) = extract_next_game_event!(
             events,
             [ParsedEventDiscriminants::LiveNow]
-            ParsedEvent::LiveNow { away_team_name, away_team_emoji, home_team_name, home_team_emoji } => {
-                (away_team_name, away_team_emoji, home_team_name, home_team_emoji)
-            }
+            ParsedEvent::LiveNow {
+                away_team_name,
+                away_team_emoji,
+                home_team_name,
+                home_team_emoji,
+            } => (
+                away_team_name,
+                away_team_emoji,
+                home_team_name,
+                home_team_emoji,
+            )
         )?;
 
         let (
@@ -265,19 +273,19 @@ impl<'g> Game<'g> {
         ) = extract_next_game_event!(
             events,
             [ParsedEventDiscriminants::PitchingMatchup]
-            ParsedEvent::PitchingMatchup { 
-                home_pitcher, 
-                away_pitcher, 
-                away_team_name, 
-                away_team_emoji, 
-                home_team_name, 
+            ParsedEvent::PitchingMatchup {
+                home_pitcher,
+                away_pitcher,
+                away_team_name,
+                away_team_emoji,
+                home_team_name,
                 home_team_emoji,
             } => (
-                home_pitcher, 
-                away_pitcher, 
-                away_team_name, 
-                away_team_emoji, 
-                home_team_name, 
+                home_pitcher,
+                away_pitcher,
+                away_team_name,
+                away_team_emoji,
+                home_team_name,
                 home_team_emoji,
             )
         )?;
@@ -400,7 +408,9 @@ impl<'g> Game<'g> {
         if let Some(stored_batter_name) = self.active_batter_name {
             if stored_batter_name != batter_name {
                 warn!(
-                    "Unexpected batter name in Hit: Expected {stored_batter_name}, but saw {batter_name} "
+                    "Unexpected batter name in Hit: Expected {}, but saw {}",
+                    stored_batter_name
+                    batter_name,
                 );
             }
         } else {
@@ -451,10 +461,19 @@ impl<'g> Game<'g> {
             GamePhase::ExpectInningStart => game_event!(
                 (previous_event, event),
                 [ParsedEventDiscriminants::InningStart]
-                // TODO handle every single member of this variant
-                ParsedEvent::InningStart { number, side, pitcher_status, .. } => {
+                ParsedEvent::InningStart {
+                    number,
+                    side,
+                    batting_team_emoji,
+                    batting_team_name,
+                    pitcher_status,
+                } => {
                     if side != self.inning_half.flip() {
-                        warn!("Unexpected inning side in {}: expected {:?}, but saw {side:?}", self.game_id, self.inning_half.flip())
+                        warn!(
+                            "Unexpected inning side in {}: expected {:?}, but saw {side:?}",
+                            self.game_id,
+                            self.inning_half.flip(),
+                        );
                     }
                     self.inning_half = side;
 
@@ -465,19 +484,57 @@ impl<'g> Game<'g> {
                     };
 
                     if number != expected_number {
-                        warn!("Unexpected inning number in {}: expected {expected_number}, but saw {number}", self.game_id);
+                        warn!(
+                            "Unexpected inning number in {}: expected {}, but saw {}",
+                            self.game_id,
+                            expected_number,
+                            number,
+                        );
                     }
                     self.inning_number = number;
 
-                    info!("Started {} of {} with pitcher {pitcher_status:?}", self.inning_half, self.inning_number);
+                    if batting_team_name != self.batting_team().team_name {
+                        warn!(
+                            "Batting team name from InningStart ({batting_team_name}) did \
+                            not match the one from LiveNow ({})",
+                            self.batting_team().team_name,
+                        );
+                    }
+                    if batting_team_emoji != self.batting_team().team_emoji {
+                        warn!(
+                            "Batting team emoji from InningStart ({batting_team_emoji}) did \
+                            not match the one from LiveNow ({})",
+                            self.batting_team().team_emoji,
+                        );
+                    }
+
+                    info!(
+                        "Started {} of {} with pitcher {pitcher_status:?}",
+                        self.inning_half,
+                        self.inning_number,
+                    );
 
                     self.outs = 0;
                     self.phase = GamePhase::ExpectNowBatting;
                     None
                 },
                 [ParsedEventDiscriminants::MoundVisit]
-                // TODO handle every single member of this variant
-                ParsedEvent::MoundVisit { .. } => {
+                ParsedEvent::MoundVisit { emoji, team } => {
+                    if team != self.defending_team().team_name {
+                        warn!(
+                            "Batting team name from MoundVisit ({team}) did \
+                            not match the one from LiveNow ({})",
+                            self.defending_team().team_name,
+                        );
+                    }
+                    if emoji != self.defending_team().team_emoji {
+                        warn!(
+                            "Batting team emoji from MoundVisit ({emoji}) did \
+                            not match the one from LiveNow ({})",
+                            self.defending_team().team_emoji,
+                        );
+                    }
+
                     self.phase = GamePhase::ExpectMoundVisitOutcome;
                     None
                 },
@@ -499,7 +556,12 @@ impl<'g> Game<'g> {
                    let lineup = &self.batting_team().lineup;
                    let predicted_batter_name = lineup[batter_count % lineup.len()].name;
                    if batter_name != predicted_batter_name {
-                       warn!("Unexpected batter up in {}: expected {predicted_batter_name}, but saw {batter_name}", self.game_id);
+                       warn!(
+                            "Unexpected batter up in {}: expected {}, but saw {}",
+                            self.game_id,
+                            predicted_batter_name,
+                            batter_name,
+                       );
                    }
 
                    self.phase = GamePhase::ExpectPitch;
