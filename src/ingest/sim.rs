@@ -52,10 +52,11 @@ pub struct EventDetail<'a> {
 #[derive(Debug)]
 enum GamePhase {
     ExpectInningStart,
-    ExpectBatterUp,
+    ExpectNowBatting,
     ExpectPitch,
     ExpectFairBallOutcome(usize),
     ExpectInningEnd,
+    ExpectMoundVisitOutcome,
 }
 
 #[derive(Debug)]
@@ -320,7 +321,7 @@ where
     pub fn finish_pa(&mut self) {
         self.count_strikes = 0;
         self.count_balls = 0;
-        self.phase = GamePhase::ExpectBatterUp;
+        self.phase = GamePhase::ExpectNowBatting;
     }
 
     pub fn add_out(&mut self) {
@@ -330,7 +331,7 @@ where
         if self.outs >= 3 {
             self.phase = GamePhase::ExpectInningEnd;
         } else {
-            self.phase = GamePhase::ExpectBatterUp;
+            self.phase = GamePhase::ExpectNowBatting;
         }
     }
 
@@ -348,7 +349,7 @@ where
                 self.events,
                 [ParsedEventDiscriminants::InningStart]
                 // TODO handle every single member of this variant
-                (_, ParsedEvent::InningStart { number, side, .. }) => {
+                (_, ParsedEvent::InningStart { number, side, pitcher_status, .. }) => {
                     if side != self.inning_half.flip() {
                         warn!("Unexpected inning side in {}: expected {:?}, but saw {side:?}", self.game_id, self.inning_half.flip())
                     }
@@ -365,14 +366,21 @@ where
                     }
                     self.inning_number = number;
 
-                    info!("Started {} of {}", self.inning_half, self.inning_number);
+                    info!("Started {} of {} with pitcher {pitcher_status:?}", self.inning_half, self.inning_number);
 
                     self.outs = 0;
-                    self.phase = GamePhase::ExpectBatterUp;
+                    self.phase = GamePhase::ExpectNowBatting;
                     None
                 },
+                [ParsedEventDiscriminants::MoundVisit]
+                // TODO handle every single member of this variant
+                (_, ParsedEvent::MoundVisit { .. }) => {
+                    self.phase = GamePhase::ExpectMoundVisitOutcome;
+                    None
+                }
+
             ),
-            GamePhase::ExpectBatterUp => extract_next!(
+            GamePhase::ExpectNowBatting => extract_next!(
                 self.events,
                 [ParsedEventDiscriminants::NowBatting]
                 // TODO handle every single member of this variant
@@ -562,6 +570,27 @@ where
                     }
 
                     self.phase = GamePhase::ExpectInningStart;
+                    None
+                },
+            ),
+            GamePhase::ExpectMoundVisitOutcome => extract_next!(
+                self.events,
+                [ParsedEventDiscriminants::PitcherRemains]
+                // TODO handle every single member of this variant
+                (_, ParsedEvent::PitcherRemains { .. }) => {
+                    // I think this is not always ExpectNowBatting. I may have
+                    // to store the state-to-return-to as a data member of
+                    // GamePhase::ExpectMoundVisitOutcome
+                    self.phase = GamePhase::ExpectNowBatting;
+                    None
+                },
+                [ParsedEventDiscriminants::PitcherSwap]
+                // TODO handle every single member of this variant
+                (_, ParsedEvent::PitcherSwap { .. }) => {
+                    // I think this is not always ExpectNowBatting. I may have
+                    // to store the state-to-return-to as a data member of
+                    // GamePhase::ExpectMoundVisitOutcome
+                    self.phase = GamePhase::ExpectNowBatting;
                     None
                 },
             ),
