@@ -154,8 +154,8 @@ pub async fn ingest_task(pool: Db, client: ClientWithMiddleware, taxa: Taxa) {
             game_data.day,
         );
 
-        // I'm adding enumeration to parsed, then stripping it out for 
-        // the iterator fed to Game::new, on purpose. I need the 
+        // I'm adding enumeration to parsed, then stripping it out for
+        // the iterator fed to Game::new, on purpose. I need the
         // counting to count every event, but I don't need the count
         // inside Game::new.
         let mut parsed = mmolb_parsing::process_events(&game_data)
@@ -164,11 +164,9 @@ pub async fn ingest_task(pool: Db, client: ClientWithMiddleware, taxa: Taxa) {
             .enumerate();
 
         let mut game = {
-            let mut parsed_for_game = (&mut parsed)
-                .map(|(_, (parsed, _))| parsed);
+            let mut parsed_for_game = (&mut parsed).map(|(_, (parsed, _))| parsed);
 
-            Game::new(&game_info.game_id, &mut parsed_for_game)
-                .expect("TODO Error handling")
+            Game::new(&game_info.game_id, &mut parsed_for_game).expect("TODO Error handling")
         };
 
         info!(
@@ -190,7 +188,7 @@ pub async fn ingest_task(pool: Db, client: ClientWithMiddleware, taxa: Taxa) {
                 async move {
                     for (index, (parsed, raw)) in parsed {
                         info!("Applying event \"{}\"", raw.message);
-                        
+
                         let detail = game.next(index, parsed).expect("TODO Error handling");
 
                         if let Some(detail) = detail {
@@ -204,7 +202,7 @@ pub async fn ingest_task(pool: Db, client: ClientWithMiddleware, taxa: Taxa) {
             })
             .await
             .expect("TODO Error handling");
-            
+
             break; // TEMP: Only process one (1) game
         }
     }

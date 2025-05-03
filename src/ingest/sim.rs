@@ -63,16 +63,22 @@ enum GamePhase {
 }
 
 #[derive(Debug)]
+pub struct TeamInGame<'g> {
+    team_name: &'g str,
+    team_emoji: &'g str,
+    pitcher_name: &'g str,
+    lineup: Vec<PositionedPlayer<&'g str>>,
+    batter_count: Option<usize>,
+}
+
+#[derive(Debug)]
 pub struct Game<'g> {
     // Should never change
     game_id: &'g str,
 
-    // Should not change most of the time, but may change occasionally
-    // due to augments
-    away_pitcher_name: &'g str,
-    home_pitcher_name: &'g str,
-    away_lineup: Vec<PositionedPlayer<&'g str>>,
-    home_lineup: Vec<PositionedPlayer<&'g str>>,
+    // Aggregates
+    away: TeamInGame<'g>,
+    home: TeamInGame<'g>,
 
     // Change all the time
     prev_event_type: ParsedEventDiscriminants,
@@ -83,9 +89,7 @@ pub struct Game<'g> {
     count_strikes: u8,
     previous_outs: i32,
     outs: i32,
-    away_batter_count: Option<usize>,
-    home_batter_count: Option<usize>,
-    batter_name: Option<&'g str>,
+    active_batter_name: Option<&'g str>,
 }
 
 #[derive(Debug)]
@@ -147,16 +151,13 @@ macro_rules! extract_next_game_event {
 }
 
 // This macro accepts a Game and a game event, and is meant for
-// use in Game::next. See extract_next_game_event! for the equivalent 
+// use in Game::next. See extract_next_game_event! for the equivalent
 // that's meant for use in Game::new.
 
 macro_rules! game_event {
-    // This arm matches when there isn't a trailing comma, adds the
-    // trailing comma, and forwards to the other arm
-    ($game_obj:expr, $iter:expr, $([$expected:expr] $p:pat => $e:expr),*) => {
-        game_event!($iter, $([$expected] $p => $e,)+)
-    };
-    // This arm matches when there is a trailing comma
+    // This is the main arm, and matches when there is a trailing comma.
+    // It needs to be first, otherwise the other two arms will be 
+    // infinitely mutually recursive.
     (($previous_event:expr, $event:expr), $([$expected:expr] $p:pat => $e:expr,)*) => {{
         // This is wrapped in Some because SimError::UnexpectedEventType
         // takes an Option to handle the case when the error is at the
@@ -178,6 +179,17 @@ macro_rules! game_event {
             })
         }
     }};
+    // This arm matches when there isn't a trailing comma, adds the
+    // trailing comma, and forwards to the main arm
+    (($previous_event:expr, $event:expr), $([$expected:expr] $p:pat => $e:expr),*) => {
+        game_event!(($previous_event, $event), $([$expected] $p => $e,)*)
+    };
+    // This arm matches when there are no patterns provided and no
+    // trailing comma (no patterns with trailing comma is captured by
+    // the previous arm)
+    (($previous_event:expr, $event:expr)) => {
+        game_event!(($previous_event, $event),)
+    };
 }
 
 struct EventDetailBuilder<'a, 'g> {
@@ -188,8 +200,7 @@ struct EventDetailBuilder<'a, 'g> {
     hit_type: Option<TaxaHitType>,
 }
 
-impl<'a, 'g> EventDetailBuilder<'a, 'g>
-{
+impl<'a, 'g> EventDetailBuilder<'a, 'g> {
     fn contact_event_index(mut self, contact_event_index: usize) -> Self {
         self.contact_event_index = Some(contact_event_index);
         self
@@ -216,11 +227,11 @@ impl<'a, 'g> EventDetailBuilder<'a, 'g>
             outs_before: self.game.outs,
             outs_after: self.game.outs,
             ends_inning: false,
-            batter_count: self.game.active_batter_count()
+            batter_count: self.game.batting_team().batter_count
                 .expect("sim::Game state machine should ensure batter_count is set before any EventDetail is constructed"),
-            batter_name: self.game.batter_name
+            batter_name: self.game.active_batter_name
                 .expect("sim::Game state machine should ensure batter_name is set before any EventDetail is constructed"),
-            pitcher_name: self.game.active_pitcher_name(),
+            pitcher_name: self.game.defending_team().pitcher_name,
             fielder_names: vec![],
             detail_type: type_detail,
             hit_type: self.hit_type,
@@ -229,31 +240,71 @@ impl<'a, 'g> EventDetailBuilder<'a, 'g>
     }
 }
 
-impl<'g> Game<'g>
-{
-    // TODO Figure out how to accept a simple iterator of ParsedEvent and
-    //   do the enumerate myself
+impl<'g> Game<'g> {
     pub fn new<IterT>(game_id: &'g str, events: &mut IterT) -> Result<Game<'g>, SimError>
     where
         IterT: Iterator<Item = ParsedEvent<&'g str>>,
     {
         let mut events = ParsedEventIter::new(events);
 
-        // TODO Every time there's a { .. } in the match arm of an
-        //   extract_next!, extract the data and issue a warning if it
-        //   doesn't match what it should
-        extract_next_game_event!(
+        let (away_team_name, away_team_emoji, home_team_name, home_team_emoji) = extract_next_game_event!(
             events,
-            [ParsedEventDiscriminants::LiveNow] ParsedEvent::LiveNow { .. } => ()
-        )?;
-
-        let (home_pitcher_name, away_pitcher_name) = extract_next_game_event!(
-            events,
-            [ParsedEventDiscriminants::PitchingMatchup]
-            ParsedEvent::PitchingMatchup { home_pitcher, away_pitcher, .. } => {
-                (home_pitcher, away_pitcher)
+            [ParsedEventDiscriminants::LiveNow]
+            ParsedEvent::LiveNow { away_team_name, away_team_emoji, home_team_name, home_team_emoji } => {
+                (away_team_name, away_team_emoji, home_team_name, home_team_emoji)
             }
         )?;
+
+        let (
+            home_pitcher_name,
+            away_pitcher_name,
+            away_team_name_2,
+            away_team_emoji_2,
+            home_team_name_2,
+            home_team_emoji_2,
+        ) = extract_next_game_event!(
+            events,
+            [ParsedEventDiscriminants::PitchingMatchup]
+            ParsedEvent::PitchingMatchup { 
+                home_pitcher, 
+                away_pitcher, 
+                away_team_name, 
+                away_team_emoji, 
+                home_team_name, 
+                home_team_emoji,
+            } => (
+                home_pitcher, 
+                away_pitcher, 
+                away_team_name, 
+                away_team_emoji, 
+                home_team_name, 
+                home_team_emoji,
+            )
+        )?;
+        if away_team_name_2 != away_team_name {
+            warn!(
+                "Away team name from PitchingMatchup ({away_team_name_2}) did \
+                not match the one from LiveNow ({away_team_name})"
+            );
+        }
+        if away_team_emoji_2 != away_team_emoji {
+            warn!(
+                "Away team emoji from PitchingMatchup ({away_team_emoji_2}) did \
+                not match the one from LiveNow ({away_team_emoji})"
+            );
+        }
+        if home_team_name_2 != home_team_name {
+            warn!(
+                "Home team name from PitchingMatchup ({home_team_name_2}) did \
+                not match the one from LiveNow ({home_team_name})"
+            );
+        }
+        if home_team_emoji_2 != home_team_emoji {
+            warn!(
+                "Home team emoji from PitchingMatchup ({home_team_emoji_2}) did \
+                not match the one from LiveNow ({home_team_emoji})"
+            );
+        }
 
         let away_lineup = extract_next_game_event!(
             events,
@@ -275,10 +326,20 @@ impl<'g> Game<'g>
 
         Ok(Self {
             game_id,
-            away_pitcher_name,
-            home_pitcher_name,
-            away_lineup,
-            home_lineup,
+            away: TeamInGame {
+                team_name: away_team_name,
+                team_emoji: away_team_emoji,
+                pitcher_name: away_pitcher_name,
+                lineup: away_lineup,
+                batter_count: None,
+            },
+            home: TeamInGame {
+                team_name: home_team_name,
+                team_emoji: home_team_emoji,
+                pitcher_name: home_pitcher_name,
+                lineup: home_lineup,
+                batter_count: None,
+            },
             prev_event_type: ParsedEventDiscriminants::PlayBall,
             phase: GamePhase::ExpectInningStart,
             inning_number: 0,
@@ -287,37 +348,36 @@ impl<'g> Game<'g>
             count_strikes: 0,
             previous_outs: 0,
             outs: 0,
-            away_batter_count: None,
-            home_batter_count: None,
-            batter_name: None,
+            // TODO Get this from lineup and batter count
+            active_batter_name: None,
         })
     }
 
-    fn active_batter_count(&self) -> &Option<usize> {
+    fn batting_team(&self) -> &TeamInGame<'g> {
         match self.inning_half {
-            TopBottom::Top => &self.away_batter_count,
-            TopBottom::Bottom => &self.home_batter_count,
+            TopBottom::Top => &self.away,
+            TopBottom::Bottom => &self.home,
         }
     }
 
-    fn active_batter_count_mut(&mut self) -> &mut Option<usize> {
+    fn batting_team_mut(&mut self) -> &mut TeamInGame<'g> {
         match self.inning_half {
-            TopBottom::Top => &mut self.away_batter_count,
-            TopBottom::Bottom => &mut self.home_batter_count,
+            TopBottom::Top => &mut self.away,
+            TopBottom::Bottom => &mut self.home,
         }
     }
 
-    fn active_lineup(&self) -> &[PositionedPlayer<&'g str>] {
+    fn defending_team(&self) -> &TeamInGame<'g> {
         match self.inning_half {
-            TopBottom::Top => &self.away_lineup,
-            TopBottom::Bottom => &self.home_lineup,
+            TopBottom::Top => &self.home,
+            TopBottom::Bottom => &self.away,
         }
     }
 
-    fn active_pitcher_name(&self) -> &'g str {
+    fn defending_team_mut(&mut self) -> &mut TeamInGame<'g> {
         match self.inning_half {
-            TopBottom::Top => &self.away_pitcher_name,
-            TopBottom::Bottom => &self.home_pitcher_name,
+            TopBottom::Top => &mut self.home,
+            TopBottom::Bottom => &mut self.away,
         }
     }
 
@@ -337,7 +397,7 @@ impl<'g> Game<'g>
     }
 
     fn check_batter(&self, batter_name: &str) {
-        if let Some(stored_batter_name) = self.batter_name {
+        if let Some(stored_batter_name) = self.active_batter_name {
             if stored_batter_name != batter_name {
                 warn!(
                     "Unexpected batter name in Hit: Expected {stored_batter_name}, but saw {batter_name} "
@@ -379,7 +439,11 @@ impl<'g> Game<'g>
     //   extract_next!, extract the data. If it's redundant with
     //   something else, check it against that other thing and issue a
     //   warning if it doesn't match. Otherwise, record the data.
-    pub fn next(&mut self, index: usize, event: ParsedEvent<&'g str>) -> Result<Option<EventDetail>, SimError> {
+    pub fn next(
+        &mut self,
+        index: usize,
+        event: ParsedEvent<&'g str>,
+    ) -> Result<Option<EventDetail>, SimError> {
         self.previous_outs = self.outs;
         let previous_event = self.prev_event_type;
         let this_event_discriminant = event.discriminant();
@@ -419,35 +483,35 @@ impl<'g> Game<'g>
                 },
             ),
             GamePhase::ExpectNowBatting => game_event!(
-                (previous_event, event),
-                [ParsedEventDiscriminants::NowBatting]
-                // TODO handle every single member of this variant
-                ParsedEvent::NowBatting { batter: batter_name, .. } => {
-                    self.batter_name = Some(batter_name);
-                    let batter_count = if let Some(batter_count) = self.active_batter_count_mut() {
-                        *batter_count += 1;
-                        *batter_count
-                    } else {
-                        *self.active_batter_count_mut() = Some(0);
-                        0
-                    };
+               (previous_event, event),
+               [ParsedEventDiscriminants::NowBatting]
+               // TODO handle every single member of this variant
+               ParsedEvent::NowBatting { batter: batter_name, .. } => {
+                   self.active_batter_name = Some(batter_name);
+                   let batter_count = if let Some(batter_count) = &mut self.batting_team_mut().batter_count {
+                       *batter_count += 1;
+                       *batter_count
+                   } else {
+                       self.batting_team_mut().batter_count = Some(0);
+                       0
+                   };
 
-                    let lineup = self.active_lineup();
-                    let predicted_batter_name = lineup[batter_count % lineup.len()].name;
-                    if batter_name != predicted_batter_name {
-                        warn!("Unexpected batter up in {}: expected {predicted_batter_name}, but saw {batter_name}", self.game_id);
-                    }
+                   let lineup = &self.batting_team().lineup;
+                   let predicted_batter_name = lineup[batter_count % lineup.len()].name;
+                   if batter_name != predicted_batter_name {
+                       warn!("Unexpected batter up in {}: expected {predicted_batter_name}, but saw {batter_name}", self.game_id);
+                   }
 
-                    self.phase = GamePhase::ExpectPitch;
-                    None
-                },
-                [ParsedEventDiscriminants::MoundVisit]
-                // TODO handle every single member of this variant
-                ParsedEvent::MoundVisit { .. } => {
-                    self.phase = GamePhase::ExpectMoundVisitOutcome;
-                    None
-                },
-             ),
+                   self.phase = GamePhase::ExpectPitch;
+                   None
+               },
+               [ParsedEventDiscriminants::MoundVisit]
+               // TODO handle every single member of this variant
+               ParsedEvent::MoundVisit { .. } => {
+                   self.phase = GamePhase::ExpectMoundVisitOutcome;
+                   None
+               },
+            ),
             GamePhase::ExpectPitch => game_event!(
                 (previous_event, event),
                 [ParsedEventDiscriminants::Ball]
@@ -683,13 +747,11 @@ impl<'g> Game<'g>
                     None
                 },
             ),
-            GamePhase::Finished => game_event!(
-                (previous_event, event),
-            ),
+            GamePhase::Finished => game_event!((previous_event, event)),
         }?;
-        
+
         self.prev_event_type = this_event_discriminant;
-        
+
         Ok(result)
     }
 }
