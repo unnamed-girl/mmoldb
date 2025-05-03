@@ -3,3 +3,6 @@ port = 42424  # Must match the port forwarded in .devcontainer/devcontainer.json
 
 [default.databases.mmoldb]
 url = "postgres://postgres:postgres@localhost/mmoldb"
+
+[debug]
+#log_level = "debug"

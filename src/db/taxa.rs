@@ -16,17 +16,31 @@ pub enum TaxaEventType {
     FoulBall,
     Hit,
     Out,
+    Walk,
+    HomeRun,
+    FieldingError,
+    HitByPitch,
+}
+#[derive(Debug, enum_map::Enum, Eq, PartialEq, Hash, Copy, Clone, strum::Display, strum::EnumMessage)]
+pub enum TaxaHitType {
+    Single,
+    Double,
+    Triple,
 }
 
 pub struct Taxa {
-    mapping: EnumMap<TaxaEventType, i64>,
+    event_type_mapping: EnumMap<TaxaEventType, i64>,
+    hit_type_mapping: EnumMap<TaxaHitType, i64>,
 }
 
 impl Taxa {
-    pub async fn new(conn: &mut AsyncPgConnection) -> QueryResult<Self> {
+    async fn make_mapping_for<EnumT>(conn: &mut AsyncPgConnection) -> QueryResult<EnumMap<EnumT, i64>>
+    where
+        EnumT: enum_map::EnumArray<i64> + std::fmt::Display + EnumMessage + Eq + std::hash::Hash
+    {
         use crate::taxa_schema::taxa::event_type::dsl::*;
 
-        let mut mapping: EnumMap<TaxaEventType, i64> = EnumMap::default();
+        let mut mapping: EnumMap<EnumT, i64> = EnumMap::default();
 
         for (taxa, key) in mapping.iter_mut() {
             let code_friendly_name = format!("{}", taxa);
@@ -54,12 +68,21 @@ impl Taxa {
             mapping.iter().map(|(_, value)| value).collect::<HashSet<_>>().len(),
         );
 
+        Ok(mapping)
+    }
+    
+    pub async fn new(conn: &mut AsyncPgConnection) -> QueryResult<Self> {
         Ok(Self {
-            mapping,
+            event_type_mapping: Self::make_mapping_for::<TaxaEventType>(conn).await?,
+            hit_type_mapping: Self::make_mapping_for::<TaxaHitType>(conn).await?,
         })
     }
 
     pub fn event_type(&self, ty: TaxaEventType) -> i64 {
-        self.mapping[ty]
+        self.event_type_mapping[ty]
+    }
+
+    pub fn hit_type(&self, ty: TaxaHitType) -> i64 {
+        self.hit_type_mapping[ty]
     }
 }

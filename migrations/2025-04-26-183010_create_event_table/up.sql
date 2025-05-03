@@ -10,6 +10,13 @@ create table taxa.event_type (
     unique (name)
 );
 
+create table taxa.hit_type (
+    id bigserial primary key not null,
+    name text not null,
+    display_name text not null,
+    unique (name)
+);
+
 create table data.events (
     -- bookkeeping
     id bigserial primary key not null,
@@ -21,6 +28,7 @@ create table data.events (
 
     -- game data
     event_type bigserial references taxa.event_type not null,
+    hit_type bigserial references taxa.hit_type, -- should be populated for every event_type==Hit
     count_balls int not null,
     count_strikes int not null,
     outs_before int not null,

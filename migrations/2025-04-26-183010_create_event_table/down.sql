@@ -1,5 +1,6 @@
 drop table data.event_baserunners;
 drop table data.events;
+drop table taxa.hit_type;
 drop table taxa.event_type;
 alter table data.ingests set schema public;
 drop schema taxa;
