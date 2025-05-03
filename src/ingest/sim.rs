@@ -54,7 +54,7 @@ enum GamePhase {
     ExpectInningStart,
     ExpectBatterUp,
     ExpectPitch,
-    ExpectOutcome(usize),
+    ExpectFairBallOutcome(usize),
     ExpectInningEnd,
 }
 
@@ -320,241 +320,234 @@ where IterT: Iterator<Item=(usize, ParsedEvent<&'g str>)> {
     }
 
     // TODO Every time there's a { .. } in the match arm of an 
-    //   extract_next!, extract the data and issue a warning if it
-    //   doesn't match what it should
+    //   extract_next!, extract the data. If it's redundant with 
+    //   something else, check it against that other thing and issue a 
+    //   warning if it doesn't match. Otherwise, record the data.
     pub fn next(&mut self) -> Result<Option<EventDetail>, SimError>
         where IterT: Debug {
         self.previous_outs = self.outs;
         match self.phase {
-            GamePhase::ExpectInningStart => {
-                let (number, side) = extract_next!(
-                    self.events,
-                    [ParsedEventDiscriminants::InningStart]
-                    (_, ParsedEvent::InningStart { number, side, .. }) => (number, side),
-                )?;
+            GamePhase::ExpectInningStart => extract_next!(
+                self.events,
+                [ParsedEventDiscriminants::InningStart]
+                // TODO handle every single member of this variant
+                (_, ParsedEvent::InningStart { number, side, .. }) => {
+                    if side != self.inning_half.flip() {
+                        warn!("Unexpected inning side in {}: expected {:?}, but saw {side:?}", self.game_id, self.inning_half.flip())
+                    }
+                    self.inning_half = side;
 
-                if side != self.inning_half.flip() {
-                    warn!("Unexpected inning side in {}: expected {:?}, but saw {side:?}", self.game_id, self.inning_half.flip())
-                }
-                self.inning_half = side;
+                    // If we just started a top, the number should increment
+                    let expected_number = match self.inning_half {
+                        TopBottom::Top => self.inning_number + 1,
+                        TopBottom::Bottom => self.inning_number,
+                    };
 
-                // If we just started a top, the number should increment
-                let expected_number = match self.inning_half {
-                    TopBottom::Top => self.inning_number + 1,
-                    TopBottom::Bottom => self.inning_number,
-                };
-                
-                if number != expected_number {
-                    warn!("Unexpected inning number in {}: expected {expected_number}, but saw {number}", self.game_id);
-                }
-                self.inning_number = number;
+                    if number != expected_number {
+                        warn!("Unexpected inning number in {}: expected {expected_number}, but saw {number}", self.game_id);
+                    }
+                    self.inning_number = number;
 
-                info!("Started {} of {}", self.inning_half, self.inning_number);
+                    info!("Started {} of {}", self.inning_half, self.inning_number);
 
-                self.outs = 0;
-                self.phase = GamePhase::ExpectBatterUp;
-                Ok(None)
-            }
-            GamePhase::ExpectBatterUp => {
-                let batter_name = extract_next!(
-                    self.events,
-                    [ParsedEventDiscriminants::NowBatting]
-                    (_, ParsedEvent::NowBatting { batter, .. }) => batter,
-                )?;
+                    self.outs = 0;
+                    self.phase = GamePhase::ExpectBatterUp;
+                    None
+                },
+            ),
+            GamePhase::ExpectBatterUp => extract_next!(
+                self.events,
+                [ParsedEventDiscriminants::NowBatting]
+                // TODO handle every single member of this variant
+                (_, ParsedEvent::NowBatting { batter: batter_name, .. }) => {
+                    self.batter_name = Some(batter_name);
+                    let batter_count = if let Some(batter_count) = self.active_batter_count_mut() {
+                        *batter_count += 1;
+                        *batter_count
+                    } else {
+                        *self.active_batter_count_mut() = Some(0);
+                        0
+                    };
 
-                self.batter_name = Some(batter_name);
-                let batter_count = if let Some(batter_count) = self.active_batter_count_mut() {
-                    *batter_count += 1;
-                    *batter_count
-                } else {
-                    *self.active_batter_count_mut() = Some(0);
-                    0
-                };
+                    let lineup = self.active_lineup();
+                    let predicted_batter_name = lineup[batter_count % lineup.len()].name;
+                    if batter_name != predicted_batter_name {
+                        warn!("Unexpected batter up in {}: expected {predicted_batter_name}, but saw {batter_name}", self.game_id);
+                    }
 
-                let lineup = self.active_lineup();
-                let predicted_batter_name = lineup[batter_count % lineup.len()].name;
-                if batter_name != predicted_batter_name {
-                    warn!("Unexpected batter up in {}: expected {predicted_batter_name}, but saw {batter_name}", self.game_id);
-                }
+                    self.phase = GamePhase::ExpectPitch;
+                    None
+                },
+            ),
+            GamePhase::ExpectPitch => extract_next!(
+                self.events,
+                [ParsedEventDiscriminants::Ball]
+                // TODO handle every single member of this variant
+                (index, ParsedEvent::Ball { count, .. }) => {
+                    self.count_balls += 1;
+                    self.check_count(count);
 
-                self.phase = GamePhase::ExpectPitch;
-                Ok(None)
-            }
-            GamePhase::ExpectPitch => {
-                extract_next!(
-                    self.events,
-                    [ParsedEventDiscriminants::Ball]
-                    // TODO handle every single member of this variant
-                    (index, ParsedEvent::Ball { count, .. }) => {
-                        self.count_balls += 1;
-                        self.check_count(count);
+                    self.detail_builder(index)
+                        .build_some(TaxaEventType::Ball)
+                },
+                [ParsedEventDiscriminants::Strike]
+                // TODO handle every single member of this variant
+                (index, ParsedEvent::Strike { strike, count, .. }) => {
+                    self.count_strikes += 1;
+                    self.check_count(count);
 
-                        self.detail_builder(index)
-                            .build_some(TaxaEventType::Ball)
-                    },
-                    [ParsedEventDiscriminants::Strike]
-                    // TODO handle every single member of this variant
-                    (index, ParsedEvent::Strike { strike, count, .. }) => {
+                    self.detail_builder(index)
+                        .build_some(match strike {
+                            StrikeType::Looking => { TaxaEventType::StrikeLooking }
+                            StrikeType::Swinging => { TaxaEventType::StrikeSwinging }
+                        })
+                },
+                [ParsedEventDiscriminants::StrikeOut]
+                // TODO handle every single member of this variant
+                (index, ParsedEvent::StrikeOut { strike, .. }) => {
+                    if self.count_strikes < 2 {
+                        warn!("Unexpected strikeout in {}: expected 2 strikes in the count, but there were {}", self.game_id, self.count_strikes);
+                    }
+
+                    self.finish_pa();
+                    self.add_out();
+
+                    self.detail_builder(index)
+                        .build_some(match strike {
+                            StrikeType::Looking => { TaxaEventType::StrikeLooking }
+                            StrikeType::Swinging => { TaxaEventType::StrikeSwinging }
+                        })
+                },
+                [ParsedEventDiscriminants::Foul]
+                // TODO handle every single member of this variant
+                (index, ParsedEvent::Foul { foul, count, .. }) => {
+                    // Falsehoods...
+                    if !(foul == FoulType::Ball && self.count_strikes >= 2) {
                         self.count_strikes += 1;
-                        self.check_count(count);
+                    }
+                    self.check_count(count);
 
-                        self.detail_builder(index)
-                            .build_some(match strike {
-                                StrikeType::Looking => { TaxaEventType::StrikeLooking }
-                                StrikeType::Swinging => { TaxaEventType::StrikeSwinging }
-                            })
-                    },
-                    [ParsedEventDiscriminants::StrikeOut]
-                    // TODO handle every single member of this variant
-                    (index, ParsedEvent::StrikeOut { strike, ..  }) => {
-                        if self.count_strikes < 2 {
-                            warn!("Unexpected strikeout in {}: expected 2 strikes in the count, but there were {}", self.game_id, self.count_strikes);
+                    self.detail_builder(index)
+                        .build_some(match foul {
+                            FoulType::Tip => TaxaEventType::FoulTip,
+                            FoulType::Ball => TaxaEventType::FoulBall,
+                        })
+                },
+                // Note this is NOT a baseball Hit. This is a batted ball.
+                [ParsedEventDiscriminants::Hit]
+                // TODO handle every single member of this variant
+                (index, ParsedEvent::Hit { batter, .. }) => {
+                    self.check_batter(batter);
+
+                    self.phase = GamePhase::ExpectFairBallOutcome(index);
+                    None
+                },
+                [ParsedEventDiscriminants::Walk]
+                // TODO handle every single member of this variant
+                (index, ParsedEvent::Walk { batter, .. }) => {
+                    self.check_batter(batter);
+                    self.finish_pa();
+
+                    self.detail_builder(index)
+                        .build_some(TaxaEventType::Walk)
+                },
+                [ParsedEventDiscriminants::HitByPitch]
+                // TODO handle every single member of this variant
+                (index, ParsedEvent::HitByPitch { batter, .. }) => {
+                    self.check_batter(batter);
+                    self.finish_pa();
+
+                    self.detail_builder(index)
+                        .build_some(TaxaEventType::HitByPitch)
+                },
+            ),
+            GamePhase::ExpectFairBallOutcome(contact_event_index) => extract_next!(
+                self.events,
+                [ParsedEventDiscriminants::CaughtOut]
+                // TODO handle every single member of this variant
+                (index, ParsedEvent::CaughtOut { batter, .. }) => {
+                    self.check_batter(batter);
+                    self.finish_pa();
+                    self.add_out();
+                    self.detail_builder(index)
+                        .contact_event_index(contact_event_index)
+                        .build_some(TaxaEventType::Out) // TODO Different out types?
+                },
+                [ParsedEventDiscriminants::GroundedOut]
+                // TODO handle every single member of this variant
+                (index, ParsedEvent::GroundedOut { batter, .. }) => {
+                    self.check_batter(batter);
+                    self.finish_pa();
+                    self.add_out();
+                    self.detail_builder(index)
+                        .contact_event_index(contact_event_index)
+                        .build_some(TaxaEventType::Out) // TODO Different out types?
+                },
+                [ParsedEventDiscriminants::BatterToBase]
+                // TODO handle every single member of this variant
+                (index, ParsedEvent::BatterToBase { batter, distance, ..  }) => {
+                    self.check_batter(batter);
+                    self.finish_pa();
+                    
+                    match match distance {
+                        Distance::Single => { Some(TaxaHitType::Single) }
+                        Distance::Double => { Some(TaxaHitType::Double) }
+                        Distance::Triple => { Some(TaxaHitType::Triple) }
+                        Distance::HomeRun => { None }
+                    } {
+                        // Hit
+                        Some(hit_type) => {
+                            self.detail_builder(index)
+                                .contact_event_index(contact_event_index)
+                                .hit_type(hit_type)
+                                .build_some(TaxaEventType::Hit)
                         }
-
-                        self.finish_pa();
-                        self.add_out();
-
-                        self.detail_builder(index)
-                            .build_some(match strike {
-                                StrikeType::Looking => { TaxaEventType::StrikeLooking }
-                                StrikeType::Swinging => { TaxaEventType::StrikeSwinging }
-                            })
-                    },
-                    [ParsedEventDiscriminants::Foul]
-                    // TODO handle every single member of this variant
-                    (index, ParsedEvent::Foul { foul, count, .. }) => {
-                        // Falsehoods...
-                        if !(foul == FoulType::Ball && self.count_strikes >= 2) {
-                            self.count_strikes += 1;
+                        // Home run
+                        None => {
+                            assert!(false, "Encountered a BatterToBase with Distance::HomeRun. Need to figure out what makes this different from a Homer");
+                            self.detail_builder(index)
+                                .contact_event_index(contact_event_index)
+                                .build_some(TaxaEventType::HomeRun)
                         }
-                        self.check_count(count);
+                    }
+                },
+                [ParsedEventDiscriminants::FieldingError]
+                // TODO handle every single member of this variant
+                (index, ParsedEvent::FieldingError { batter, .. }) => {
+                    self.check_batter(batter);
+                    self.finish_pa();
+                    
+                    self.detail_builder(index)
+                        .contact_event_index(contact_event_index)
+                        .build_some(TaxaEventType::FieldingError)
+                },
+                [ParsedEventDiscriminants::Homer]
+                // TODO handle every single member of this variant
+                (index, ParsedEvent::Homer { batter, .. }) => {
+                    self.check_batter(batter);
+                    self.finish_pa();
 
-                        self.detail_builder(index)
-                            .build_some(match foul {
-                                FoulType::Tip => TaxaEventType::FoulTip,
-                                FoulType::Ball => TaxaEventType::FoulBall,
-                            })
-                    },
-                    // Note this is NOT a baseball Hit. This is a batted ball.
-                    [ParsedEventDiscriminants::Hit]
-                    // TODO handle every single member of this variant
-                    (index, ParsedEvent::Hit { batter, .. }) => {
-                        self.check_batter(batter);
-
-                        self.phase = GamePhase::ExpectOutcome(index);
-                        None
-                    },
-                    [ParsedEventDiscriminants::Walk]
-                    // TODO handle every single member of this variant
-                    (index, ParsedEvent::Walk { batter, .. }) => {
-                        self.check_batter(batter);
-                        self.finish_pa();
-
-                        self.detail_builder(index)
-                            .build_some(TaxaEventType::Walk)
-                    },
-                    [ParsedEventDiscriminants::HitByPitch]
-                    // TODO handle every single member of this variant
-                    (index, ParsedEvent::HitByPitch { batter, .. }) => {
-                        self.check_batter(batter);
-                        self.finish_pa();
-
-                        self.detail_builder(index)
-                            .build_some(TaxaEventType::HitByPitch)
-                    },
-                )
-            }
-            GamePhase::ExpectOutcome(contact_event_index) => {
-                extract_next!(
-                    self.events,
-                    [ParsedEventDiscriminants::CaughtOut]
-                    // TODO handle every single member of this variant
-                    (index, ParsedEvent::CaughtOut { batter, .. }) => {
-                        self.check_batter(batter);
-                        self.finish_pa();
-                        self.add_out();
-                        self.detail_builder(index)
-                            .contact_event_index(contact_event_index)
-                            .build_some(TaxaEventType::Out) // TODO Different out types?
-                    },
-                    [ParsedEventDiscriminants::GroundedOut]
-                    // TODO handle every single member of this variant
-                    (index, ParsedEvent::GroundedOut { batter, .. }) => {
-                        self.check_batter(batter);
-                        self.finish_pa();
-                        self.add_out();
-                        self.detail_builder(index)
-                            .contact_event_index(contact_event_index)
-                            .build_some(TaxaEventType::Out) // TODO Different out types?
-                    },
-                    [ParsedEventDiscriminants::BatterToBase]
-                    // TODO handle every single member of this variant
-                    (index, ParsedEvent::BatterToBase { batter, distance, ..  }) => {
-                        self.check_batter(batter);
-                        self.finish_pa();
-                        
-                        match match distance {
-                            Distance::Single => { Some(TaxaHitType::Single) }
-                            Distance::Double => { Some(TaxaHitType::Double) }
-                            Distance::Triple => { Some(TaxaHitType::Triple) }
-                            Distance::HomeRun => { None }
-                        } {
-                            // Hit
-                            Some(hit_type) => {
-                                self.detail_builder(index)
-                                    .contact_event_index(contact_event_index)
-                                    .hit_type(hit_type)
-                                    .build_some(TaxaEventType::Hit)
-                            }
-                            // Home run
-                            None => {
-                                assert!(false, "Encountered a BatterToBase with Distance::HomeRun. Need to figure out what makes this different from a Homer");
-                                self.detail_builder(index)
-                                    .contact_event_index(contact_event_index)
-                                    .build_some(TaxaEventType::HomeRun)
-                            }
-                        }
-                    },
-                    [ParsedEventDiscriminants::FieldingError]
-                    // TODO handle every single member of this variant
-                    (index, ParsedEvent::FieldingError { batter, .. }) => {
-                        self.check_batter(batter);
-                        self.finish_pa();
-                        
-                        self.detail_builder(index)
-                            .contact_event_index(contact_event_index)
-                            .build_some(TaxaEventType::FieldingError)
-                    },
-                    [ParsedEventDiscriminants::Homer]
-                    // TODO handle every single member of this variant
-                    (index, ParsedEvent::Homer { batter, .. }) => {
-                        self.check_batter(batter);
-                        self.finish_pa();
-                        
-                        self.detail_builder(index)
-                            .contact_event_index(contact_event_index)
-                            .build_some(TaxaEventType::HomeRun)
-                    },
-                )
-            }
-            GamePhase::ExpectInningEnd => {
-                let (number, side) = extract_next!(
-                    self.events,
-                    [ParsedEventDiscriminants::InningEnd]
-                    (_, ParsedEvent::InningEnd { number, side }) => (number, side),
-                )?;
-
-                if number != self.inning_number {
-                    warn!("Unexpected inning number in {}: expected {}, but saw {number}", self.game_id, self.inning_number);
-                }
-
-                if side != self.inning_half {
-                    warn!("Unexpected inning side in {}: expected {:?}, but saw {side:?}", self.game_id, self.inning_half);
-                }
-
-                self.phase = GamePhase::ExpectInningStart;
-                Ok(None)
-            }
+                    self.detail_builder(index)
+                        .contact_event_index(contact_event_index)
+                        .build_some(TaxaEventType::HomeRun)
+                },
+            ),
+            GamePhase::ExpectInningEnd => extract_next!(
+                self.events,
+                [ParsedEventDiscriminants::InningEnd]
+                (_, ParsedEvent::InningEnd { number, side }) => {
+                    if number != self.inning_number {
+                        warn!("Unexpected inning number in {}: expected {}, but saw {number}", self.game_id, self.inning_number);
+                    }
+    
+                    if side != self.inning_half {
+                        warn!("Unexpected inning side in {}: expected {:?}, but saw {side:?}", self.game_id, self.inning_half);
+                    }
+    
+                    self.phase = GamePhase::ExpectInningStart;
+                    None
+                },
+            ),
         }
     }
 }
