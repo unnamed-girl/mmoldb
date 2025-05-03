@@ -60,9 +60,8 @@ enum GamePhase {
 }
 
 #[derive(Debug)]
-pub struct Game<'g, IterT: Iterator<Item = (usize, ParsedEvent<&'g str>)>> {
+pub struct Game<'g> {
     // Should never change
-    events: ParsedEventIter<'g, IterT>,
     game_id: &'g str,
 
     // Should not change most of the time, but may change occasionally
@@ -87,16 +86,16 @@ pub struct Game<'g, IterT: Iterator<Item = (usize, ParsedEvent<&'g str>)>> {
 }
 
 #[derive(Debug)]
-struct ParsedEventIter<'game, IterT: Iterator<Item = (usize, ParsedEvent<&'game str>)>> {
-    inner: IterT,
+struct ParsedEventIter<'g, 'a, IterT: Iterator<Item = ParsedEvent<&'g str>>> {
+    inner: &'a mut IterT,
     prev_event_type: Option<ParsedEventDiscriminants>,
 }
 
-impl<'game, IterT> ParsedEventIter<'game, IterT>
+impl<'g, 'a, IterT> ParsedEventIter<'g, 'a, IterT>
 where
-    IterT: Iterator<Item = (usize, ParsedEvent<&'game str>)>,
+    IterT: Iterator<Item = ParsedEvent<&'g str>>,
 {
-    pub fn new(iter: IterT) -> Self {
+    pub fn new(iter: &'a mut IterT) -> Self {
         Self {
             prev_event_type: None,
             inner: iter,
@@ -106,11 +105,11 @@ where
     pub fn next(
         &mut self,
         expected: &'static [ParsedEventDiscriminants],
-    ) -> Result<(usize, ParsedEvent<&'game str>), SimError> {
+    ) -> Result<ParsedEvent<&'g str>, SimError> {
         match self.inner.next() {
-            Some((i, val)) => {
+            Some(val) => {
                 self.prev_event_type = Some(val.discriminant());
-                Ok((i, val))
+                Ok(val)
             }
             None => match self.prev_event_type {
                 None => Err(SimError::NoEvents),
@@ -120,35 +119,101 @@ where
     }
 }
 
-macro_rules! extract_next {
+// This macro accepts an iterator over game events, and is meant for
+// use in Game::new. See game_event! for the equivalent that's meant
+// for use in Game::next.
+macro_rules! extract_next_game_event {
+    // This arm matches when there isn't a trailing comma, adds the
+    // trailing comma, and forwards to the other arm
+    ($iter:expr, $([$expected:expr] $p:pat => $e:expr,)+) => {
+        extract_next_game_event!($iter, $([$expected] $p => $e),+)
+    };
+    // This arm matches when there is a trailing comma
     ($iter:expr, $([$expected:expr] $p:pat => $e:expr),+) => {{
         let previous = $iter.prev_event_type;
         let expected = &[$($expected,)*];
         match $iter.next(expected)? {
             $($p => Ok($e),)*
-            (_, other) => Err(SimError::UnexpectedEventType {
+            other => Err(SimError::UnexpectedEventType {
                 expected,
                 previous,
                 received: other.discriminant(),
             })
         }
     }};
-    ($iter:expr, $([$expected:expr] $p:pat => $e:expr,)+) => {
-        extract_next!($iter, $([$expected] $p => $e),+)
-    };
 }
 
-struct EventDetailBuilder<'a, 'g, IterT: Iterator<Item = (usize, ParsedEvent<&'g str>)>> {
-    game: &'a Game<'g, IterT>,
+// This macro accepts a Game and a game event, and is meant for
+// use in Game::next. See extract_next_game_event! for the equivalent 
+// that's meant for use in Game::new.
+
+macro_rules! game_event {
+    // This arm matches when there isn't a trailing comma, adds the
+    // trailing comma, and forwards to the other arm
+    // ($game_obj:expr, $iter:expr, $([$expected:expr] $p:pat => $e:expr),+) => {
+    //     game_event!($iter, $([$expected] $p => $e,)+)
+    // };
+    // This arm matches when there is a trailing comma
+    (($previous_event:expr, $event:expr), $([$expected:expr] $p:pat => $e:expr,)+) => {{
+        // This is wrapped in Some because SimError::UnexpectedEventType
+        // takes an Option to handle the case when the error is at the
+        // first event (and therefore there is no previous event).
+        // However, this macro is only used on a fully-constructed Game,
+        // which must have a previous event. So prev_event_type is not
+        // an Option, but previous must be.
+        let previous: Option<ParsedEventDiscriminants> = Some($previous_event);
+        let expected: &[ParsedEventDiscriminants] = &[$($expected,)*];
+
+        match $event {
+            $($p => {
+                Ok($e)
+            })*
+            other => Err(SimError::UnexpectedEventType {
+                expected,
+                previous,
+                received: other.discriminant(),
+            })
+        }
+    }};
+}
+
+macro_rules! game_event_from_iterator {
+    // This arm matches when there isn't a trailing comma, adds the
+    // trailing comma, and forwards to the other arm
+    ($iter:expr, $([$expected:expr] $p:pat => $e:expr),+) => {
+        game_event!($iter, $([$expected] $p => $e,)+)
+    };
+    // This arm matches a trailing comma
+    ($game_obj:expr, $event:expr, $([$expected:expr] $p:pat => $e:expr,)+) => {{
+        let event = 
+        
+        let previous: ParsedEventDiscriminants = $game_obj.prev_event_type;
+        let expected: &[ParsedEventDiscriminants] = &[$($expected,)*];
+
+        match $event {
+            $($p => {
+                let result = $e;
+                $game_obj.prev_event_type = $event.discriminant();
+                Ok($e),
+            })*
+            other => Err(SimError::UnexpectedEventType {
+                expected,
+                previous,
+                received: other.discriminant(),
+            })
+        }
+    }};
+}
+
+struct EventDetailBuilder<'a, 'g> {
+    game: &'a Game<'g>,
     contact_event_index: Option<usize>,
     game_event_index: usize,
     advances: Vec<()>,
     hit_type: Option<TaxaHitType>,
 }
 
-impl<'a, 'g, IterT> EventDetailBuilder<'a, 'g, IterT>
-where
-    IterT: Iterator<Item = (usize, ParsedEvent<&'g str>)>,
+impl<'a, 'g> EventDetailBuilder<'a, 'g>
 {
     fn contact_event_index(mut self, contact_event_index: usize) -> Self {
         self.contact_event_index = Some(contact_event_index);
@@ -189,51 +254,51 @@ where
     }
 }
 
-impl<'g, IterT> Game<'g, IterT>
-where
-    IterT: Iterator<Item = (usize, ParsedEvent<&'g str>)>,
+impl<'g> Game<'g>
 {
     // TODO Figure out how to accept a simple iterator of ParsedEvent and
     //   do the enumerate myself
-    pub fn new(game_id: &'g str, events: IterT) -> Result<Game<'g, IterT>, SimError> {
+    pub fn new<IterT>(game_id: &'g str, events: &mut IterT) -> Result<Game<'g>, SimError>
+    where
+        IterT: Iterator<Item = ParsedEvent<&'g str>>,
+    {
         let mut events = ParsedEventIter::new(events);
 
         // TODO Every time there's a { .. } in the match arm of an
         //   extract_next!, extract the data and issue a warning if it
         //   doesn't match what it should
-        extract_next!(
+        extract_next_game_event!(
             events,
-            [ParsedEventDiscriminants::LiveNow] (_, ParsedEvent::LiveNow { .. }) => ()
+            [ParsedEventDiscriminants::LiveNow] ParsedEvent::LiveNow { .. } => ()
         )?;
 
-        let (home_pitcher_name, away_pitcher_name) = extract_next!(
+        let (home_pitcher_name, away_pitcher_name) = extract_next_game_event!(
             events,
             [ParsedEventDiscriminants::PitchingMatchup]
-            (_, ParsedEvent::PitchingMatchup { home_pitcher, away_pitcher, .. }) => {
+            ParsedEvent::PitchingMatchup { home_pitcher, away_pitcher, .. } => {
                 (home_pitcher, away_pitcher)
             }
         )?;
 
-        let away_lineup = extract_next!(
+        let away_lineup = extract_next_game_event!(
             events,
             [ParsedEventDiscriminants::Lineup]
-            (_, ParsedEvent::Lineup { side: HomeAway::Away, players }) => players
+            ParsedEvent::Lineup { side: HomeAway::Away, players } => players
         )?;
 
-        let home_lineup = extract_next!(
+        let home_lineup = extract_next_game_event!(
             events,
             [ParsedEventDiscriminants::Lineup]
-            (_, ParsedEvent::Lineup { side: HomeAway::Home, players }) => players
+            ParsedEvent::Lineup { side: HomeAway::Home, players } => players
         )?;
 
-        extract_next!(
+        extract_next_game_event!(
             events,
             [ParsedEventDiscriminants::PlayBall]
-            (_, ParsedEvent::PlayBall) => ()
+            ParsedEvent::PlayBall => ()
         )?;
 
         Ok(Self {
-            events,
             game_id,
             away_pitcher_name,
             home_pitcher_name,
@@ -308,7 +373,7 @@ where
         }
     }
 
-    fn detail_builder<'a>(&'a self, game_event_index: usize) -> EventDetailBuilder<'a, 'g, IterT> {
+    fn detail_builder<'a>(&'a self, game_event_index: usize) -> EventDetailBuilder<'a, 'g> {
         EventDetailBuilder {
             game: self,
             contact_event_index: None,
@@ -339,17 +404,16 @@ where
     //   extract_next!, extract the data. If it's redundant with
     //   something else, check it against that other thing and issue a
     //   warning if it doesn't match. Otherwise, record the data.
-    pub fn next(&mut self) -> Result<Option<EventDetail>, SimError>
-    where
-        IterT: Debug,
-    {
+    pub fn next(&mut self, index: usize, event: ParsedEvent<&'g str>) -> Result<Option<EventDetail>, SimError> {
         self.previous_outs = self.outs;
-        match self.phase {
-            GamePhase::ExpectInningStart => extract_next!(
-                self.events,
+        let previous_event = self.prev_event_type;
+        let this_event_discriminant = event.discriminant();
+        let result = match self.phase {
+            GamePhase::ExpectInningStart => game_event!(
+                (previous_event, event),
                 [ParsedEventDiscriminants::InningStart]
                 // TODO handle every single member of this variant
-                (_, ParsedEvent::InningStart { number, side, pitcher_status, .. }) => {
+                ParsedEvent::InningStart { number, side, pitcher_status, .. } => {
                     if side != self.inning_half.flip() {
                         warn!("Unexpected inning side in {}: expected {:?}, but saw {side:?}", self.game_id, self.inning_half.flip())
                     }
@@ -374,17 +438,17 @@ where
                 },
                 [ParsedEventDiscriminants::MoundVisit]
                 // TODO handle every single member of this variant
-                (_, ParsedEvent::MoundVisit { .. }) => {
+                ParsedEvent::MoundVisit { .. } => {
                     self.phase = GamePhase::ExpectMoundVisitOutcome;
                     None
-                }
+                },
 
             ),
-            GamePhase::ExpectNowBatting => extract_next!(
-                self.events,
+            GamePhase::ExpectNowBatting => game_event!(
+                (previous_event, event),
                 [ParsedEventDiscriminants::NowBatting]
                 // TODO handle every single member of this variant
-                (_, ParsedEvent::NowBatting { batter: batter_name, .. }) => {
+                ParsedEvent::NowBatting { batter: batter_name, .. } => {
                     self.batter_name = Some(batter_name);
                     let batter_count = if let Some(batter_count) = self.active_batter_count_mut() {
                         *batter_count += 1;
@@ -404,11 +468,11 @@ where
                     None
                 },
             ),
-            GamePhase::ExpectPitch => extract_next!(
-                self.events,
+            GamePhase::ExpectPitch => game_event!(
+                (previous_event, event),
                 [ParsedEventDiscriminants::Ball]
                 // TODO handle every single member of this variant
-                (index, ParsedEvent::Ball { count, .. }) => {
+                ParsedEvent::Ball { count, .. } => {
                     self.count_balls += 1;
                     self.check_count(count);
 
@@ -417,7 +481,7 @@ where
                 },
                 [ParsedEventDiscriminants::Strike]
                 // TODO handle every single member of this variant
-                (index, ParsedEvent::Strike { strike, count, .. }) => {
+                ParsedEvent::Strike { strike, count, .. } => {
                     self.count_strikes += 1;
                     self.check_count(count);
 
@@ -429,7 +493,7 @@ where
                 },
                 [ParsedEventDiscriminants::StrikeOut]
                 // TODO handle every single member of this variant
-                (index, ParsedEvent::StrikeOut { strike, .. }) => {
+                ParsedEvent::StrikeOut { strike, .. } => {
                     if self.count_strikes < 2 {
                         warn!("Unexpected strikeout in {}: expected 2 strikes in the count, but there were {}", self.game_id, self.count_strikes);
                     }
@@ -445,7 +509,7 @@ where
                 },
                 [ParsedEventDiscriminants::Foul]
                 // TODO handle every single member of this variant
-                (index, ParsedEvent::Foul { foul, count, .. }) => {
+                ParsedEvent::Foul { foul, count, .. } => {
                     // Falsehoods...
                     if !(foul == FoulType::Ball && self.count_strikes >= 2) {
                         self.count_strikes += 1;
@@ -461,7 +525,7 @@ where
                 // Note this is NOT a baseball Hit. This is a batted ball.
                 [ParsedEventDiscriminants::Hit]
                 // TODO handle every single member of this variant
-                (index, ParsedEvent::Hit { batter, .. }) => {
+                ParsedEvent::Hit { batter, .. } => {
                     self.check_batter(batter);
 
                     self.phase = GamePhase::ExpectFairBallOutcome(index);
@@ -469,7 +533,7 @@ where
                 },
                 [ParsedEventDiscriminants::Walk]
                 // TODO handle every single member of this variant
-                (index, ParsedEvent::Walk { batter, .. }) => {
+                ParsedEvent::Walk { batter, .. } => {
                     self.check_batter(batter);
                     self.finish_pa();
 
@@ -478,7 +542,7 @@ where
                 },
                 [ParsedEventDiscriminants::HitByPitch]
                 // TODO handle every single member of this variant
-                (index, ParsedEvent::HitByPitch { batter, .. }) => {
+                ParsedEvent::HitByPitch { batter, .. } => {
                     self.check_batter(batter);
                     self.finish_pa();
 
@@ -486,11 +550,11 @@ where
                         .build_some(TaxaEventType::HitByPitch)
                 },
             ),
-            GamePhase::ExpectFairBallOutcome(contact_event_index) => extract_next!(
-                self.events,
+            GamePhase::ExpectFairBallOutcome(contact_event_index) => game_event!(
+                (previous_event, event),
                 [ParsedEventDiscriminants::CaughtOut]
                 // TODO handle every single member of this variant
-                (index, ParsedEvent::CaughtOut { batter, .. }) => {
+                ParsedEvent::CaughtOut { batter, .. } => {
                     self.check_batter(batter);
                     self.finish_pa();
                     self.add_out();
@@ -500,7 +564,7 @@ where
                 },
                 [ParsedEventDiscriminants::GroundedOut]
                 // TODO handle every single member of this variant
-                (index, ParsedEvent::GroundedOut { batter, .. }) => {
+                ParsedEvent::GroundedOut { batter, .. } => {
                     self.check_batter(batter);
                     self.finish_pa();
                     self.add_out();
@@ -510,7 +574,7 @@ where
                 },
                 [ParsedEventDiscriminants::BatterToBase]
                 // TODO handle every single member of this variant
-                (index, ParsedEvent::BatterToBase { batter, distance, ..  }) => {
+                ParsedEvent::BatterToBase { batter, distance, ..  } => {
                     self.check_batter(batter);
                     self.finish_pa();
 
@@ -538,7 +602,7 @@ where
                 },
                 [ParsedEventDiscriminants::FieldingError]
                 // TODO handle every single member of this variant
-                (index, ParsedEvent::FieldingError { batter, .. }) => {
+                ParsedEvent::FieldingError { batter, .. } => {
                     self.check_batter(batter);
                     self.finish_pa();
 
@@ -548,7 +612,7 @@ where
                 },
                 [ParsedEventDiscriminants::Homer]
                 // TODO handle every single member of this variant
-                (index, ParsedEvent::Homer { batter, .. }) => {
+                ParsedEvent::Homer { batter, .. } => {
                     self.check_batter(batter);
                     self.finish_pa();
 
@@ -557,10 +621,10 @@ where
                         .build_some(TaxaEventType::HomeRun)
                 },
             ),
-            GamePhase::ExpectInningEnd => extract_next!(
-                self.events,
+            GamePhase::ExpectInningEnd => game_event!(
+                (previous_event, event),
                 [ParsedEventDiscriminants::InningEnd]
-                (_, ParsedEvent::InningEnd { number, side }) => {
+                ParsedEvent::InningEnd { number, side } => {
                     if number != self.inning_number {
                         warn!("Unexpected inning number in {}: expected {}, but saw {number}", self.game_id, self.inning_number);
                     }
@@ -573,11 +637,11 @@ where
                     None
                 },
             ),
-            GamePhase::ExpectMoundVisitOutcome => extract_next!(
-                self.events,
+            GamePhase::ExpectMoundVisitOutcome => game_event!(
+                (previous_event, event),
                 [ParsedEventDiscriminants::PitcherRemains]
                 // TODO handle every single member of this variant
-                (_, ParsedEvent::PitcherRemains { .. }) => {
+                ParsedEvent::PitcherRemains { .. } => {
                     // I think this is not always ExpectNowBatting. I may have
                     // to store the state-to-return-to as a data member of
                     // GamePhase::ExpectMoundVisitOutcome
@@ -586,7 +650,7 @@ where
                 },
                 [ParsedEventDiscriminants::PitcherSwap]
                 // TODO handle every single member of this variant
-                (_, ParsedEvent::PitcherSwap { .. }) => {
+                ParsedEvent::PitcherSwap { .. } => {
                     // I think this is not always ExpectNowBatting. I may have
                     // to store the state-to-return-to as a data member of
                     // GamePhase::ExpectMoundVisitOutcome
@@ -594,6 +658,10 @@ where
                     None
                 },
             ),
-        }
+        }?;
+        
+        self.prev_event_type = this_event_discriminant;
+        
+        Ok(result)
     }
 }

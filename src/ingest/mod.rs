@@ -154,10 +154,22 @@ pub async fn ingest_task(pool: Db, client: ClientWithMiddleware, taxa: Taxa) {
             game_data.day,
         );
 
-        let parsed = mmolb_parsing::process_events(&game_data);
+        // I'm adding enumeration to parsed, then stripping it out for 
+        // the iterator fed to Game::new, on purpose. I need the 
+        // counting to count every event, but I don't need the count
+        // inside Game::new.
+        let mut parsed = mmolb_parsing::process_events(&game_data)
+            .into_iter()
+            .zip(&game_data.event_log)
+            .enumerate();
 
-        let mut game = Game::new(&game_info.game_id, parsed.into_iter().enumerate())
-            .expect("TODO Error handling");
+        let mut game = {
+            let mut parsed_for_game = (&mut parsed)
+                .map(|(_, (parsed, _))| parsed);
+
+            Game::new(&game_info.game_id, &mut parsed_for_game)
+                .expect("TODO Error handling")
+        };
 
         info!(
             "Constructed game for for {} {} @ {} {} s{}d{}",
@@ -176,12 +188,13 @@ pub async fn ingest_task(pool: Db, client: ClientWithMiddleware, taxa: Taxa) {
 
             conn.transaction::<_, diesel::result::Error, _>(|mut conn| {
                 async move {
-                    loop {
-                        let detail = game.next().expect("TODO Error handling");
+                    for (index, (parsed, raw)) in parsed {
+                        info!("Applying event \"{}\"", raw.message);
+                        
+                        let detail = game.next(index, parsed).expect("TODO Error handling");
 
                         if let Some(detail) = detail {
                             db::insert_event(&mut conn, taxa_ref, ingest_id, &detail).await?;
-                            info!("Inserted {:?}", detail);
                         }
                     }
 
