@@ -23,12 +23,15 @@ create table data.events (
     ingest bigserial references data.ingests not null,
     game_id text not null,
     game_event_index int not null,
+    -- the event index for the "<player> hit a <distance> to <destination>"
+    -- event, if there is one
+    contact_game_event_index int,
     inning int not null,
     top_of_inning boolean not null,
 
     -- game data
-    event_type bigserial references taxa.event_type not null,
-    hit_type bigserial references taxa.hit_type, -- should be populated for every event_type==Hit
+    event_type bigint references taxa.event_type not null,
+    hit_type bigint references taxa.hit_type, -- should be populated for every event_type==Hit
     count_balls int not null,
     count_strikes int not null,
     outs_before int not null,
@@ -40,7 +43,11 @@ create table data.events (
     batter_count int not null, -- starts at 0 and increments every time a new batter steps up
     batter_name text not null,
     pitcher_name text not null,
-    fielder_names text[] not null
+    fielder_names text[] not null,
+
+    -- ensure there can't be nulls in the fielder_names array
+    constraint no_null_fielder_names
+        check ( cardinality(fielder_names) = cardinality(array_remove(fielder_names, null)))
 );
 
 create table data.event_baserunners (

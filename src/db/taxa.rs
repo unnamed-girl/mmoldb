@@ -92,11 +92,27 @@ impl Taxa {
         })
     }
 
-    pub fn event_type(&self, ty: TaxaEventType) -> i64 {
+    pub fn event_type_id(&self, ty: TaxaEventType) -> i64 {
         self.event_type_mapping[ty]
     }
 
-    pub fn hit_type(&self, ty: TaxaHitType) -> i64 {
+    pub fn hit_type_id(&self, ty: TaxaHitType) -> i64 {
         self.hit_type_mapping[ty]
+    }
+
+    pub fn event_type_from_id(&self, id: i64) -> TaxaEventType {
+        self.event_type_mapping
+            .iter()
+            .find(|(_, ty_id)| id == **ty_id)
+            .expect("TODO Handle unknown event type")
+            .0
+    }
+
+    pub fn hit_type_from_id(&self, id: i64) -> TaxaHitType {
+        self.hit_type_mapping
+            .iter()
+            .find(|(_, ty_id)| id == **ty_id)
+            .expect("TODO Handle unknown hit type")
+            .0
     }
 }

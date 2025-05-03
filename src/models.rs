@@ -29,9 +29,11 @@ pub struct NewEvent<'a> {
     pub ingest: i64,
     pub game_id: &'a str,
     pub game_event_index: i32,
+    pub contact_game_event_index: Option<i32>,
     pub inning: i32,
     pub top_of_inning: bool,
     pub event_type: i64,
+    pub hit_type: Option<i64>,
     pub count_balls: i32,
     pub count_strikes: i32,
     pub outs_before: i32,
@@ -41,6 +43,33 @@ pub struct NewEvent<'a> {
     pub batter_name: &'a str,
     pub pitcher_name: &'a str,
     pub fielder_names: Vec<&'a str>,
+}
+
+#[derive(Queryable, Selectable)]
+#[diesel(table_name = crate::data_schema::data::events)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct DbEvent {
+    pub id: i64,
+    pub ingest: i64,
+    pub game_id: String,
+    pub game_event_index: i32,
+    pub contact_game_event_index: Option<i32>,
+    pub inning: i32,
+    pub top_of_inning: bool,
+    pub event_type: i64,
+    pub hit_type: Option<i64>,
+    pub count_balls: i32,
+    pub count_strikes: i32,
+    pub outs_before: i32,
+    pub outs_after: i32,
+    pub ends_inning: bool,
+    pub batter_count: i32,
+    pub batter_name: String,
+    pub pitcher_name: String,
+    // Diesel forces array columns to have nullable entries because
+    // Postgres doesn't have a way to specify that they're not nullable.
+    // I have a constraint that should prevent that.
+    pub fielder_names: Vec<Option<String>>,
 }
 
 #[derive(Insertable)]

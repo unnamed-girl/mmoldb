@@ -27,8 +27,8 @@ pub enum SimError {
 }
 
 #[derive(Debug)]
-pub struct EventDetail<'a> {
-    pub game_id: &'a str,
+pub struct EventDetail<StrT> {
+    pub game_id: StrT,
     pub game_event_index: usize,
     pub contact_game_event_index: Option<usize>,
     pub inning: u8,
@@ -39,9 +39,9 @@ pub struct EventDetail<'a> {
     pub outs_after: i32,
     pub ends_inning: bool,
     pub batter_count: usize,
-    pub batter_name: &'a str,
-    pub pitcher_name: &'a str,
-    pub fielder_names: Vec<&'a str>,
+    pub batter_name: StrT,
+    pub pitcher_name: StrT,
+    pub fielder_names: Vec<StrT>,
 
     pub detail_type: TaxaEventType,
     pub hit_type: Option<TaxaHitType>,
@@ -89,7 +89,6 @@ pub struct Game<'g> {
     count_strikes: u8,
     previous_outs: i32,
     outs: i32,
-    active_batter_name: Option<&'g str>,
 }
 
 #[derive(Debug)]
@@ -211,11 +210,11 @@ impl<'a, 'g> EventDetailBuilder<'a, 'g> {
         self
     }
 
-    pub fn build_some(self, type_detail: TaxaEventType) -> Option<EventDetail<'g>> {
+    pub fn build_some(self, type_detail: TaxaEventType) -> Option<EventDetail<&'g str>> {
         Some(self.build(type_detail))
     }
 
-    pub fn build(self, type_detail: TaxaEventType) -> EventDetail<'g> {
+    pub fn build(self, type_detail: TaxaEventType) -> EventDetail<&'g str> {
         EventDetail {
             game_id: self.game.game_id,
             game_event_index: self.game_event_index,
@@ -229,8 +228,9 @@ impl<'a, 'g> EventDetailBuilder<'a, 'g> {
             ends_inning: false,
             batter_count: self.game.batting_team().batter_count
                 .expect("sim::Game state machine should ensure batter_count is set before any EventDetail is constructed"),
-            batter_name: self.game.active_batter_name
-                .expect("sim::Game state machine should ensure batter_name is set before any EventDetail is constructed"),
+            batter_name: self.game.active_batter()
+                .expect("sim::Game state machine should ensure batter_name is set before any EventDetail is constructed")
+                .name,
             pitcher_name: self.game.defending_team().pitcher_name,
             fielder_names: vec![],
             detail_type: type_detail,
@@ -356,8 +356,6 @@ impl<'g> Game<'g> {
             count_strikes: 0,
             previous_outs: 0,
             outs: 0,
-            // TODO Get this from lineup and batter count
-            active_batter_name: None,
         })
     }
 
@@ -404,17 +402,30 @@ impl<'g> Game<'g> {
         }
     }
 
-    fn check_batter(&self, batter_name: &str) {
-        if let Some(stored_batter_name) = self.active_batter_name {
-            if stored_batter_name != batter_name {
+    fn active_batter(&self) -> Option<&PositionedPlayer<&'g str>> {
+        if let Some(batter_count) = self.batting_team().batter_count {
+            let lineup = &self.batting_team().lineup;
+            Some(&lineup[batter_count % lineup.len()])
+        } else {
+            None
+        }
+    }
+
+    fn check_batter(&self, batter_name: &str, event_type: ParsedEventDiscriminants) {
+        if let Some(active_batter) = self.active_batter() {
+            if active_batter.name != batter_name {
                 warn!(
-                    "Unexpected batter name in Hit: Expected {}, but saw {}",
-                    stored_batter_name
+                    "Unexpected batter name in {:#?}: Expected {}, but saw {}",
+                    event_type,
+                    active_batter.name,
                     batter_name,
                 );
             }
         } else {
-            warn!("Unexpected batter name in Hit: Expected no batter, but saw {batter_name} ");
+            warn!(
+                "Unexpected batter name in {:#?}: Expected no batter, but saw {batter_name} ",
+                event_type,
+            );
         }
     }
 
@@ -425,6 +436,15 @@ impl<'g> Game<'g> {
             game_event_index,
             advances: Vec::new(),
             hit_type: None,
+        }
+    }
+
+    // The semantics of this method are that None + 1 == Some(0)
+    pub fn increment_batter_count(&mut self) {
+        if let Some(batter_count) = &mut self.batting_team_mut().batter_count {
+            *batter_count += 1;
+        } else {
+            self.batting_team_mut().batter_count = Some(0);
         }
     }
 
@@ -453,7 +473,7 @@ impl<'g> Game<'g> {
         &mut self,
         index: usize,
         event: ParsedEvent<&'g str>,
-    ) -> Result<Option<EventDetail>, SimError> {
+    ) -> Result<Option<EventDetail<&'g str>>, SimError> {
         self.previous_outs = self.outs;
         let previous_event = self.prev_event_type;
         let this_event_discriminant = event.discriminant();
@@ -542,27 +562,9 @@ impl<'g> Game<'g> {
             GamePhase::ExpectNowBatting => game_event!(
                (previous_event, event),
                [ParsedEventDiscriminants::NowBatting]
-               // TODO handle every single member of this variant
-               ParsedEvent::NowBatting { batter: batter_name, .. } => {
-                   self.active_batter_name = Some(batter_name);
-                   let batter_count = if let Some(batter_count) = &mut self.batting_team_mut().batter_count {
-                       *batter_count += 1;
-                       *batter_count
-                   } else {
-                       self.batting_team_mut().batter_count = Some(0);
-                       0
-                   };
-
-                   let lineup = &self.batting_team().lineup;
-                   let predicted_batter_name = lineup[batter_count % lineup.len()].name;
-                   if batter_name != predicted_batter_name {
-                       warn!(
-                            "Unexpected batter up in {}: expected {}, but saw {}",
-                            self.game_id,
-                            predicted_batter_name,
-                            batter_name,
-                       );
-                   }
+               ParsedEvent::NowBatting { batter: batter_name, stats } => {
+                   self.increment_batter_count();
+                   self.check_batter(batter_name, event.discriminant());
 
                    self.phase = GamePhase::ExpectPitch;
                    None
@@ -632,7 +634,7 @@ impl<'g> Game<'g> {
                 [ParsedEventDiscriminants::Hit]
                 // TODO handle every single member of this variant
                 ParsedEvent::Hit { batter, .. } => {
-                    self.check_batter(batter);
+                    self.check_batter(batter, event.discriminant());
 
                     self.phase = GamePhase::ExpectFairBallOutcome(index);
                     None
@@ -640,7 +642,7 @@ impl<'g> Game<'g> {
                 [ParsedEventDiscriminants::Walk]
                 // TODO handle every single member of this variant
                 ParsedEvent::Walk { batter, .. } => {
-                    self.check_batter(batter);
+                    self.check_batter(batter, event.discriminant());
                     self.finish_pa();
 
                     self.detail_builder(index)
@@ -649,7 +651,7 @@ impl<'g> Game<'g> {
                 [ParsedEventDiscriminants::HitByPitch]
                 // TODO handle every single member of this variant
                 ParsedEvent::HitByPitch { batter, .. } => {
-                    self.check_batter(batter);
+                    self.check_batter(batter, event.discriminant());
                     self.finish_pa();
 
                     self.detail_builder(index)
@@ -661,7 +663,7 @@ impl<'g> Game<'g> {
                 [ParsedEventDiscriminants::CaughtOut]
                 // TODO handle every single member of this variant
                 ParsedEvent::CaughtOut { batter, .. } => {
-                    self.check_batter(batter);
+                    self.check_batter(batter, event.discriminant());
                     self.finish_pa();
                     self.add_out();
                     self.detail_builder(index)
@@ -671,7 +673,7 @@ impl<'g> Game<'g> {
                 [ParsedEventDiscriminants::GroundedOut]
                 // TODO handle every single member of this variant
                 ParsedEvent::GroundedOut { batter, .. } => {
-                    self.check_batter(batter);
+                    self.check_batter(batter, event.discriminant());
                     self.finish_pa();
                     self.add_out();
                     self.detail_builder(index)
@@ -681,7 +683,7 @@ impl<'g> Game<'g> {
                 [ParsedEventDiscriminants::BatterToBase]
                 // TODO handle every single member of this variant
                 ParsedEvent::BatterToBase { batter, distance, ..  } => {
-                    self.check_batter(batter);
+                    self.check_batter(batter, event.discriminant());
                     self.finish_pa();
 
                     match match distance {
@@ -709,7 +711,7 @@ impl<'g> Game<'g> {
                 [ParsedEventDiscriminants::FieldingError]
                 // TODO handle every single member of this variant
                 ParsedEvent::FieldingError { batter, .. } => {
-                    self.check_batter(batter);
+                    self.check_batter(batter, event.discriminant());
                     self.finish_pa();
 
                     self.detail_builder(index)
@@ -719,7 +721,7 @@ impl<'g> Game<'g> {
                 [ParsedEventDiscriminants::Homer]
                 // TODO handle every single member of this variant
                 ParsedEvent::Homer { batter, .. } => {
-                    self.check_batter(batter);
+                    self.check_batter(batter, event.discriminant());
                     self.finish_pa();
 
                     self.detail_builder(index)
@@ -729,7 +731,7 @@ impl<'g> Game<'g> {
                 [ParsedEventDiscriminants::DoublePlay]
                 // TODO handle every single member of this variant
                 ParsedEvent::DoublePlay { batter, .. } => {
-                    self.check_batter(batter);
+                    self.check_batter(batter, event.discriminant());
                     self.finish_pa();
                     self.add_out();
                     self.add_out(); // It's a double play -- we add two outs
@@ -741,7 +743,7 @@ impl<'g> Game<'g> {
                 [ParsedEventDiscriminants::ForceOut]
                 // TODO handle every single member of this variant
                 ParsedEvent::ForceOut { batter, .. } => {
-                    self.check_batter(batter);
+                    self.check_batter(batter, event.discriminant());
                     self.finish_pa();
                     self.add_out();
 

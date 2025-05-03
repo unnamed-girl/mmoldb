@@ -179,32 +179,27 @@ pub async fn ingest_task(pool: Db, client: ClientWithMiddleware, taxa: Taxa) {
             game_data.day,
         );
 
-        // I'm wrapping this in a transaction so I get errors
-        // And a scope to drop conn at the appropriate time
+        let detail_events: Vec<_> = parsed
+            .flat_map(|(index, (parsed, raw))| {
+                let unparsed = parsed.clone().unparse();
+                assert_eq!(unparsed, raw.message);
+
+                info!("Applying event \"{}\"", raw.message);
+
+                game.next(index, parsed).expect("TODO Error handling")
+            })
+            .collect();
+
+        // Scope to drop conn as soon as I'm done with it
         {
             let mut conn = pool.get().await.expect("TODO Error handling");
-
-            conn.transaction::<_, diesel::result::Error, _>(|mut conn| {
-                async move {
-                    for (index, (parsed, raw)) in parsed {
-                        info!("Applying event \"{}\"", raw.message);
-
-                        let detail = game.next(index, parsed).expect("TODO Error handling");
-
-                        if let Some(detail) = detail {
-                            db::insert_event(&mut conn, taxa_ref, ingest_id, &detail).await?;
-                        }
-                    }
-
-                    Ok(())
-                }
-                .scope_boxed()
-            })
-            .await
-            .expect("TODO Error handling");
-
-            break; // TEMP: Only process one (1) game
+            db::insert_events(&mut conn, taxa_ref, ingest_id, &detail_events).await.expect("TODO Error handling");
+            
+            // We can rebuild them
+            db::events_for_game(&mut conn, taxa_ref, &game_info.game_id).await.expect("TODO Error handling");
         }
+
+        break; // TEMP: Only process one (1) game
     }
 
     info!("{num_incomplete_games_skipped} incomplete games skipped");
