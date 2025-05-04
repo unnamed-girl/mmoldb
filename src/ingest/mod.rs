@@ -124,9 +124,10 @@ pub async fn ingest_task(pool: Db, client: ClientWithMiddleware, taxa: Taxa) {
             continue;
         }
 
-        let already_ingested = db::has_game(&game_info.game_id)
-            .await
-            .expect("TODO Error handling");
+        let already_ingested = false;
+        // let already_ingested = db::has_game(&game_info.game_id)
+        //     .await
+        //     .expect("TODO Error handling");
 
         if already_ingested {
             num_already_ingested_games_skipped += 1;
@@ -158,7 +159,10 @@ pub async fn ingest_task(pool: Db, client: ClientWithMiddleware, taxa: Taxa) {
         // the iterator fed to Game::new, on purpose. I need the
         // counting to count every event, but I don't need the count
         // inside Game::new.
-        let mut parsed = mmolb_parsing::process_events(&game_data)
+        let parsed_copy = mmolb_parsing::process_events(&game_data);
+        // This clone is probably avoidable, but I don't feel like it right now
+        let mut parsed = parsed_copy
+            .clone()
             .into_iter()
             .zip(&game_data.event_log)
             .enumerate();
@@ -191,12 +195,37 @@ pub async fn ingest_task(pool: Db, client: ClientWithMiddleware, taxa: Taxa) {
             .collect();
 
         // Scope to drop conn as soon as I'm done with it
-        {
+        let inserted_events = {
             let mut conn = pool.get().await.expect("TODO Error handling");
+            // This is temporary during debugging. In production, we'll just 
+            // skip games we already have.
+            db::delete_events_for_game(&mut conn, &game_info.game_id).await.expect("TODO Error handling");
+            
             db::insert_events(&mut conn, taxa_ref, ingest_id, &detail_events).await.expect("TODO Error handling");
             
             // We can rebuild them
-            db::events_for_game(&mut conn, taxa_ref, &game_info.game_id).await.expect("TODO Error handling");
+            db::events_for_game(&mut conn, taxa_ref, &game_info.game_id).await.expect("TODO Error handling")
+        };
+        
+        assert_eq!(inserted_events.len(), detail_events.len());
+        for event in inserted_events {
+            let index = event.game_event_index;
+            let contact_index = event.contact_game_event_index;
+            
+            assert_eq!(
+                parsed_copy[index],
+                event.to_parsed(),
+                "Event round-trip failed"
+            );
+            
+            if let Some(index) = contact_index {
+                assert_eq!(
+                    parsed_copy[index],
+                    event.to_parsed_contact(),
+                    "Contact event round-trip failed"
+                );
+
+            }
         }
 
         break; // TEMP: Only process one (1) game

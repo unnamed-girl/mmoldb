@@ -1,7 +1,7 @@
 use crate::db::{TaxaEventType, TaxaHitType};
 use log::{debug, info, warn};
 use mmolb_parsing::ParsedEvent;
-use mmolb_parsing::enums::{Distance, FoulType, HomeAway, StrikeType, TopBottom};
+use mmolb_parsing::enums::{Distance, FieldingErrorType, FoulType, HitDestination, HitType, HomeAway, StrikeType, TopBottom};
 use mmolb_parsing::parsed_event::{ParsedEventDiscriminants, PositionedPlayer};
 use std::fmt::Debug;
 use strum::IntoDiscriminant;
@@ -668,7 +668,7 @@ impl<'g> Game<'g> {
                     self.add_out();
                     self.detail_builder(index)
                         .contact_event_index(contact_event_index)
-                        .build_some(TaxaEventType::Out) // TODO Different out types?
+                        .build_some(TaxaEventType::CaughtOut)
                 },
                 [ParsedEventDiscriminants::GroundedOut]
                 // TODO handle every single member of this variant
@@ -678,7 +678,7 @@ impl<'g> Game<'g> {
                     self.add_out();
                     self.detail_builder(index)
                         .contact_event_index(contact_event_index)
-                        .build_some(TaxaEventType::Out) // TODO Different out types?
+                        .build_some(TaxaEventType::GroundedOut)
                 },
                 [ParsedEventDiscriminants::BatterToBase]
                 // TODO handle every single member of this variant
@@ -749,7 +749,7 @@ impl<'g> Game<'g> {
 
                     self.detail_builder(index)
                         .contact_event_index(contact_event_index)
-                        .build_some(TaxaEventType::Out) // TODO Different out types?
+                        .build_some(TaxaEventType::ForceOut)
                 },
             ),
             GamePhase::ExpectInningEnd => game_event!(
@@ -817,5 +817,157 @@ impl<'g> Game<'g> {
         self.prev_event_type = this_event_discriminant;
 
         Ok(result)
+    }
+}
+
+impl<StrT: AsRef<str>> EventDetail<StrT> {
+    fn count(&self) -> (u8, u8) {
+        (self.count_balls, self.count_strikes)
+    }
+
+    pub fn to_parsed(&self) -> ParsedEvent<&str> {
+        match self.detail_type {
+            TaxaEventType::Ball => {
+                ParsedEvent::Ball {
+                    steals: vec![],
+                    count: self.count(),
+                }
+            }
+            TaxaEventType::StrikeLooking => {
+                ParsedEvent::Strike {
+                    strike: StrikeType::Looking,
+                    steals: vec![],
+                    count: self.count(),
+                }
+            }
+            TaxaEventType::StrikeSwinging => {
+                ParsedEvent::Strike {
+                    strike: StrikeType::Swinging,
+                    steals: vec![],
+                    count: self.count(),
+                }
+            }
+            TaxaEventType::FoulTip => {
+                ParsedEvent::Foul {
+                    foul: FoulType::Tip,
+                    steals: vec![],
+                    count: self.count(),
+                }
+            }
+            TaxaEventType::FoulBall => {
+                ParsedEvent::Foul {
+                    foul: FoulType::Ball,
+                    steals: vec![],
+                    count: self.count(),
+                }
+            }
+            TaxaEventType::Hit => {
+                ParsedEvent::BatterToBase {
+                    batter: self.batter_name.as_ref(),
+                    distance: match self.hit_type {
+                        None => {
+                            panic!("EventDetail with the Hit type must have a hit_type")
+                        }
+                        Some(TaxaHitType::Single) => Distance::Single,
+                        Some(TaxaHitType::Double) => Distance::Double,
+                        Some(TaxaHitType::Triple) => Distance::Triple,
+                    },
+                    hit: HitType::GroundBall,  // TODO
+                    fielder: todo!(),
+                    scores: vec![],
+                    advances: vec![],
+                }
+            }
+            TaxaEventType::ForceOut => {
+                ParsedEvent::ForceOut {
+                    batter: self.batter_name.as_ref(),
+                    fielders: vec![],
+                    hit: HitType::GroundBall,  // TODO
+                    out: todo!(),
+                    scores: vec![],
+                    advances: vec![],
+                }
+            }
+            TaxaEventType::CaughtOut => {
+                ParsedEvent::CaughtOut {
+                    batter: self.batter_name.as_ref(),
+                    hit: HitType::GroundBall,  // TODO
+                    catcher: todo!(),
+                    scores: vec![],
+                    advances: vec![],
+                    sacrifice: false,  // TODO
+                    perfect: false,  // TODO
+                }
+            }
+            TaxaEventType::GroundedOut => {
+                ParsedEvent::GroundedOut {
+                    batter: self.batter_name.as_ref(),
+                    fielders: vec![],
+                    scores: vec![],
+                    advances: vec![],
+                }
+            }
+            TaxaEventType::Walk => {
+                ParsedEvent::Walk {
+                    batter: self.batter_name.as_ref(),
+                    scores: vec![],
+                    advances: vec![],
+                }
+            }
+            TaxaEventType::HomeRun => {
+                ParsedEvent::Homer {
+                    batter: self.batter_name.as_ref(),
+                    hit: HitType::GroundBall,  // TODO
+                    destination: HitDestination::ShortStop,  // TODO
+                    scores: vec![],
+                }
+            }
+            TaxaEventType::FieldingError => {
+                ParsedEvent::FieldingError {
+                    batter: self.batter_name.as_ref(),
+                    fielder: todo!(),
+                    error: FieldingErrorType::Throwing,  // TODO
+                    scores: vec![],
+                    advances: vec![],
+                }
+            }
+            TaxaEventType::HitByPitch => {
+                ParsedEvent::HitByPitch {
+                    batter: self.batter_name.as_ref(),
+                    scores: vec![],
+                    advances: vec![],
+                }
+            }
+            TaxaEventType::DoublePlay => { 
+                ParsedEvent::DoublePlay {
+                    batter: self.batter_name.as_ref(),
+                    hit: HitType::GroundBall,  // TODO
+                    fielders: vec![],
+                    plays: vec![],
+                    scores: vec![],
+                    advances: vec![],
+                    sacrifice: false,  // TODO
+                }
+            }
+        }
+    }
+
+    pub fn to_parsed_contact(&self) -> ParsedEvent<&str> {
+        match self.detail_type {
+            TaxaEventType::Ball => { todo!() }
+            TaxaEventType::StrikeLooking => { todo!() }
+            TaxaEventType::StrikeSwinging => { todo!() }
+            TaxaEventType::FoulTip => { todo!() }
+            TaxaEventType::FoulBall => { todo!() }
+            TaxaEventType::Hit => { todo!() }
+            TaxaEventType::ForceOut => { todo!() }
+            TaxaEventType::CaughtOut => { todo!() }
+            TaxaEventType::GroundedOut => { todo!() }
+            TaxaEventType::Walk => { todo!() }
+            TaxaEventType::HomeRun => { todo!() }
+            TaxaEventType::FieldingError => { todo!() }
+            TaxaEventType::HitByPitch => { todo!() }
+            TaxaEventType::DoublePlay => { todo!() }
+        }
     }
 }

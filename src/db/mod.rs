@@ -10,8 +10,6 @@ pub use crate::db::taxa::{Taxa, TaxaEventType, TaxaHitType};
 use crate::ingest::EventDetail;
 use crate::models::{DbEvent, Ingest, NewIngest};
 use chrono::{DateTime, Utc};
-use rocket::futures::StreamExt;
-use rocket::http::hyper::body::HttpBody;
 use rocket_db_pools::diesel::AsyncPgConnection;
 use rocket_db_pools::diesel::prelude::*;
 
@@ -37,8 +35,24 @@ pub async fn start_ingest(conn: &mut AsyncPgConnection, start: DateTime<Utc>) ->
     .await
 }
 
-pub async fn has_game(game_id: &str) -> QueryResult<bool> {
-    Ok(false)
+pub async fn has_game(conn: &mut AsyncPgConnection, with_id: &str) -> QueryResult<bool> {
+    use diesel::dsl::*;
+    use crate::data_schema::data::events::dsl::*;
+
+    select(exists(events.filter(game_id.eq(with_id))))
+        .get_result(conn)
+        .await
+}
+
+pub async fn delete_events_for_game(conn: &mut AsyncPgConnection, with_id: &str) -> QueryResult<()> {
+    use diesel::dsl::*;
+    use crate::data_schema::data::events::dsl::*;
+
+    delete(events.filter(game_id.eq(with_id)))
+        .execute(conn)
+        .await?;
+    
+    Ok(())
 }
 
 pub async fn events_for_game<'e>(
