@@ -1,12 +1,14 @@
-use crate::db::{TaxaEventType, TaxaHitType, TaxaFairBallType};
+use crate::db::{TaxaEventType, TaxaFairBallType, TaxaHitType};
+use itertools::Itertools;
 use log::{debug, info, warn};
 use mmolb_parsing::ParsedEventMessage;
-use mmolb_parsing::enums::{Distance, FieldingErrorType, FoulType, HitDestination, HitType, HomeAway, StrikeType, TopBottom};
-use mmolb_parsing::parsed_event::{ParsedEventMessageDiscriminants, PositionedPlayer};
+use mmolb_parsing::enums::{
+    Distance, FieldingErrorType, FoulType, HitDestination, HitType, HomeAway, StrikeType, TopBottom,
+};
+use mmolb_parsing::parsed_event::{ParsedEventMessageDiscriminants, PositionedPlayer, RunnerAdvance};
 use std::fmt::Debug;
 use strum::IntoDiscriminant;
 use thiserror::Error;
-use itertools::Itertools;
 
 #[derive(Debug, Error)]
 pub enum SimError {
@@ -47,7 +49,7 @@ pub struct EventDetail<StrT> {
     pub hit_type: Option<TaxaHitType>,
     pub fair_ball_type: Option<TaxaFairBallType>,
 
-    pub advances: Vec<()>,
+    pub advances: Vec<RunnerAdvance<StrT>>,
 }
 
 #[derive(Debug)]
@@ -200,7 +202,7 @@ struct EventDetailBuilder<'a, 'g> {
     fair_ball_type: Option<TaxaFairBallType>,
     hit_type: Option<TaxaHitType>,
     fielders: Vec<PositionedPlayer<&'g str>>,
-    advances: Vec<()>,
+    advances: Vec<RunnerAdvance<&'g str>>,
 }
 
 impl<'a, 'g> EventDetailBuilder<'a, 'g> {
@@ -220,8 +222,45 @@ impl<'a, 'g> EventDetailBuilder<'a, 'g> {
         self
     }
 
-    fn add_fielder(mut self, fielder: PositionedPlayer<&'g str>) -> Self {
-        self.fielders.push(fielder);
+    fn fielder(mut self, fielder: PositionedPlayer<&'g str>) -> Self {
+        if !self.fielders.is_empty() {
+            warn!("EventDetailBuilder overwrote existing fielders");
+        }
+        
+        self.fielders = vec![fielder];
+        self
+    }
+
+    fn fielders(
+        mut self,
+        fielders: Vec<PositionedPlayer<&'g str>>,
+    ) -> Self {
+        if !self.fielders.is_empty() {
+            warn!("EventDetailBuilder overwrote existing fielders");
+        }
+
+        self.fielders = fielders;
+        self
+    }
+
+    fn advance(mut self, advance: RunnerAdvance<&'g str>) -> Self {
+        if !self.advances.is_empty() {
+            warn!("EventDetailBuilder overwrote existing advances");
+        }
+        
+        self.advances = vec![advance];
+        self
+    }
+
+    fn advances(
+        mut self,
+        advances: Vec<RunnerAdvance<&'g str>>,
+    ) -> Self {
+        if !self.advances.is_empty() {
+            warn!("EventDetailBuilder overwrote existing advances");
+        }
+
+        self.advances = advances;
         self
     }
 
@@ -431,9 +470,7 @@ impl<'g> Game<'g> {
             if active_batter.name != batter_name {
                 warn!(
                     "Unexpected batter name in {:#?}: Expected {}, but saw {}",
-                    event_type,
-                    active_batter.name,
-                    batter_name,
+                    event_type, active_batter.name, batter_name,
                 );
             }
         } else {
@@ -648,7 +685,6 @@ impl<'g> Game<'g> {
                             FoulType::Ball => TaxaEventType::FoulBall,
                         })
                 },
-                // Note this is NOT a baseball Hit. This is a batted ball.
                 [ParsedEventMessageDiscriminants::FairBall]
                 // TODO handle every single member of this variant
                 ParsedEventMessage::FairBall { batter, hit, .. } => {
@@ -686,45 +722,42 @@ impl<'g> Game<'g> {
                     self.add_out();
                     self.detail_builder(index)
                         .fair_ball(fair_ball_index, fair_ball_type.into())
-                        .add_fielder(*catcher)
+                        .fielder(*catcher)
                         .build_some(TaxaEventType::CaughtOut)
                 },
                 [ParsedEventMessageDiscriminants::GroundedOut]
                 // TODO handle every single member of this variant
-                ParsedEventMessage::GroundedOut { batter, .. } => {
+                ParsedEventMessage::GroundedOut { batter, fielders, .. } => {
                     self.check_batter(batter, event.discriminant());
                     self.finish_pa();
                     self.add_out();
                     self.detail_builder(index)
                         .fair_ball(fair_ball_index, fair_ball_type.into())
+                        .fielders(fielders.clone())
                         .build_some(TaxaEventType::GroundedOut)
                 },
                 [ParsedEventMessageDiscriminants::BatterToBase]
                 // TODO handle every single member of this variant
-                ParsedEventMessage::BatterToBase { batter, distance, ..  } => {
+                ParsedEventMessage::BatterToBase { batter, distance, fielder, advances, ..  } => {
                     self.check_batter(batter, event.discriminant());
                     self.finish_pa();
 
-                    let hit_type = match distance {
-                        Distance::Single => { TaxaHitType::Single }
-                        Distance::Double => { TaxaHitType::Double }
-                        Distance::Triple => { TaxaHitType::Triple }
-                    };
-
                     self.detail_builder(index)
                         .fair_ball(fair_ball_index, fair_ball_type.into())
-                        .hit_type(hit_type)
+                        .hit_type((*distance).into())
+                        .fielder(*fielder)
+                        .advances(advances.clone())
                         .build_some(TaxaEventType::Hit)
-
                 },
                 [ParsedEventMessageDiscriminants::ReachOnFieldingError]
                 // TODO handle every single member of this variant
-                ParsedEventMessage::ReachOnFieldingError { batter, .. } => {
+                ParsedEventMessage::ReachOnFieldingError { batter, fielder, .. } => {
                     self.check_batter(batter, event.discriminant());
                     self.finish_pa();
 
                     self.detail_builder(index)
                         .fair_ball(fair_ball_index, fair_ball_type.into())
+                        .fielder(*fielder)
                         .build_some(TaxaEventType::FieldingError)
                 },
                 [ParsedEventMessageDiscriminants::HomeRun]
@@ -841,10 +874,21 @@ impl<'g> Game<'g> {
     }
 }
 
-fn positioned_player_as_ref<StrT: AsRef<str>>(p: &PositionedPlayer<StrT>) -> PositionedPlayer<&str> {
+fn positioned_player_as_ref<StrT: AsRef<str>>(
+    p: &PositionedPlayer<StrT>,
+) -> PositionedPlayer<&str> {
     PositionedPlayer {
         name: p.name.as_ref(),
         position: p.position,
+    }
+}
+
+fn runner_advance_as_ref<StrT: AsRef<str>>(
+    a: &RunnerAdvance<StrT>,
+) -> RunnerAdvance<&str> {
+    RunnerAdvance {
+        runner: a.runner.as_ref(),
+        base: a.base,
     }
 }
 
@@ -852,15 +896,35 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
     fn count(&self) -> (u8, u8) {
         (self.count_balls, self.count_strikes)
     }
+    
+    fn fielders_iter(&self) -> impl Iterator<Item = PositionedPlayer<&str>> {
+        self
+            .fielders
+            .iter()
+            .map(positioned_player_as_ref)
+    }
+    
+    fn fielders(&self) -> Vec<PositionedPlayer<&str>> {
+        self.fielders_iter().collect()
+    }
+    
+    fn advances_iter(&self) -> impl Iterator<Item = RunnerAdvance<&str>> {
+        self
+            .advances
+            .iter()
+            .map(runner_advance_as_ref)
+    }
+    
+    fn advances(&self) -> Vec<RunnerAdvance<&str>> {
+        self.advances_iter().collect()
+    }
 
     pub fn to_parsed(&self) -> ParsedEventMessage<&str> {
         match self.detail_type {
-            TaxaEventType::Ball => {
-                ParsedEventMessage::Ball {
-                    steals: vec![],
-                    count: self.count(),
-                }
-            }
+            TaxaEventType::Ball => ParsedEventMessage::Ball {
+                steals: vec![],
+                count: self.count(),
+            },
             TaxaEventType::StrikeLooking => {
                 if self.outs_after > self.outs_before {
                     ParsedEventMessage::StrikeOut {
@@ -893,110 +957,114 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                     }
                 }
             }
-            TaxaEventType::FoulTip => {
-                ParsedEventMessage::Foul {
-                    foul: FoulType::Tip,
-                    steals: vec![],
-                    count: self.count(),
-                }
-            }
-            TaxaEventType::FoulBall => {
-                ParsedEventMessage::Foul {
-                    foul: FoulType::Ball,
-                    steals: vec![],
-                    count: self.count(),
-                }
-            }
+            TaxaEventType::FoulTip => ParsedEventMessage::Foul {
+                foul: FoulType::Tip,
+                steals: vec![],
+                count: self.count(),
+            },
+            TaxaEventType::FoulBall => ParsedEventMessage::Foul {
+                foul: FoulType::Ball,
+                steals: vec![],
+                count: self.count(),
+            },
             TaxaEventType::Hit => {
+                let (fielder,) = self
+                    .fielders_iter()
+                    .collect_tuple()
+                    .expect("Hit must have exactly one fielder. TODO Handle this properly.");
+
                 ParsedEventMessage::BatterToBase {
                     batter: self.batter_name.as_ref(),
                     distance: match self.hit_type {
                         None => {
-                            panic!("EventDetail with the Hit type must have a hit_type")
+                            panic!("EventDetail with the Hit detail_type must have a hit_type")
                         }
                         Some(TaxaHitType::Single) => Distance::Single,
                         Some(TaxaHitType::Double) => Distance::Double,
                         Some(TaxaHitType::Triple) => Distance::Triple,
                     },
-                    hit: HitType::GroundBall,  // TODO
-                    fielder: todo!(),
+                    hit: self.fair_ball_type
+                        .expect("BatterToBase type must have a fair_ball_type")
+                        .into(),
+                    fielder,
                     scores: vec![],
-                    advances: vec![],
+                    advances: self.advances(),
                 }
             }
             TaxaEventType::ForceOut => {
                 ParsedEventMessage::ForceOut {
                     batter: self.batter_name.as_ref(),
-                    fielders: vec![],
-                    hit: HitType::GroundBall,  // TODO
+                    fielders: self.fielders(),
+                    hit: HitType::GroundBall, // TODO
                     out: todo!(),
                     scores: vec![],
                     advances: vec![],
                 }
             }
             TaxaEventType::CaughtOut => {
-                let (catcher,) = self.fielders
-                    .iter()
-                    .map(positioned_player_as_ref)
+                let (catcher,) = self
+                    .fielders_iter()
                     .collect_tuple()
                     .expect("CaughtOut must have exactly one fielder. TODO Handle this properly.");
 
                 ParsedEventMessage::CaughtOut {
                     batter: self.batter_name.as_ref(),
-                    hit: self.fair_ball_type
-                        .expect("CaughtOut type must have a fair_ball_type.")
+                    hit: self
+                        .fair_ball_type
+                        .expect("CaughtOut type must have a fair_ball_type")
                         .into(),
                     catcher,
                     scores: vec![],
                     advances: vec![],
-                    sacrifice: false,  // TODO
-                    perfect: false,  // TODO
+                    sacrifice: false, // TODO
+                    perfect: false,   // TODO
                 }
             }
-            TaxaEventType::GroundedOut => {
-                ParsedEventMessage::GroundedOut {
-                    batter: self.batter_name.as_ref(),
-                    fielders: vec![],
-                    scores: vec![],
-                    advances: vec![],
-                }
-            }
-            TaxaEventType::Walk => {
-                ParsedEventMessage::Walk {
-                    batter: self.batter_name.as_ref(),
-                    scores: vec![],
-                    advances: vec![],
-                }
-            }
+            TaxaEventType::GroundedOut => ParsedEventMessage::GroundedOut {
+                batter: self.batter_name.as_ref(),
+                fielders: self.fielders(),
+                scores: vec![],
+                advances: vec![],
+            },
+            TaxaEventType::Walk => ParsedEventMessage::Walk {
+                batter: self.batter_name.as_ref(),
+                scores: vec![],
+                advances: vec![],
+            },
             TaxaEventType::HomeRun => {
                 ParsedEventMessage::HomeRun {
                     batter: self.batter_name.as_ref(),
-                    hit: HitType::GroundBall,  // TODO
-                    destination: HitDestination::ShortStop,  // TODO
+                    hit: self.fair_ball_type
+                        .expect("HomeRun type must have a fair_ball_type")
+                        .into(),
+                    destination: HitDestination::ShortStop, // TODO
                     scores: vec![],
                 }
             }
             TaxaEventType::FieldingError => {
+                let (fielder,) = self
+                    .fielders_iter()
+                    .collect_tuple()
+                    .expect("FieldingError must have exactly one fielder. TODO Handle this properly.");
+
                 ParsedEventMessage::ReachOnFieldingError {
                     batter: self.batter_name.as_ref(),
-                    fielder: todo!(),
-                    error: FieldingErrorType::Throwing,  // TODO
+                    fielder,
+                    error: FieldingErrorType::Throwing, // TODO
                     scores: vec![],
                     advances: vec![],
                 }
             }
-            TaxaEventType::HitByPitch => {
-                ParsedEventMessage::HitByPitch {
-                    batter: self.batter_name.as_ref(),
-                    scores: vec![],
-                    advances: vec![],
-                }
-            }
+            TaxaEventType::HitByPitch => ParsedEventMessage::HitByPitch {
+                batter: self.batter_name.as_ref(),
+                scores: vec![],
+                advances: vec![],
+            },
             TaxaEventType::DoublePlay => {
                 ParsedEventMessage::DoublePlayCaught {
                     batter: self.batter_name.as_ref(),
-                    hit: HitType::Popup,  // TODO
-                    fielders: vec![],
+                    hit: HitType::Popup, // TODO
+                    fielders: self.fielders(),
                     play: todo!(),
                     scores: vec![],
                     advances: vec![],

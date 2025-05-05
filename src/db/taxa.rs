@@ -69,6 +69,26 @@ impl<'a> AsInsertable<'a> for TaxaHitType {
     }
 }
 
+impl Into<mmolb_parsing::enums::Distance> for TaxaHitType {
+    fn into(self) -> mmolb_parsing::enums::Distance {
+        match self {
+            Self::Single => mmolb_parsing::enums::Distance::Single,
+            Self::Double => mmolb_parsing::enums::Distance::Double,
+            Self::Triple => mmolb_parsing::enums::Distance::Triple,
+        }
+    }
+}
+
+impl From<mmolb_parsing::enums::Distance> for TaxaHitType {
+    fn from(other: mmolb_parsing::enums::Distance) -> Self {
+        match other {
+            mmolb_parsing::enums::Distance::Single => Self::Single,
+            mmolb_parsing::enums::Distance::Double => Self::Double,
+            mmolb_parsing::enums::Distance::Triple => Self::Triple,
+        }
+    }
+}
+
 #[derive(
     Debug, enum_map::Enum, Eq, PartialEq, Hash, Copy, Clone, strum::Display, strum::EnumMessage,
 )]
