@@ -1,4 +1,4 @@
-use crate::db::{TaxaEventType, TaxaFairBallType, TaxaPosition, TaxaHitType};
+use crate::db::{TaxaEventType, TaxaFairBallType, TaxaPosition, TaxaHitType, TaxaBase};
 use itertools::Itertools;
 use log::{debug, info, warn};
 use mmolb_parsing::ParsedEventMessage;
@@ -30,6 +30,14 @@ pub enum SimError {
 }
 
 #[derive(Debug)]
+pub struct EventDetailRunner<StrT> {
+    pub name: StrT,
+    pub base_before: Option<TaxaBase>,
+    pub base_after: Option<TaxaBase>,
+    pub is_steal: bool,
+}
+
+#[derive(Debug)]
 pub struct EventDetail<StrT> {
     pub game_id: StrT,
     pub game_event_index: usize,
@@ -50,7 +58,7 @@ pub struct EventDetail<StrT> {
     pub fair_ball_type: Option<TaxaFairBallType>,
     pub fair_ball_direction: Option<TaxaPosition>,
 
-    pub advances: Vec<RunnerAdvance<StrT>>,
+    pub baserunners: Vec<EventDetailRunner<StrT>>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -82,6 +90,17 @@ pub struct TeamInGame<'g> {
     batter_count: Option<usize>,
 }
 
+#[derive(Debug, Clone)]
+struct GameState {
+    prev_event_type: ParsedEventMessageDiscriminants,
+    phase: GamePhase,
+    inning_number: u8,
+    inning_half: TopBottom,
+    count_balls: u8,
+    count_strikes: u8,
+    outs: i32,
+}
+
 #[derive(Debug)]
 pub struct Game<'g> {
     // Should never change
@@ -91,15 +110,8 @@ pub struct Game<'g> {
     away: TeamInGame<'g>,
     home: TeamInGame<'g>,
 
-    // Change all the time
-    prev_event_type: ParsedEventMessageDiscriminants,
-    phase: GamePhase,
-    inning_number: u8,
-    inning_half: TopBottom,
-    count_balls: u8,
-    count_strikes: u8,
-    previous_outs: i32,
-    outs: i32,
+    // Changes all the time
+    state: GameState,
 }
 
 #[derive(Debug)]
@@ -204,6 +216,7 @@ macro_rules! game_event {
 
 struct EventDetailBuilder<'a, 'g> {
     game: &'a Game<'g>,
+    prev_game_state: GameState,
     game_event_index: usize,
     fair_ball_event_index: Option<usize>,
     fair_ball_type: Option<TaxaFairBallType>,
@@ -211,6 +224,7 @@ struct EventDetailBuilder<'a, 'g> {
     hit_type: Option<TaxaHitType>,
     fielders: Vec<PositionedPlayer<&'g str>>,
     advances: Vec<RunnerAdvance<&'g str>>,
+    scores: Vec<&'g str>,
 }
 
 impl<'a, 'g> EventDetailBuilder<'a, 'g> {
@@ -278,16 +292,20 @@ impl<'a, 'g> EventDetailBuilder<'a, 'g> {
     }
 
     pub fn build(self, type_detail: TaxaEventType) -> EventDetail<&'g str> {
+        // Scores first
+        // Combine advances, scores, and (somehow) outs
+        let baserunners = Vec::new();
+        
         EventDetail {
             game_id: self.game.game_id,
             game_event_index: self.game_event_index,
             fair_ball_event_index: self.fair_ball_event_index,
-            inning: self.game.inning_number,
-            top_of_inning: self.game.inning_half.is_top(),
-            count_balls: self.game.count_balls,
-            count_strikes: self.game.count_strikes,
-            outs_before: self.game.previous_outs,
-            outs_after: self.game.outs,
+            inning: self.game.state.inning_number,
+            top_of_inning: self.game.state.inning_half.is_top(),
+            count_balls: self.game.state.count_balls,
+            count_strikes: self.game.state.count_strikes,
+            outs_before: self.prev_game_state.outs,
+            outs_after: self.game.state.outs,
             batter_count: self.game.batting_team().batter_count
                 .expect("sim::Game state machine should ensure batter_count is set before any EventDetail is constructed"),
             batter_name: self.game.active_batter()
@@ -299,7 +317,7 @@ impl<'a, 'g> EventDetailBuilder<'a, 'g> {
             hit_type: self.hit_type,
             fair_ball_type: self.fair_ball_type,
             fair_ball_direction: self.fair_ball_direction,
-            advances: self.advances,
+            baserunners,
         }
     }
 }
@@ -412,56 +430,57 @@ impl<'g> Game<'g> {
                 lineup: home_lineup,
                 batter_count: None,
             },
-            prev_event_type: ParsedEventMessageDiscriminants::PlayBall,
-            phase: GamePhase::ExpectInningStart,
-            inning_number: 0,
-            inning_half: TopBottom::Bottom,
-            count_balls: 0,
-            count_strikes: 0,
-            previous_outs: 0,
-            outs: 0,
+            state: GameState {
+                prev_event_type: ParsedEventMessageDiscriminants::PlayBall,
+                phase: GamePhase::ExpectInningStart,
+                inning_number: 0,
+                inning_half: TopBottom::Bottom,
+                count_balls: 0,
+                count_strikes: 0,
+                outs: 0,
+            },
         })
     }
 
     fn batting_team(&self) -> &TeamInGame<'g> {
-        match self.inning_half {
+        match self.state.inning_half {
             TopBottom::Top => &self.away,
             TopBottom::Bottom => &self.home,
         }
     }
 
     fn batting_team_mut(&mut self) -> &mut TeamInGame<'g> {
-        match self.inning_half {
+        match self.state.inning_half {
             TopBottom::Top => &mut self.away,
             TopBottom::Bottom => &mut self.home,
         }
     }
 
     fn defending_team(&self) -> &TeamInGame<'g> {
-        match self.inning_half {
+        match self.state.inning_half {
             TopBottom::Top => &self.home,
             TopBottom::Bottom => &self.away,
         }
     }
 
     fn defending_team_mut(&mut self) -> &mut TeamInGame<'g> {
-        match self.inning_half {
+        match self.state.inning_half {
             TopBottom::Top => &mut self.home,
             TopBottom::Bottom => &mut self.away,
         }
     }
 
     fn check_count(&self, (balls, strikes): (u8, u8)) {
-        if self.count_balls != balls {
+        if self.state.count_balls != balls {
             warn!(
                 "Unexpected number of balls in {}: expected {}, but saw {balls}",
-                self.game_id, self.count_balls
+                self.game_id, self.state.count_balls
             );
         }
-        if self.count_strikes != strikes {
+        if self.state.count_strikes != strikes {
             warn!(
                 "Unexpected number of strikes in {}: expected {}, but saw {strikes}",
-                self.game_id, self.count_strikes
+                self.game_id, self.state.count_strikes
             );
         }
     }
@@ -491,9 +510,10 @@ impl<'g> Game<'g> {
         }
     }
 
-    fn detail_builder<'a>(&'a self, game_event_index: usize) -> EventDetailBuilder<'a, 'g> {
+    fn emit<'a>(&'a self, prev_game_state: GameState, game_event_index: usize) -> EventDetailBuilder<'a, 'g> {
         EventDetailBuilder {
             game: self,
+            prev_game_state,
             fair_ball_event_index: None,
             game_event_index,
             fielders: Vec::new(),
@@ -501,6 +521,7 @@ impl<'g> Game<'g> {
             hit_type: None,
             fair_ball_type: None,
             fair_ball_direction: None,
+            scores: Vec::new(),
         }
     }
 
@@ -514,19 +535,19 @@ impl<'g> Game<'g> {
     }
 
     pub fn finish_pa(&mut self) {
-        self.count_strikes = 0;
-        self.count_balls = 0;
-        self.phase = GamePhase::ExpectNowBatting;
+        self.state.count_strikes = 0;
+        self.state.count_balls = 0;
+        self.state.phase = GamePhase::ExpectNowBatting;
     }
 
     pub fn add_out(&mut self) {
-        debug!("Number of outs at start of event: {}", self.outs);
-        self.outs += 1;
+        debug!("Number of outs at start of event: {}", self.state.outs);
+        self.state.outs += 1;
 
-        if self.outs >= 3 {
-            self.phase = GamePhase::ExpectInningEnd;
+        if self.state.outs >= 3 {
+            self.state.phase = GamePhase::ExpectInningEnd;
         } else {
-            self.phase = GamePhase::ExpectNowBatting;
+            self.state.phase = GamePhase::ExpectNowBatting;
         }
     }
 
@@ -539,10 +560,10 @@ impl<'g> Game<'g> {
         index: usize,
         event: &ParsedEventMessage<&'g str>,
     ) -> Result<Option<EventDetail<&'g str>>, SimError> {
-        self.previous_outs = self.outs;
-        let previous_event = self.prev_event_type;
+        let prev_state = self.state.clone();
+        let previous_event = self.state.prev_event_type;
         let this_event_discriminant = event.discriminant();
-        let result = match self.phase {
+        let result = match self.state.phase {
             GamePhase::ExpectInningStart => game_event!(
                 (previous_event, event),
                 [ParsedEventMessageDiscriminants::InningStart]
@@ -553,19 +574,19 @@ impl<'g> Game<'g> {
                     batting_team_name,
                     pitcher_status,
                 } => {
-                    if *side != self.inning_half.flip() {
+                    if *side != self.state.inning_half.flip() {
                         warn!(
                             "Unexpected inning side in {}: expected {:?}, but saw {side:?}",
                             self.game_id,
-                            self.inning_half.flip(),
+                            self.state.inning_half.flip(),
                         );
                     }
-                    self.inning_half = *side;
+                    self.state.inning_half = *side;
 
                     // If we just started a top, the number should increment
-                    let expected_number = match self.inning_half {
-                        TopBottom::Top => self.inning_number + 1,
-                        TopBottom::Bottom => self.inning_number,
+                    let expected_number = match self.state.inning_half {
+                        TopBottom::Top => self.state.inning_number + 1,
+                        TopBottom::Bottom => self.state.inning_number,
                     };
 
                     if *number != expected_number {
@@ -576,7 +597,7 @@ impl<'g> Game<'g> {
                             number,
                         );
                     }
-                    self.inning_number = *number;
+                    self.state.inning_number = *number;
 
                     if *batting_team_name != self.batting_team().team_name {
                         warn!(
@@ -595,12 +616,12 @@ impl<'g> Game<'g> {
 
                     info!(
                         "Started {} of {} with pitcher {pitcher_status:?}",
-                        self.inning_half,
-                        self.inning_number,
+                        self.state.inning_half,
+                        self.state.inning_number,
                     );
 
-                    self.outs = 0;
-                    self.phase = GamePhase::ExpectNowBatting;
+                    self.state.outs = 0;
+                    self.state.phase = GamePhase::ExpectNowBatting;
                     None
                 },
                 [ParsedEventMessageDiscriminants::MoundVisit]
@@ -620,7 +641,7 @@ impl<'g> Game<'g> {
                         );
                     }
 
-                    self.phase = GamePhase::ExpectMoundVisitOutcome;
+                    self.state.phase = GamePhase::ExpectMoundVisitOutcome;
                     None
                 },
             ),
@@ -632,13 +653,13 @@ impl<'g> Game<'g> {
                    self.increment_batter_count();
                    self.check_batter(batter_name, event.discriminant());
 
-                   self.phase = GamePhase::ExpectPitch;
+                   self.state.phase = GamePhase::ExpectPitch;
                    None
                },
                [ParsedEventMessageDiscriminants::MoundVisit]
                // TODO handle every single member of this variant
                ParsedEventMessage::MoundVisit { .. } => {
-                   self.phase = GamePhase::ExpectMoundVisitOutcome;
+                   self.state.phase = GamePhase::ExpectMoundVisitOutcome;
                    None
                },
             ),
@@ -647,19 +668,19 @@ impl<'g> Game<'g> {
                 [ParsedEventMessageDiscriminants::Ball]
                 // TODO handle every single member of this variant
                 ParsedEventMessage::Ball { count, .. } => {
-                    self.count_balls += 1;
+                    self.state.count_balls += 1;
                     self.check_count(*count);
 
-                    self.detail_builder(index)
+                    self.emit(prev_state, index)
                         .build_some(TaxaEventType::Ball)
                 },
                 [ParsedEventMessageDiscriminants::Strike]
                 // TODO handle every single member of this variant
                 ParsedEventMessage::Strike { strike, count, .. } => {
-                    self.count_strikes += 1;
+                    self.state.count_strikes += 1;
                     self.check_count(*count);
 
-                    self.detail_builder(index)
+                    self.emit(prev_state, index)
                         .build_some(match strike {
                             StrikeType::Looking => { TaxaEventType::StrikeLooking }
                             StrikeType::Swinging => { TaxaEventType::StrikeSwinging }
@@ -668,14 +689,14 @@ impl<'g> Game<'g> {
                 [ParsedEventMessageDiscriminants::StrikeOut]
                 // TODO handle every single member of this variant
                 ParsedEventMessage::StrikeOut { strike, .. } => {
-                    if self.count_strikes < 2 {
-                        warn!("Unexpected strikeout in {}: expected 2 strikes in the count, but there were {}", self.game_id, self.count_strikes);
+                    if self.state.count_strikes < 2 {
+                        warn!("Unexpected strikeout in {}: expected 2 strikes in the count, but there were {}", self.game_id, self.state.count_strikes);
                     }
 
                     self.finish_pa();
                     self.add_out();
 
-                    self.detail_builder(index)
+                    self.emit(prev_state, index)
                         .build_some(match strike {
                             StrikeType::Looking => { TaxaEventType::StrikeLooking }
                             StrikeType::Swinging => { TaxaEventType::StrikeSwinging }
@@ -685,12 +706,12 @@ impl<'g> Game<'g> {
                 // TODO handle every single member of this variant
                 ParsedEventMessage::Foul { foul, count, .. } => {
                     // Falsehoods...
-                    if !(*foul == FoulType::Ball && self.count_strikes >= 2) {
-                        self.count_strikes += 1;
+                    if !(*foul == FoulType::Ball && self.state.count_strikes >= 2) {
+                        self.state.count_strikes += 1;
                     }
                     self.check_count(*count);
 
-                    self.detail_builder(index)
+                    self.emit(prev_state, index)
                         .build_some(match foul {
                             FoulType::Tip => TaxaEventType::FoulTip,
                             FoulType::Ball => TaxaEventType::FoulBall,
@@ -700,7 +721,7 @@ impl<'g> Game<'g> {
                 ParsedEventMessage::FairBall { batter, hit, destination } => {
                     self.check_batter(batter, event.discriminant());
 
-                    self.phase = GamePhase::ExpectFairBallOutcome(FairBall {
+                    self.state.phase = GamePhase::ExpectFairBallOutcome(FairBall {
                         index,
                         hit_type: *hit,
                         hit_destination: *destination,
@@ -713,7 +734,7 @@ impl<'g> Game<'g> {
                     self.check_batter(batter, event.discriminant());
                     self.finish_pa();
 
-                    self.detail_builder(index)
+                    self.emit(prev_state, index)
                         .build_some(TaxaEventType::Walk)
                 },
                 [ParsedEventMessageDiscriminants::HitByPitch]
@@ -722,7 +743,7 @@ impl<'g> Game<'g> {
                     self.check_batter(batter, event.discriminant());
                     self.finish_pa();
 
-                    self.detail_builder(index)
+                    self.emit(prev_state, index)
                         .build_some(TaxaEventType::HitByPitch)
                 },
             ),
@@ -734,7 +755,7 @@ impl<'g> Game<'g> {
                     self.check_batter(batter, event.discriminant());
                     self.finish_pa();
                     self.add_out();
-                    self.detail_builder(index)
+                    self.emit(prev_state, index)
                         .fair_ball(fair_ball)
                         .fielder(*catcher)
                         .build_some(TaxaEventType::CaughtOut)
@@ -745,7 +766,7 @@ impl<'g> Game<'g> {
                     self.check_batter(batter, event.discriminant());
                     self.finish_pa();
                     self.add_out();
-                    self.detail_builder(index)
+                    self.emit(prev_state, index)
                         .fair_ball(fair_ball)
                         .fielders(fielders.clone())
                         .build_some(TaxaEventType::GroundedOut)
@@ -756,7 +777,7 @@ impl<'g> Game<'g> {
                     self.check_batter(batter, event.discriminant());
                     self.finish_pa();
 
-                    self.detail_builder(index)
+                    self.emit(prev_state, index)
                         .fair_ball(fair_ball)
                         .hit_type((*distance).into())
                         .fielder(*fielder)
@@ -769,7 +790,7 @@ impl<'g> Game<'g> {
                     self.check_batter(batter, event.discriminant());
                     self.finish_pa();
 
-                    self.detail_builder(index)
+                    self.emit(prev_state, index)
                         .fair_ball(fair_ball)
                         .fielder(*fielder)
                         .build_some(TaxaEventType::FieldingError)
@@ -780,7 +801,7 @@ impl<'g> Game<'g> {
                     self.check_batter(batter, event.discriminant());
                     self.finish_pa();
 
-                    self.detail_builder(index)
+                    self.emit(prev_state, index)
                         .fair_ball(fair_ball)
                         .build_some(TaxaEventType::HomeRun)
                 },
@@ -792,7 +813,7 @@ impl<'g> Game<'g> {
                     self.add_out();
                     self.add_out(); // It's a double play -- we add two outs
 
-                    self.detail_builder(index)
+                    self.emit(prev_state, index)
                         .fair_ball(fair_ball)
                         .build_some(TaxaEventType::DoublePlay)
                 },
@@ -804,7 +825,7 @@ impl<'g> Game<'g> {
                     self.add_out();
                     self.add_out(); // It's a double play -- we add two outs
 
-                    self.detail_builder(index)
+                    self.emit(prev_state, index)
                         .fair_ball(fair_ball)
                         .build_some(TaxaEventType::DoublePlay)
                 },
@@ -815,7 +836,7 @@ impl<'g> Game<'g> {
                     self.finish_pa();
                     self.add_out();
 
-                    self.detail_builder(index)
+                    self.emit(prev_state, index)
                         .fair_ball(fair_ball)
                         .build_some(TaxaEventType::ForceOut)
                 },
@@ -824,19 +845,19 @@ impl<'g> Game<'g> {
                 (previous_event, event),
                 [ParsedEventMessageDiscriminants::InningEnd]
                 ParsedEventMessage::InningEnd { number, side } => {
-                    if *number != self.inning_number {
-                        warn!("Unexpected inning number in {}: expected {}, but saw {number}", self.game_id, self.inning_number);
+                    if *number != self.state.inning_number {
+                        warn!("Unexpected inning number in {}: expected {}, but saw {number}", self.game_id, self.state.inning_number);
                     }
 
-                    if *side != self.inning_half {
-                        warn!("Unexpected inning side in {}: expected {:?}, but saw {side:?}", self.game_id, self.inning_half);
+                    if *side != self.state.inning_half {
+                        warn!("Unexpected inning side in {}: expected {:?}, but saw {side:?}", self.game_id, self.state.inning_half);
                     }
 
                     // TODO Implement the full extra innings rule
                     if *number == 9 {
-                        self.phase = GamePhase::ExpectGameEnd;
+                        self.state.phase = GamePhase::ExpectGameEnd;
                     } else {
-                        self.phase = GamePhase::ExpectInningStart;
+                        self.state.phase = GamePhase::ExpectInningStart;
                     }
                     None
                 },
@@ -849,7 +870,7 @@ impl<'g> Game<'g> {
                     // I think this is not always ExpectNowBatting. I may have
                     // to store the state-to-return-to as a data member of
                     // GamePhase::ExpectMoundVisitOutcome
-                    self.phase = GamePhase::ExpectNowBatting;
+                    self.state.phase = GamePhase::ExpectNowBatting;
                     None
                 },
                 [ParsedEventMessageDiscriminants::PitcherSwap]
@@ -858,7 +879,7 @@ impl<'g> Game<'g> {
                     // I think this is not always ExpectNowBatting. I may have
                     // to store the state-to-return-to as a data member of
                     // GamePhase::ExpectMoundVisitOutcome
-                    self.phase = GamePhase::ExpectNowBatting;
+                    self.state.phase = GamePhase::ExpectNowBatting;
                     None
                 },
             ),
@@ -866,7 +887,7 @@ impl<'g> Game<'g> {
                 (previous_event, event),
                 [ParsedEventMessageDiscriminants::PitcherSwap]
                 ParsedEventMessage::GameOver => {
-                    self.phase = GamePhase::ExpectFinalScore;
+                    self.state.phase = GamePhase::ExpectFinalScore;
                     None
                 },
             ),
@@ -875,14 +896,14 @@ impl<'g> Game<'g> {
                 [ParsedEventMessageDiscriminants::Recordkeeping]
                 // TODO handle every single member of this variant
                 ParsedEventMessage::Recordkeeping { .. } => {
-                    self.phase = GamePhase::Finished;
+                    self.state.phase = GamePhase::Finished;
                     None
                 },
             ),
             GamePhase::Finished => game_event!((previous_event, event)),
         }?;
 
-        self.prev_event_type = this_event_discriminant;
+        self.state.prev_event_type = this_event_discriminant;
 
         Ok(result)
     }
@@ -906,6 +927,12 @@ fn runner_advance_as_ref<StrT: AsRef<str>>(
     }
 }
 
+fn runner_score_as_ref(
+    a: &(),
+) -> () {
+    ()
+}
+
 impl<StrT: AsRef<str>> EventDetail<StrT> {
     fn count(&self) -> (u8, u8) {
         (self.count_balls, self.count_strikes)
@@ -922,15 +949,44 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
         self.fielders_iter().collect()
     }
     
+    // An advance is a baserunner who was on base before AND after this event
     fn advances_iter(&self) -> impl Iterator<Item = RunnerAdvance<&str>> {
         self
-            .advances
+            .baserunners
             .iter()
-            .map(runner_advance_as_ref)
+            .flat_map(|runner| {
+                // I don't need the value of base_before, but it needs
+                // to exist otherwise this isn't an advance
+                let _base_before = runner.base_before?;
+                let base_after = runner.base_after?;
+                
+                Some(RunnerAdvance {
+                    runner: runner.name.as_ref(),
+                    base: base_after.into(),
+                })
+            })
     }
     
     fn advances(&self) -> Vec<RunnerAdvance<&str>> {
         self.advances_iter().collect()
+    }
+    
+    // A score is any run where the final base is Home
+    fn scores_iter(&self) -> impl Iterator<Item = &str> {
+        self
+            .baserunners
+            .iter()
+            .flat_map(|runner| {
+                if Some(TaxaBase::Home) == runner.base_after {
+                    Some(runner.name.as_ref())
+                } else {
+                    None
+                }
+            })
+    }
+    
+    fn scores(&self) -> Vec<&str> {
+        self.scores_iter().collect()
     }
 
     pub fn to_parsed(&self) -> ParsedEventMessage<&str> {
@@ -1054,7 +1110,7 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                     destination: self.fair_ball_direction
                         .expect("HomeRun type must have a fair_ball_direction")
                         .into(),
-                    scores: vec![],
+                    scores: self.scores(),
                 }
             }
             TaxaEventType::FieldingError => {

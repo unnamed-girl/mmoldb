@@ -1,7 +1,7 @@
-use mmolb_parsing::parsed_event::{PositionedPlayer, RunnerAdvance};
+use mmolb_parsing::parsed_event::PositionedPlayer;
 use crate::db::taxa::{Taxa};
-use crate::ingest::EventDetail;
-use crate::models::{DbEvent, DbFielder, DbRunner, NewEvent, NewFielder};
+use crate::ingest::{EventDetail, EventDetailRunner};
+use crate::models::{DbEvent, DbFielder, DbRunner, NewBaserunner, NewEvent, NewFielder};
 
 pub fn event_to_row<'e>(
     taxa: &Taxa,
@@ -29,6 +29,22 @@ pub fn event_to_row<'e>(
     }
 }
 
+pub fn event_to_baserunners<'e>(
+    taxa: &Taxa,
+    event_id: i64,
+    event: &'e EventDetail<&'e str>,
+) -> Vec<NewBaserunner<'e>> {
+    event.baserunners.iter()
+        .map(|runner| NewBaserunner {
+            event_id,
+            baserunner_name: runner.name,
+            base_before: runner.base_before.map(|b| taxa.base_id(b)),
+            base_after: runner.base_after.map(|b| taxa.base_id(b)),
+            steal: runner.is_steal,
+        })
+        .collect()
+}
+
 pub fn event_to_fielders<'e>(
     taxa: &Taxa,
     event_id: i64,
@@ -51,16 +67,15 @@ pub fn row_to_event<'e>(
     runners: Vec<DbRunner>,
     fielders: Vec<DbFielder>,
 ) -> EventDetail<String> {
-    // TODO runners contain advances, scores, and outs 
-    let advances = runners
+    let baserunners = runners
         .into_iter()
-        .flat_map(|r| {
-            r.base_after
-                .map(|base_after| RunnerAdvance {
-                    runner: r.baserunner_name,
-                    base: taxa.base_from_id(base_after).into(),
-                })
-            
+        .map(|r| {
+            EventDetailRunner {
+                name: r.baserunner_name,
+                base_before: r.base_before.map(|id| taxa.base_from_id(id)),
+                base_after: r.base_after.map(|id| taxa.base_from_id(id)),
+                is_steal: r.steal,
+            }
         })
         .collect();
     
@@ -91,7 +106,7 @@ pub fn row_to_event<'e>(
         hit_type: row.hit_type.map(|id| taxa.hit_type_from_id(id)),
         fair_ball_type: row.fair_ball_type.map(|id| taxa.fair_ball_type_from_id(id)),
         fair_ball_direction: row.fair_ball_direction.map(|id| taxa.position_from_id(id)),
-        advances,
         fielders,
+        baserunners,
     }
 }

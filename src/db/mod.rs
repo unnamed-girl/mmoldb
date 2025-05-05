@@ -5,13 +5,13 @@
 mod taxa;
 mod to_db_format;
 
-pub use crate::db::taxa::{Taxa, TaxaEventType, TaxaHitType, TaxaPosition, TaxaFairBallType};
+pub use crate::db::taxa::{Taxa, TaxaEventType, TaxaFairBallType, TaxaHitType, TaxaPosition, TaxaBase};
 
 use crate::ingest::EventDetail;
 use crate::models::{DbEvent, DbFielder, DbRunner, Ingest, NewIngest};
 use chrono::{DateTime, Utc};
-use rocket_db_pools::diesel::AsyncPgConnection;
 use rocket_db_pools::diesel::prelude::*;
+use rocket_db_pools::diesel::AsyncPgConnection;
 
 pub async fn latest_ingests(conn: &mut AsyncPgConnection) -> QueryResult<Vec<Ingest>> {
     use crate::data_schema::data::ingests::dsl::*;
@@ -71,19 +71,18 @@ pub async fn events_for_game<'e>(
         .load(conn)
         .await?;
 
-    let db_runners = Vec::new();
-    // let db_runners = DbRunner::belonging_to(&db_events)
-    //     .select(DbRunner::as_select())
-    //     .load(conn)
-    //     .await?
-    //     .grouped_by(&db_events);
+    let db_runners = DbRunner::belonging_to(&db_events)
+        .select(DbRunner::as_select())
+        .load(conn)
+        .await?
+        .grouped_by(&db_events);
 
     let db_fielders = DbFielder::belonging_to(&db_events)
         .select(DbFielder::as_select())
         .load(conn)
         .await?
         .grouped_by(&db_events);
-    
+
     // This complicated-looking statement just zips all the iterators
     // together and passes the corresponding elements to row_to_event
     Ok(
@@ -104,6 +103,7 @@ pub async fn insert_events<'e>(
     ingest_id: i64,
     event_details: &'e [EventDetail<&'e str>],
 ) -> QueryResult<()> {
+    use crate::data_schema::data::event_baserunners::dsl as baserunners_dsl;
     use crate::data_schema::data::event_fielders::dsl as fielders_dsl;
     use crate::data_schema::data::events::dsl as events_dsl;
 
@@ -124,6 +124,25 @@ pub async fn insert_events<'e>(
         event_details.len(), 
         "Events insert should insert {} rows", 
         event_details.len(),
+    );
+
+    let new_advances: Vec<_> = event_details.iter()
+        .zip(&event_ids)
+        .flat_map(|(event, &event_id)| {
+            to_db_format::event_to_baserunners(taxa, event_id, event)
+        })
+        .collect();
+    let n_advances_to_insert = new_advances.len();
+
+    let n_advances_inserted = diesel::insert_into(baserunners_dsl::event_baserunners)
+        .values(new_advances)
+        .execute(conn)
+        .await?;
+
+    assert_eq!(
+        n_advances_inserted,
+        n_advances_to_insert,
+        "Advances insert should insert {n_advances_to_insert} rows",
     );
 
     let new_fielders: Vec<_> = event_details.iter()

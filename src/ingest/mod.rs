@@ -1,7 +1,7 @@
 mod http;
 mod sim;
 
-pub use sim::EventDetail;
+pub use sim::{EventDetail, EventDetailRunner};
 
 use crate::db::Taxa;
 use crate::ingest::sim::Game;
@@ -9,6 +9,7 @@ use crate::{Db, db};
 use chrono::serde::ts_milliseconds;
 use chrono::{DateTime, Utc};
 use log::info;
+use mmolb_parsing::ParsedEventMessage;
 use reqwest_middleware::ClientWithMiddleware;
 use rocket::tokio;
 use rocket::tokio::task::JoinHandle;
@@ -204,7 +205,7 @@ async fn ingest_game(pool: Db, taxa: &Taxa, ingest_id: i64, game_info: &CashewsG
             //   accept a reference to parsed. I think this lets me get rid of a
             //   clone() inside ingest_game(). Do that.
             let detail = game.next(index, &parsed).expect("TODO Error handling");
-            
+
             // Temporarily disabled because I want to get earlier errors from
             // full round-tripping through the db
             // if let Some(d) = &detail {
@@ -234,36 +235,53 @@ async fn ingest_game(pool: Db, taxa: &Taxa, ingest_id: i64, game_info: &CashewsG
     };
 
     assert_eq!(inserted_events.len(), detail_events.len());
-    for event in inserted_events {
-        let index = event.game_event_index;
-        let fair_ball_index = event.fair_ball_event_index;
+    for (reconstructed_detail, original_detail) in inserted_events.iter().zip(detail_events) {
+        let index = reconstructed_detail.game_event_index;
+        let fair_ball_index = reconstructed_detail.fair_ball_event_index;
 
         if let Some(index) = fair_ball_index {
-            info!(
-                "{}\n    Original:      {:?}\n    Reconstructed: {:?}", 
-                parsed_copy[index].clone().unparse(),
-                parsed_copy[index], 
-                event.to_parsed(),
-            );
-
-            assert_eq!(
-                parsed_copy[index],
-                event.to_parsed_contact(),
-                "Contact event round-trip failed (left is original, right is reconstructed)"
+            check_round_trip(
+                "Contact event", 
+                &parsed_copy[index],
+                &original_detail.to_parsed_contact(),
+                &reconstructed_detail.to_parsed_contact(), 
             );
         }
-        
-        info!(
-            "{}\n    Original:      {:?}\n    Reconstructed: {:?}", 
-            parsed_copy[index].clone().unparse(),
-            parsed_copy[index], 
-            event.to_parsed(),
-        );
 
-        assert_eq!(
-            parsed_copy[index],
-            event.to_parsed(),
-            "Event round-trip failed (left is original, right is reconstructed)"
+        check_round_trip(
+            "Event",
+            &parsed_copy[index],
+            &original_detail.to_parsed(),
+            &reconstructed_detail.to_parsed(),
         );
     }
+}
+
+fn check_round_trip(
+    label: &str,
+    parsed: &ParsedEventMessage<&str>,
+    original_detail: &ParsedEventMessage<&str>,
+    reconstructed_detail: &ParsedEventMessage<&str>, 
+) {
+    info!(
+        "{}\n           Original: {:?}\
+           \nThrough EventDetail: {:?}\
+           \n         Through db: {:?}",
+        parsed.clone().unparse(),
+        parsed,
+        original_detail,
+        reconstructed_detail,
+    );
+
+    assert_eq!(
+        parsed,
+        original_detail,
+        "{label} EventDetail round-trip failed (left is original, right is reconstructed)"
+    );
+
+    assert_eq!(
+        parsed,
+        reconstructed_detail,
+        "{label} db round-trip failed (left is original, right is reconstructed)"
+    );
 }
