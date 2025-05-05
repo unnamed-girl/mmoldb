@@ -1,4 +1,4 @@
-use crate::models::{NewEventType, NewHitType, NewPosition};
+use crate::models::{NewEventType, NewHitType, NewPosition, NewFairBallType};
 use diesel::{ExpressionMethods, QueryResult};
 use enum_map::EnumMap;
 use rocket_db_pools::diesel::{AsyncPgConnection, RunQueryDsl};
@@ -130,10 +130,56 @@ impl From<mmolb_parsing::enums::Position> for TaxaPosition {
     }
 }
 
+#[derive(
+    Debug, enum_map::Enum, Eq, PartialEq, Hash, Copy, Clone, strum::Display, strum::EnumMessage,
+)]
+pub enum TaxaFairBallType {
+    GroundBall,
+    FlyBall,
+    LineDrive,
+    Popup,
+}
+
+impl<'a> AsInsertable<'a> for TaxaFairBallType {
+    type Insertable = NewFairBallType<'a>;
+
+    fn as_insertable(&self, code_friendly_name: &'a str) -> Self::Insertable {
+        let human_friendly_name = self.get_message().unwrap_or_else(|| &code_friendly_name);
+
+        NewFairBallType {
+            name: &code_friendly_name,
+            display_name: &human_friendly_name,
+        }
+    }
+}
+
+impl Into<mmolb_parsing::enums::HitType> for TaxaFairBallType {
+    fn into(self) -> mmolb_parsing::enums::HitType {
+        match self {
+            Self::GroundBall => { mmolb_parsing::enums::HitType::GroundBall }
+            Self::FlyBall => { mmolb_parsing::enums::HitType::FlyBall }
+            Self::LineDrive => { mmolb_parsing::enums::HitType::LineDrive }
+            Self::Popup => { mmolb_parsing::enums::HitType::Popup }
+        }
+    }
+}
+
+impl From<mmolb_parsing::enums::HitType> for TaxaFairBallType {
+    fn from(value: mmolb_parsing::enums::HitType) -> Self {
+        match value {
+            mmolb_parsing::enums::HitType::GroundBall => { Self::GroundBall }
+            mmolb_parsing::enums::HitType::FlyBall => { Self::FlyBall }
+            mmolb_parsing::enums::HitType::LineDrive => { Self::LineDrive }
+            mmolb_parsing::enums::HitType::Popup => { Self::Popup }
+        }
+    }
+}
+
 pub struct Taxa {
     event_type_mapping: EnumMap<TaxaEventType, i64>,
     hit_type_mapping: EnumMap<TaxaHitType, i64>,
     position_mapping: EnumMap<TaxaPosition, i64>,
+    fair_ball_type_mapping: EnumMap<TaxaFairBallType, i64>,
 }
 
 macro_rules! make_mapping {
@@ -209,6 +255,14 @@ impl Taxa {
                 crate::taxa_schema::taxa::position::dsl::id,
                 conn,
             },
+            fair_ball_type_mapping: make_mapping!{
+                TaxaFairBallType,
+                crate::taxa_schema::taxa::fair_ball_type::dsl::fair_ball_type,
+                crate::taxa_schema::taxa::fair_ball_type::dsl::name,
+                crate::taxa_schema::taxa::fair_ball_type::dsl::display_name,
+                crate::taxa_schema::taxa::fair_ball_type::dsl::id,
+                conn,
+            },
         })
     }
 
@@ -222,6 +276,10 @@ impl Taxa {
 
     pub fn position_id(&self, ty: TaxaPosition) -> i64 {
         self.position_mapping[ty]
+    }
+
+    pub fn fair_ball_type_id(&self, ty: TaxaFairBallType) -> i64 {
+        self.fair_ball_type_mapping[ty]
     }
 
     pub fn event_type_from_id(&self, id: i64) -> TaxaEventType {
@@ -245,6 +303,14 @@ impl Taxa {
             .iter()
             .find(|(_, ty_id)| id == **ty_id)
             .expect("TODO Handle unknown position")
+            .0
+    }
+
+    pub fn fair_ball_type_from_id(&self, id: i64) -> TaxaFairBallType {
+        self.fair_ball_type_mapping
+            .iter()
+            .find(|(_, ty_id)| id == **ty_id)
+            .expect("TODO Handle unknown fair ball type")
             .0
     }
 }

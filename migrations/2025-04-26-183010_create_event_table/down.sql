@@ -1,6 +1,7 @@
 drop table data.event_fielders;
 drop table data.event_baserunners;
 drop table data.events;
+drop table taxa.fair_ball_type;
 drop table taxa.position;
 drop table taxa.hit_type;
 drop table taxa.event_type;

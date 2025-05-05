@@ -5,7 +5,7 @@
 mod taxa;
 mod to_db_format;
 
-pub use crate::db::taxa::{Taxa, TaxaEventType, TaxaHitType};
+pub use crate::db::taxa::{Taxa, TaxaEventType, TaxaHitType, TaxaFairBallType};
 
 use crate::ingest::EventDetail;
 use crate::models::{DbEvent, DbFielder, Ingest, NewIngest};

@@ -24,6 +24,13 @@ create table taxa.position (
     unique (name)
 );
 
+create table taxa.fair_ball_type (
+    id bigserial primary key not null,
+    name text not null,
+    display_name text not null,
+    unique (name)
+);
+
 create table data.events (
     -- bookkeeping
     id bigserial primary key not null,
@@ -32,13 +39,16 @@ create table data.events (
     game_event_index int not null,
     -- the event index for the "<player> hit a <distance> to <destination>"
     -- event, if there is one
-    contact_game_event_index int,
+    fair_ball_event_index int,
     inning int not null,
     top_of_inning boolean not null,
 
     -- game data
     event_type bigint references taxa.event_type not null,
-    hit_type bigint references taxa.hit_type, -- should be populated for every event_type==Hit
+    -- should be populated for every event_type==Hit
+    hit_type bigint references taxa.hit_type,
+    -- should be populated for every event type where there's a fair ball
+    fair_ball_type bigint references taxa.fair_ball_type,
     count_balls int not null,
     count_strikes int not null,
     outs_before int not null,

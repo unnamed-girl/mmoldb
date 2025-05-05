@@ -23,6 +23,13 @@ pub struct NewPosition<'a> {
 }
 
 #[derive(Insertable)]
+#[diesel(table_name = crate::taxa_schema::taxa::fair_ball_type)]
+pub struct NewFairBallType<'a> {
+    pub name: &'a str,
+    pub display_name: &'a str,
+}
+
+#[derive(Insertable)]
 #[diesel(table_name = crate::data_schema::data::ingests)]
 pub struct NewIngest {
     pub date_started: NaiveDateTime,
@@ -43,11 +50,12 @@ pub struct NewEvent<'a> {
     pub ingest: i64,
     pub game_id: &'a str,
     pub game_event_index: i32,
-    pub contact_game_event_index: Option<i32>,
+    pub fair_ball_event_index: Option<i32>,
     pub inning: i32,
     pub top_of_inning: bool,
     pub event_type: i64,
     pub hit_type: Option<i64>,
+    pub fair_ball_type: Option<i64>,
     pub count_balls: i32,
     pub count_strikes: i32,
     pub outs_before: i32,
@@ -64,11 +72,12 @@ pub struct DbEvent {
     pub ingest: i64,
     pub game_id: String,
     pub game_event_index: i32,
-    pub contact_game_event_index: Option<i32>,
+    pub fair_ball_event_index: Option<i32>,
     pub inning: i32,
     pub top_of_inning: bool,
     pub event_type: i64,
     pub hit_type: Option<i64>,
+    pub fair_ball_type: Option<i64>,
     pub count_balls: i32,
     pub count_strikes: i32,
     pub outs_before: i32,

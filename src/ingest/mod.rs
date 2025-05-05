@@ -168,7 +168,7 @@ async fn ingest_game(pool: Db, taxa: &Taxa, ingest_id: i64, game_info: &CashewsG
     // the iterator fed to Game::new, on purpose. I need the
     // counting to count every event, but I don't need the count
     // inside Game::new.
-    let parsed_copy = mmolb_parsing::process_events(&game_data);
+    let parsed_copy = mmolb_parsing::process_game(&game_data);
     
     // This clone is probably avoidable, but I don't feel like it right now
     let mut parsed = parsed_copy
@@ -220,20 +220,34 @@ async fn ingest_game(pool: Db, taxa: &Taxa, ingest_id: i64, game_info: &CashewsG
     assert_eq!(inserted_events.len(), detail_events.len());
     for event in inserted_events {
         let index = event.game_event_index;
-        let contact_index = event.contact_game_event_index;
+        let fair_ball_index = event.fair_ball_event_index;
+
+        if let Some(index) = fair_ball_index {
+            info!(
+                "{}\n    Original:      {:?}\n    Reconstructed: {:?}", 
+                parsed_copy[index].clone().unparse(),
+                parsed_copy[index], 
+                event.to_parsed(),
+            );
+
+            assert_eq!(
+                parsed_copy[index],
+                event.to_parsed_contact(),
+                "Contact event round-trip failed (left is original, right is reconstructed)"
+            );
+        }
+        
+        info!(
+            "{}\n    Original:      {:?}\n    Reconstructed: {:?}", 
+            parsed_copy[index].clone().unparse(),
+            parsed_copy[index], 
+            event.to_parsed(),
+        );
 
         assert_eq!(
             parsed_copy[index],
             event.to_parsed(),
-            "Event round-trip failed"
+            "Event round-trip failed (left is original, right is reconstructed)"
         );
-
-        if let Some(index) = contact_index {
-            assert_eq!(
-                parsed_copy[index],
-                event.to_parsed_contact(),
-                "Contact event round-trip failed"
-            );
-        }
     }
 }

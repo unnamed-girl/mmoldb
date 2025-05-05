@@ -1,8 +1,8 @@
-use crate::db::{TaxaEventType, TaxaHitType};
+use crate::db::{TaxaEventType, TaxaHitType, TaxaFairBallType};
 use log::{debug, info, warn};
-use mmolb_parsing::ParsedEvent;
+use mmolb_parsing::ParsedEventMessage;
 use mmolb_parsing::enums::{Distance, FieldingErrorType, FoulType, HitDestination, HitType, HomeAway, StrikeType, TopBottom};
-use mmolb_parsing::parsed_event::{ParsedEventDiscriminants, PositionedPlayer};
+use mmolb_parsing::parsed_event::{ParsedEventMessageDiscriminants, PositionedPlayer};
 use std::fmt::Debug;
 use strum::IntoDiscriminant;
 use thiserror::Error;
@@ -15,15 +15,15 @@ pub enum SimError {
 
     #[error("Not enough events. Expected {expected:?} event after {previous:?}")]
     NotEnoughEvents {
-        expected: &'static [ParsedEventDiscriminants],
-        previous: ParsedEventDiscriminants,
+        expected: &'static [ParsedEventMessageDiscriminants],
+        previous: ParsedEventMessageDiscriminants,
     },
 
     #[error("Expected {expected:?} event after {previous:?}, but received {received:?}")]
     UnexpectedEventType {
-        expected: &'static [ParsedEventDiscriminants],
-        previous: Option<ParsedEventDiscriminants>,
-        received: ParsedEventDiscriminants,
+        expected: &'static [ParsedEventMessageDiscriminants],
+        previous: Option<ParsedEventMessageDiscriminants>,
+        received: ParsedEventMessageDiscriminants,
     },
 }
 
@@ -31,7 +31,7 @@ pub enum SimError {
 pub struct EventDetail<StrT> {
     pub game_id: StrT,
     pub game_event_index: usize,
-    pub contact_game_event_index: Option<usize>,
+    pub fair_ball_event_index: Option<usize>,
     pub inning: u8,
     pub top_of_inning: bool,
     pub count_balls: u8,
@@ -45,6 +45,7 @@ pub struct EventDetail<StrT> {
 
     pub detail_type: TaxaEventType,
     pub hit_type: Option<TaxaHitType>,
+    pub fair_ball_type: Option<TaxaFairBallType>,
 
     pub advances: Vec<()>,
 }
@@ -54,7 +55,8 @@ enum GamePhase {
     ExpectInningStart,
     ExpectNowBatting,
     ExpectPitch,
-    ExpectFairBallOutcome(usize),
+    // HitType here corresponds to TaxaFairBallType, NOT TaxaHitType
+    ExpectFairBallOutcome(usize, HitType),
     ExpectInningEnd,
     ExpectMoundVisitOutcome,
     ExpectGameEnd,
@@ -81,7 +83,7 @@ pub struct Game<'g> {
     home: TeamInGame<'g>,
 
     // Change all the time
-    prev_event_type: ParsedEventDiscriminants,
+    prev_event_type: ParsedEventMessageDiscriminants,
     phase: GamePhase,
     inning_number: u8,
     inning_half: TopBottom,
@@ -92,14 +94,14 @@ pub struct Game<'g> {
 }
 
 #[derive(Debug)]
-struct ParsedEventIter<'g, 'a, IterT: Iterator<Item = ParsedEvent<&'g str>>> {
+struct ParsedEventMessageIter<'g, 'a, IterT: Iterator<Item = ParsedEventMessage<&'g str>>> {
     inner: &'a mut IterT,
-    prev_event_type: Option<ParsedEventDiscriminants>,
+    prev_event_type: Option<ParsedEventMessageDiscriminants>,
 }
 
-impl<'g, 'a, IterT> ParsedEventIter<'g, 'a, IterT>
+impl<'g, 'a, IterT> ParsedEventMessageIter<'g, 'a, IterT>
 where
-    IterT: Iterator<Item = ParsedEvent<&'g str>>,
+    IterT: Iterator<Item = ParsedEventMessage<&'g str>>,
 {
     pub fn new(iter: &'a mut IterT) -> Self {
         Self {
@@ -110,8 +112,8 @@ where
 
     pub fn next(
         &mut self,
-        expected: &'static [ParsedEventDiscriminants],
-    ) -> Result<ParsedEvent<&'g str>, SimError> {
+        expected: &'static [ParsedEventMessageDiscriminants],
+    ) -> Result<ParsedEventMessage<&'g str>, SimError> {
         match self.inner.next() {
             Some(val) => {
                 self.prev_event_type = Some(val.discriminant());
@@ -164,8 +166,8 @@ macro_rules! game_event {
         // However, this macro is only used on a fully-constructed Game,
         // which must have a previous event. So prev_event_type is not
         // an Option, but previous must be.
-        let previous: Option<ParsedEventDiscriminants> = Some($previous_event);
-        let expected: &[ParsedEventDiscriminants] = &[$($expected,)*];
+        let previous: Option<ParsedEventMessageDiscriminants> = Some($previous_event);
+        let expected: &[ParsedEventMessageDiscriminants] = &[$($expected,)*];
 
         match $event {
             $($p => {
@@ -193,21 +195,28 @@ macro_rules! game_event {
 
 struct EventDetailBuilder<'a, 'g> {
     game: &'a Game<'g>,
-    contact_event_index: Option<usize>,
     game_event_index: usize,
+    fair_ball_event_index: Option<usize>,
+    fair_ball_type: Option<TaxaFairBallType>,
+    hit_type: Option<TaxaHitType>,
     fielders: Vec<PositionedPlayer<&'g str>>,
     advances: Vec<()>,
-    hit_type: Option<TaxaHitType>,
 }
 
 impl<'a, 'g> EventDetailBuilder<'a, 'g> {
-    fn contact_event_index(mut self, contact_event_index: usize) -> Self {
-        self.contact_event_index = Some(contact_event_index);
+    fn fair_ball(mut self, fair_ball_event_index: usize, fair_ball_type: TaxaFairBallType) -> Self {
+        self.fair_ball_event_index = Some(fair_ball_event_index);
+        self.fair_ball_type = Some(fair_ball_type);
         self
     }
 
     fn hit_type(mut self, hit_type: TaxaHitType) -> Self {
         self.hit_type = Some(hit_type);
+        self
+    }
+
+    fn fair_ball_type(mut self, fair_ball_type: TaxaFairBallType) -> Self {
+        self.fair_ball_type = Some(fair_ball_type);
         self
     }
 
@@ -224,12 +233,12 @@ impl<'a, 'g> EventDetailBuilder<'a, 'g> {
         EventDetail {
             game_id: self.game.game_id,
             game_event_index: self.game_event_index,
-            contact_game_event_index: self.contact_event_index,
+            fair_ball_event_index: self.fair_ball_event_index,
             inning: self.game.inning_number,
             top_of_inning: self.game.inning_half.is_top(),
             count_balls: self.game.count_balls,
             count_strikes: self.game.count_strikes,
-            outs_before: self.game.outs,
+            outs_before: self.game.previous_outs,
             outs_after: self.game.outs,
             batter_count: self.game.batting_team().batter_count
                 .expect("sim::Game state machine should ensure batter_count is set before any EventDetail is constructed"),
@@ -240,6 +249,7 @@ impl<'a, 'g> EventDetailBuilder<'a, 'g> {
             fielders: self.fielders,
             detail_type: type_detail,
             hit_type: self.hit_type,
+            fair_ball_type: self.fair_ball_type,
             advances: self.advances,
         }
     }
@@ -248,14 +258,14 @@ impl<'a, 'g> EventDetailBuilder<'a, 'g> {
 impl<'g> Game<'g> {
     pub fn new<IterT>(game_id: &'g str, events: &mut IterT) -> Result<Game<'g>, SimError>
     where
-        IterT: Iterator<Item = ParsedEvent<&'g str>>,
+        IterT: Iterator<Item = ParsedEventMessage<&'g str>>,
     {
-        let mut events = ParsedEventIter::new(events);
+        let mut events = ParsedEventMessageIter::new(events);
 
         let (away_team_name, away_team_emoji, home_team_name, home_team_emoji) = extract_next_game_event!(
             events,
-            [ParsedEventDiscriminants::LiveNow]
-            ParsedEvent::LiveNow {
+            [ParsedEventMessageDiscriminants::LiveNow]
+            ParsedEventMessage::LiveNow {
                 away_team_name,
                 away_team_emoji,
                 home_team_name,
@@ -277,8 +287,8 @@ impl<'g> Game<'g> {
             home_team_emoji_2,
         ) = extract_next_game_event!(
             events,
-            [ParsedEventDiscriminants::PitchingMatchup]
-            ParsedEvent::PitchingMatchup {
+            [ParsedEventMessageDiscriminants::PitchingMatchup]
+            ParsedEventMessage::PitchingMatchup {
                 home_pitcher,
                 away_pitcher,
                 away_team_name,
@@ -321,20 +331,20 @@ impl<'g> Game<'g> {
 
         let away_lineup = extract_next_game_event!(
             events,
-            [ParsedEventDiscriminants::Lineup]
-            ParsedEvent::Lineup { side: HomeAway::Away, players } => players
+            [ParsedEventMessageDiscriminants::Lineup]
+            ParsedEventMessage::Lineup { side: HomeAway::Away, players } => players
         )?;
 
         let home_lineup = extract_next_game_event!(
             events,
-            [ParsedEventDiscriminants::Lineup]
-            ParsedEvent::Lineup { side: HomeAway::Home, players } => players
+            [ParsedEventMessageDiscriminants::Lineup]
+            ParsedEventMessage::Lineup { side: HomeAway::Home, players } => players
         )?;
 
         extract_next_game_event!(
             events,
-            [ParsedEventDiscriminants::PlayBall]
-            ParsedEvent::PlayBall => ()
+            [ParsedEventMessageDiscriminants::PlayBall]
+            ParsedEventMessage::PlayBall => ()
         )?;
 
         Ok(Self {
@@ -353,7 +363,7 @@ impl<'g> Game<'g> {
                 lineup: home_lineup,
                 batter_count: None,
             },
-            prev_event_type: ParsedEventDiscriminants::PlayBall,
+            prev_event_type: ParsedEventMessageDiscriminants::PlayBall,
             phase: GamePhase::ExpectInningStart,
             inning_number: 0,
             inning_half: TopBottom::Bottom,
@@ -416,7 +426,7 @@ impl<'g> Game<'g> {
         }
     }
 
-    fn check_batter(&self, batter_name: &str, event_type: ParsedEventDiscriminants) {
+    fn check_batter(&self, batter_name: &str, event_type: ParsedEventMessageDiscriminants) {
         if let Some(active_batter) = self.active_batter() {
             if active_batter.name != batter_name {
                 warn!(
@@ -437,11 +447,12 @@ impl<'g> Game<'g> {
     fn detail_builder<'a>(&'a self, game_event_index: usize) -> EventDetailBuilder<'a, 'g> {
         EventDetailBuilder {
             game: self,
-            contact_event_index: None,
+            fair_ball_event_index: None,
             game_event_index,
             fielders: Vec::new(),
             advances: Vec::new(),
             hit_type: None,
+            fair_ball_type: None,
         }
     }
 
@@ -478,7 +489,7 @@ impl<'g> Game<'g> {
     pub fn next(
         &mut self,
         index: usize,
-        event: ParsedEvent<&'g str>,
+        event: ParsedEventMessage<&'g str>,
     ) -> Result<Option<EventDetail<&'g str>>, SimError> {
         self.previous_outs = self.outs;
         let previous_event = self.prev_event_type;
@@ -486,8 +497,8 @@ impl<'g> Game<'g> {
         let result = match self.phase {
             GamePhase::ExpectInningStart => game_event!(
                 (previous_event, event),
-                [ParsedEventDiscriminants::InningStart]
-                ParsedEvent::InningStart {
+                [ParsedEventMessageDiscriminants::InningStart]
+                ParsedEventMessage::InningStart {
                     number,
                     side,
                     batting_team_emoji,
@@ -544,8 +555,8 @@ impl<'g> Game<'g> {
                     self.phase = GamePhase::ExpectNowBatting;
                     None
                 },
-                [ParsedEventDiscriminants::MoundVisit]
-                ParsedEvent::MoundVisit { emoji, team } => {
+                [ParsedEventMessageDiscriminants::MoundVisit]
+                ParsedEventMessage::MoundVisit { emoji, team } => {
                     if team != self.defending_team().team_name {
                         warn!(
                             "Batting team name from MoundVisit ({team}) did \
@@ -567,36 +578,36 @@ impl<'g> Game<'g> {
             ),
             GamePhase::ExpectNowBatting => game_event!(
                (previous_event, event),
-               [ParsedEventDiscriminants::NowBatting]
+               [ParsedEventMessageDiscriminants::NowBatting]
                // TODO Handle stats
-               ParsedEvent::NowBatting { batter: batter_name, stats: _ } => {
+               ParsedEventMessage::NowBatting { batter: batter_name, stats: _ } => {
                    self.increment_batter_count();
                    self.check_batter(batter_name, event.discriminant());
 
                    self.phase = GamePhase::ExpectPitch;
                    None
                },
-               [ParsedEventDiscriminants::MoundVisit]
+               [ParsedEventMessageDiscriminants::MoundVisit]
                // TODO handle every single member of this variant
-               ParsedEvent::MoundVisit { .. } => {
+               ParsedEventMessage::MoundVisit { .. } => {
                    self.phase = GamePhase::ExpectMoundVisitOutcome;
                    None
                },
             ),
             GamePhase::ExpectPitch => game_event!(
                 (previous_event, event),
-                [ParsedEventDiscriminants::Ball]
+                [ParsedEventMessageDiscriminants::Ball]
                 // TODO handle every single member of this variant
-                ParsedEvent::Ball { count, .. } => {
+                ParsedEventMessage::Ball { count, .. } => {
                     self.count_balls += 1;
                     self.check_count(count);
 
                     self.detail_builder(index)
                         .build_some(TaxaEventType::Ball)
                 },
-                [ParsedEventDiscriminants::Strike]
+                [ParsedEventMessageDiscriminants::Strike]
                 // TODO handle every single member of this variant
-                ParsedEvent::Strike { strike, count, .. } => {
+                ParsedEventMessage::Strike { strike, count, .. } => {
                     self.count_strikes += 1;
                     self.check_count(count);
 
@@ -606,9 +617,9 @@ impl<'g> Game<'g> {
                             StrikeType::Swinging => { TaxaEventType::StrikeSwinging }
                         })
                 },
-                [ParsedEventDiscriminants::StrikeOut]
+                [ParsedEventMessageDiscriminants::StrikeOut]
                 // TODO handle every single member of this variant
-                ParsedEvent::StrikeOut { strike, .. } => {
+                ParsedEventMessage::StrikeOut { strike, .. } => {
                     if self.count_strikes < 2 {
                         warn!("Unexpected strikeout in {}: expected 2 strikes in the count, but there were {}", self.game_id, self.count_strikes);
                     }
@@ -622,9 +633,9 @@ impl<'g> Game<'g> {
                             StrikeType::Swinging => { TaxaEventType::StrikeSwinging }
                         })
                 },
-                [ParsedEventDiscriminants::Foul]
+                [ParsedEventMessageDiscriminants::Foul]
                 // TODO handle every single member of this variant
-                ParsedEvent::Foul { foul, count, .. } => {
+                ParsedEventMessage::Foul { foul, count, .. } => {
                     // Falsehoods...
                     if !(foul == FoulType::Ball && self.count_strikes >= 2) {
                         self.count_strikes += 1;
@@ -638,26 +649,26 @@ impl<'g> Game<'g> {
                         })
                 },
                 // Note this is NOT a baseball Hit. This is a batted ball.
-                [ParsedEventDiscriminants::Hit]
+                [ParsedEventMessageDiscriminants::FairBall]
                 // TODO handle every single member of this variant
-                ParsedEvent::Hit { batter, .. } => {
+                ParsedEventMessage::FairBall { batter, hit, .. } => {
                     self.check_batter(batter, event.discriminant());
 
-                    self.phase = GamePhase::ExpectFairBallOutcome(index);
+                    self.phase = GamePhase::ExpectFairBallOutcome(index, hit);
                     None
                 },
-                [ParsedEventDiscriminants::Walk]
+                [ParsedEventMessageDiscriminants::Walk]
                 // TODO handle every single member of this variant
-                ParsedEvent::Walk { batter, .. } => {
+                ParsedEventMessage::Walk { batter, .. } => {
                     self.check_batter(batter, event.discriminant());
                     self.finish_pa();
 
                     self.detail_builder(index)
                         .build_some(TaxaEventType::Walk)
                 },
-                [ParsedEventDiscriminants::HitByPitch]
+                [ParsedEventMessageDiscriminants::HitByPitch]
                 // TODO handle every single member of this variant
-                ParsedEvent::HitByPitch { batter, .. } => {
+                ParsedEventMessage::HitByPitch { batter, .. } => {
                     self.check_batter(batter, event.discriminant());
                     self.finish_pa();
 
@@ -665,105 +676,107 @@ impl<'g> Game<'g> {
                         .build_some(TaxaEventType::HitByPitch)
                 },
             ),
-            GamePhase::ExpectFairBallOutcome(contact_event_index) => game_event!(
+            GamePhase::ExpectFairBallOutcome(fair_ball_index, fair_ball_type) => game_event!(
                 (previous_event, event),
-                [ParsedEventDiscriminants::CaughtOut]
+                [ParsedEventMessageDiscriminants::CaughtOut]
                 // TODO handle every single member of this variant
-                ParsedEvent::CaughtOut { batter, catcher, .. } => {
+                ParsedEventMessage::CaughtOut { batter, catcher, hit, .. } => {
                     self.check_batter(batter, event.discriminant());
                     self.finish_pa();
                     self.add_out();
                     self.detail_builder(index)
-                        .contact_event_index(contact_event_index)
+                        .fair_ball(fair_ball_index, fair_ball_type.into())
                         .add_fielder(catcher)
                         .build_some(TaxaEventType::CaughtOut)
                 },
-                [ParsedEventDiscriminants::GroundedOut]
+                [ParsedEventMessageDiscriminants::GroundedOut]
                 // TODO handle every single member of this variant
-                ParsedEvent::GroundedOut { batter, .. } => {
+                ParsedEventMessage::GroundedOut { batter, .. } => {
                     self.check_batter(batter, event.discriminant());
                     self.finish_pa();
                     self.add_out();
                     self.detail_builder(index)
-                        .contact_event_index(contact_event_index)
+                        .fair_ball(fair_ball_index, fair_ball_type.into())
                         .build_some(TaxaEventType::GroundedOut)
                 },
-                [ParsedEventDiscriminants::BatterToBase]
+                [ParsedEventMessageDiscriminants::BatterToBase]
                 // TODO handle every single member of this variant
-                ParsedEvent::BatterToBase { batter, distance, ..  } => {
+                ParsedEventMessage::BatterToBase { batter, distance, ..  } => {
                     self.check_batter(batter, event.discriminant());
                     self.finish_pa();
 
-                    match match distance {
-                        Distance::Single => { Some(TaxaHitType::Single) }
-                        Distance::Double => { Some(TaxaHitType::Double) }
-                        Distance::Triple => { Some(TaxaHitType::Triple) }
-                        Distance::HomeRun => { None }
-                    } {
-                        // Hit
-                        Some(hit_type) => {
-                            self.detail_builder(index)
-                                .contact_event_index(contact_event_index)
-                                .hit_type(hit_type)
-                                .build_some(TaxaEventType::Hit)
-                        }
-                        // Home run
-                        None => {
-                            assert!(false, "Encountered a BatterToBase with Distance::HomeRun. Need to figure out what makes this different from a Homer");
-                            self.detail_builder(index)
-                                .contact_event_index(contact_event_index)
-                                .build_some(TaxaEventType::HomeRun)
-                        }
-                    }
+                    let hit_type = match distance {
+                        Distance::Single => { TaxaHitType::Single }
+                        Distance::Double => { TaxaHitType::Double }
+                        Distance::Triple => { TaxaHitType::Triple }
+                    }; 
+                    
+                    self.detail_builder(index)
+                        .fair_ball(fair_ball_index, fair_ball_type.into())
+                        .hit_type(hit_type)
+                        .build_some(TaxaEventType::Hit)
+
                 },
-                [ParsedEventDiscriminants::FieldingError]
+                [ParsedEventMessageDiscriminants::ReachOnFieldingError]
                 // TODO handle every single member of this variant
-                ParsedEvent::FieldingError { batter, .. } => {
+                ParsedEventMessage::ReachOnFieldingError { batter, .. } => {
                     self.check_batter(batter, event.discriminant());
                     self.finish_pa();
 
                     self.detail_builder(index)
-                        .contact_event_index(contact_event_index)
+                        .fair_ball(fair_ball_index, fair_ball_type.into())
                         .build_some(TaxaEventType::FieldingError)
                 },
-                [ParsedEventDiscriminants::Homer]
+                [ParsedEventMessageDiscriminants::HomeRun]
                 // TODO handle every single member of this variant
-                ParsedEvent::Homer { batter, .. } => {
+                ParsedEventMessage::HomeRun { batter, .. } => {
                     self.check_batter(batter, event.discriminant());
                     self.finish_pa();
 
                     self.detail_builder(index)
-                        .contact_event_index(contact_event_index)
+                        .fair_ball(fair_ball_index, fair_ball_type.into())
                         .build_some(TaxaEventType::HomeRun)
                 },
-                [ParsedEventDiscriminants::DoublePlay]
+                [ParsedEventMessageDiscriminants::DoublePlayCaught]
                 // TODO handle every single member of this variant
-                ParsedEvent::DoublePlay { batter, .. } => {
+                ParsedEventMessage::DoublePlayCaught { batter, .. } => {
                     self.check_batter(batter, event.discriminant());
                     self.finish_pa();
                     self.add_out();
                     self.add_out(); // It's a double play -- we add two outs
 
                     self.detail_builder(index)
-                        .contact_event_index(contact_event_index)
+                        .fair_ball(fair_ball_index, fair_ball_type.into())
                         .build_some(TaxaEventType::DoublePlay)
                 },
-                [ParsedEventDiscriminants::ForceOut]
+                [ParsedEventMessageDiscriminants::DoublePlayGrounded]
                 // TODO handle every single member of this variant
-                ParsedEvent::ForceOut { batter, .. } => {
+                ParsedEventMessage::DoublePlayGrounded { batter, .. } => {
+                    self.check_batter(batter, event.discriminant());
+                    self.finish_pa();
+                    self.add_out();
+                    self.add_out(); // It's a double play -- we add two outs
+
+                    self.detail_builder(index)
+                        .fair_ball(fair_ball_index, fair_ball_type.into())
+                        .build_some(TaxaEventType::DoublePlay)
+                },
+                [ParsedEventMessageDiscriminants::ForceOut]
+                // TODO handle every single member of this variant
+                ParsedEventMessage::ForceOut { batter, .. } => {
                     self.check_batter(batter, event.discriminant());
                     self.finish_pa();
                     self.add_out();
 
                     self.detail_builder(index)
-                        .contact_event_index(contact_event_index)
+                        .fair_ball(fair_ball_index, fair_ball_type.into())
                         .build_some(TaxaEventType::ForceOut)
                 },
             ),
             GamePhase::ExpectInningEnd => game_event!(
                 (previous_event, event),
-                [ParsedEventDiscriminants::InningEnd]
-                ParsedEvent::InningEnd { number, side } => {
+                [ParsedEventMessageDiscriminants::InningEnd]
+                ParsedEventMessage::InningEnd { number, side } => {
                     if number != self.inning_number {
                         warn!("Unexpected inning number in {}: expected {}, but saw {number}", self.game_id, self.inning_number);
                     }
@@ -783,18 +796,18 @@ impl<'g> Game<'g> {
             ),
             GamePhase::ExpectMoundVisitOutcome => game_event!(
                 (previous_event, event),
-                [ParsedEventDiscriminants::PitcherRemains]
+                [ParsedEventMessageDiscriminants::PitcherRemains]
                 // TODO handle every single member of this variant
-                ParsedEvent::PitcherRemains { .. } => {
+                ParsedEventMessage::PitcherRemains { .. } => {
                     // I think this is not always ExpectNowBatting. I may have
                     // to store the state-to-return-to as a data member of
                     // GamePhase::ExpectMoundVisitOutcome
                     self.phase = GamePhase::ExpectNowBatting;
                     None
                 },
-                [ParsedEventDiscriminants::PitcherSwap]
+                [ParsedEventMessageDiscriminants::PitcherSwap]
                 // TODO handle every single member of this variant
-                ParsedEvent::PitcherSwap { .. } => {
+                ParsedEventMessage::PitcherSwap { .. } => {
                     // I think this is not always ExpectNowBatting. I may have
                     // to store the state-to-return-to as a data member of
                     // GamePhase::ExpectMoundVisitOutcome
@@ -804,17 +817,17 @@ impl<'g> Game<'g> {
             ),
             GamePhase::ExpectGameEnd => game_event!(
                 (previous_event, event),
-                [ParsedEventDiscriminants::PitcherSwap]
-                ParsedEvent::GameOver => {
+                [ParsedEventMessageDiscriminants::PitcherSwap]
+                ParsedEventMessage::GameOver => {
                     self.phase = GamePhase::ExpectFinalScore;
                     None
                 },
             ),
             GamePhase::ExpectFinalScore => game_event!(
                 (previous_event, event),
-                [ParsedEventDiscriminants::Recordkeeping]
+                [ParsedEventMessageDiscriminants::Recordkeeping]
                 // TODO handle every single member of this variant
-                ParsedEvent::Recordkeeping { .. } => {
+                ParsedEventMessage::Recordkeeping { .. } => {
                     self.phase = GamePhase::Finished;
                     None
                 },
@@ -840,44 +853,62 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
         (self.count_balls, self.count_strikes)
     }
 
-    pub fn to_parsed(&self) -> ParsedEvent<&str> {
+    pub fn to_parsed(&self) -> ParsedEventMessage<&str> {
         match self.detail_type {
             TaxaEventType::Ball => {
-                ParsedEvent::Ball {
+                ParsedEventMessage::Ball {
                     steals: vec![],
                     count: self.count(),
                 }
             }
             TaxaEventType::StrikeLooking => {
-                ParsedEvent::Strike {
-                    strike: StrikeType::Looking,
-                    steals: vec![],
-                    count: self.count(),
+                if self.outs_after > self.outs_before {
+                    ParsedEventMessage::StrikeOut {
+                        foul: None,
+                        batter: self.batter_name.as_ref(),
+                        strike: StrikeType::Looking,
+                        steals: vec![],
+                    }
+                } else {
+                    ParsedEventMessage::Strike {
+                        strike: StrikeType::Looking,
+                        steals: vec![],
+                        count: self.count(),
+                    }
                 }
             }
             TaxaEventType::StrikeSwinging => {
-                ParsedEvent::Strike {
-                    strike: StrikeType::Swinging,
-                    steals: vec![],
-                    count: self.count(),
+                if self.outs_after > self.outs_before {
+                    ParsedEventMessage::StrikeOut {
+                        foul: None,
+                        batter: self.batter_name.as_ref(),
+                        strike: StrikeType::Swinging,
+                        steals: vec![],
+                    }
+                } else {
+                    ParsedEventMessage::Strike {
+                        strike: StrikeType::Swinging,
+                        steals: vec![],
+                        count: self.count(),
+                    }
                 }
             }
             TaxaEventType::FoulTip => {
-                ParsedEvent::Foul {
+                ParsedEventMessage::Foul {
                     foul: FoulType::Tip,
                     steals: vec![],
                     count: self.count(),
                 }
             }
             TaxaEventType::FoulBall => {
-                ParsedEvent::Foul {
+                ParsedEventMessage::Foul {
                     foul: FoulType::Ball,
                     steals: vec![],
                     count: self.count(),
                 }
             }
             TaxaEventType::Hit => {
-                ParsedEvent::BatterToBase {
+                ParsedEventMessage::BatterToBase {
                     batter: self.batter_name.as_ref(),
                     distance: match self.hit_type {
                         None => {
@@ -894,7 +925,7 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                 }
             }
             TaxaEventType::ForceOut => {
-                ParsedEvent::ForceOut {
+                ParsedEventMessage::ForceOut {
                     batter: self.batter_name.as_ref(),
                     fielders: vec![],
                     hit: HitType::GroundBall,  // TODO
@@ -910,9 +941,11 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                     .collect_tuple()
                     .expect("CaughtOut must have exactly one fielder. TODO Handle this properly.");
 
-                ParsedEvent::CaughtOut {
+                ParsedEventMessage::CaughtOut {
                     batter: self.batter_name.as_ref(),
-                    hit: HitType::GroundBall,  // TODO
+                    hit: self.fair_ball_type
+                        .expect("CaughtOut type must have a fair_ball_type.")
+                        .into(),
                     catcher,
                     scores: vec![],
                     advances: vec![],
@@ -921,7 +954,7 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                 }
             }
             TaxaEventType::GroundedOut => {
-                ParsedEvent::GroundedOut {
+                ParsedEventMessage::GroundedOut {
                     batter: self.batter_name.as_ref(),
                     fielders: vec![],
                     scores: vec![],
@@ -929,14 +962,14 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                 }
             }
             TaxaEventType::Walk => {
-                ParsedEvent::Walk {
+                ParsedEventMessage::Walk {
                     batter: self.batter_name.as_ref(),
                     scores: vec![],
                     advances: vec![],
                 }
             }
             TaxaEventType::HomeRun => {
-                ParsedEvent::Homer {
+                ParsedEventMessage::HomeRun {
                     batter: self.batter_name.as_ref(),
                     hit: HitType::GroundBall,  // TODO
                     destination: HitDestination::ShortStop,  // TODO
@@ -944,7 +977,7 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                 }
             }
             TaxaEventType::FieldingError => {
-                ParsedEvent::FieldingError {
+                ParsedEventMessage::ReachOnFieldingError {
                     batter: self.batter_name.as_ref(),
                     fielder: todo!(),
                     error: FieldingErrorType::Throwing,  // TODO
@@ -953,42 +986,32 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                 }
             }
             TaxaEventType::HitByPitch => {
-                ParsedEvent::HitByPitch {
+                ParsedEventMessage::HitByPitch {
                     batter: self.batter_name.as_ref(),
                     scores: vec![],
                     advances: vec![],
                 }
             }
-            TaxaEventType::DoublePlay => { 
-                ParsedEvent::DoublePlay {
+            TaxaEventType::DoublePlay => {
+                ParsedEventMessage::DoublePlayCaught {
                     batter: self.batter_name.as_ref(),
-                    hit: HitType::GroundBall,  // TODO
+                    hit: HitType::Popup,  // TODO
                     fielders: vec![],
-                    plays: vec![],
+                    play: todo!(),
                     scores: vec![],
                     advances: vec![],
-                    sacrifice: false,  // TODO
                 }
             }
         }
     }
 
-    pub fn to_parsed_contact(&self) -> ParsedEvent<&str> {
-        match self.detail_type {
-            TaxaEventType::Ball => { todo!() }
-            TaxaEventType::StrikeLooking => { todo!() }
-            TaxaEventType::StrikeSwinging => { todo!() }
-            TaxaEventType::FoulTip => { todo!() }
-            TaxaEventType::FoulBall => { todo!() }
-            TaxaEventType::Hit => { todo!() }
-            TaxaEventType::ForceOut => { todo!() }
-            TaxaEventType::CaughtOut => { todo!() }
-            TaxaEventType::GroundedOut => { todo!() }
-            TaxaEventType::Walk => { todo!() }
-            TaxaEventType::HomeRun => { todo!() }
-            TaxaEventType::FieldingError => { todo!() }
-            TaxaEventType::HitByPitch => { todo!() }
-            TaxaEventType::DoublePlay => { todo!() }
+    pub fn to_parsed_contact(&self) -> ParsedEventMessage<&str> {
+        // We're going to construct a FairBall for this no matter 
+        // whether we had the type. 
+        ParsedEventMessage::FairBall {
+            batter: self.batter_name.as_ref(),
+            hit: HitType::Popup,
+            destination: HitDestination::Catcher,
         }
     }
 }
