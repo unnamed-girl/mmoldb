@@ -200,7 +200,21 @@ async fn ingest_game(pool: Db, taxa: &Taxa, ingest_id: i64, game_info: &CashewsG
 
             info!("Applying event \"{}\"", raw.message);
 
-            game.next(index, parsed).expect("TODO Error handling")
+            // TODO This TODO is out of place, but I just changed Game::next to
+            //   accept a reference to parsed. I think this lets me get rid of a
+            //   clone() inside ingest_game(). Do that.
+            let detail = game.next(index, &parsed).expect("TODO Error handling");
+            
+            if let Some(d) = &detail {
+                // TODO Figure out how to also do this for the preceding fair ball event
+                assert_eq!(
+                    parsed,
+                    d.to_parsed(),
+                    "Failed to round-trip EventDetail",
+                )
+            }
+            
+            detail
         })
         .collect();
 

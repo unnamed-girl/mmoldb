@@ -489,7 +489,7 @@ impl<'g> Game<'g> {
     pub fn next(
         &mut self,
         index: usize,
-        event: ParsedEventMessage<&'g str>,
+        event: &ParsedEventMessage<&'g str>,
     ) -> Result<Option<EventDetail<&'g str>>, SimError> {
         self.previous_outs = self.outs;
         let previous_event = self.prev_event_type;
@@ -505,14 +505,14 @@ impl<'g> Game<'g> {
                     batting_team_name,
                     pitcher_status,
                 } => {
-                    if side != self.inning_half.flip() {
+                    if *side != self.inning_half.flip() {
                         warn!(
                             "Unexpected inning side in {}: expected {:?}, but saw {side:?}",
                             self.game_id,
                             self.inning_half.flip(),
                         );
                     }
-                    self.inning_half = side;
+                    self.inning_half = *side;
 
                     // If we just started a top, the number should increment
                     let expected_number = match self.inning_half {
@@ -520,7 +520,7 @@ impl<'g> Game<'g> {
                         TopBottom::Bottom => self.inning_number,
                     };
 
-                    if number != expected_number {
+                    if *number != expected_number {
                         warn!(
                             "Unexpected inning number in {}: expected {}, but saw {}",
                             self.game_id,
@@ -528,16 +528,16 @@ impl<'g> Game<'g> {
                             number,
                         );
                     }
-                    self.inning_number = number;
+                    self.inning_number = *number;
 
-                    if batting_team_name != self.batting_team().team_name {
+                    if *batting_team_name != self.batting_team().team_name {
                         warn!(
                             "Batting team name from InningStart ({batting_team_name}) did \
                             not match the one from LiveNow ({})",
                             self.batting_team().team_name,
                         );
                     }
-                    if batting_team_emoji != self.batting_team().team_emoji {
+                    if *batting_team_emoji != self.batting_team().team_emoji {
                         warn!(
                             "Batting team emoji from InningStart ({batting_team_emoji}) did \
                             not match the one from LiveNow ({})",
@@ -557,14 +557,14 @@ impl<'g> Game<'g> {
                 },
                 [ParsedEventMessageDiscriminants::MoundVisit]
                 ParsedEventMessage::MoundVisit { emoji, team } => {
-                    if team != self.defending_team().team_name {
+                    if *team != self.defending_team().team_name {
                         warn!(
                             "Batting team name from MoundVisit ({team}) did \
                             not match the one from LiveNow ({})",
                             self.defending_team().team_name,
                         );
                     }
-                    if emoji != self.defending_team().team_emoji {
+                    if *emoji != self.defending_team().team_emoji {
                         warn!(
                             "Batting team emoji from MoundVisit ({emoji}) did \
                             not match the one from LiveNow ({})",
@@ -600,7 +600,7 @@ impl<'g> Game<'g> {
                 // TODO handle every single member of this variant
                 ParsedEventMessage::Ball { count, .. } => {
                     self.count_balls += 1;
-                    self.check_count(count);
+                    self.check_count(*count);
 
                     self.detail_builder(index)
                         .build_some(TaxaEventType::Ball)
@@ -609,7 +609,7 @@ impl<'g> Game<'g> {
                 // TODO handle every single member of this variant
                 ParsedEventMessage::Strike { strike, count, .. } => {
                     self.count_strikes += 1;
-                    self.check_count(count);
+                    self.check_count(*count);
 
                     self.detail_builder(index)
                         .build_some(match strike {
@@ -637,10 +637,10 @@ impl<'g> Game<'g> {
                 // TODO handle every single member of this variant
                 ParsedEventMessage::Foul { foul, count, .. } => {
                     // Falsehoods...
-                    if !(foul == FoulType::Ball && self.count_strikes >= 2) {
+                    if !(*foul == FoulType::Ball && self.count_strikes >= 2) {
                         self.count_strikes += 1;
                     }
-                    self.check_count(count);
+                    self.check_count(*count);
 
                     self.detail_builder(index)
                         .build_some(match foul {
@@ -654,7 +654,7 @@ impl<'g> Game<'g> {
                 ParsedEventMessage::FairBall { batter, hit, .. } => {
                     self.check_batter(batter, event.discriminant());
 
-                    self.phase = GamePhase::ExpectFairBallOutcome(index, hit);
+                    self.phase = GamePhase::ExpectFairBallOutcome(index, *hit);
                     None
                 },
                 [ParsedEventMessageDiscriminants::Walk]
@@ -686,7 +686,7 @@ impl<'g> Game<'g> {
                     self.add_out();
                     self.detail_builder(index)
                         .fair_ball(fair_ball_index, fair_ball_type.into())
-                        .add_fielder(catcher)
+                        .add_fielder(*catcher)
                         .build_some(TaxaEventType::CaughtOut)
                 },
                 [ParsedEventMessageDiscriminants::GroundedOut]
@@ -709,8 +709,8 @@ impl<'g> Game<'g> {
                         Distance::Single => { TaxaHitType::Single }
                         Distance::Double => { TaxaHitType::Double }
                         Distance::Triple => { TaxaHitType::Triple }
-                    }; 
-                    
+                    };
+
                     self.detail_builder(index)
                         .fair_ball(fair_ball_index, fair_ball_type.into())
                         .hit_type(hit_type)
@@ -777,16 +777,16 @@ impl<'g> Game<'g> {
                 (previous_event, event),
                 [ParsedEventMessageDiscriminants::InningEnd]
                 ParsedEventMessage::InningEnd { number, side } => {
-                    if number != self.inning_number {
+                    if *number != self.inning_number {
                         warn!("Unexpected inning number in {}: expected {}, but saw {number}", self.game_id, self.inning_number);
                     }
 
-                    if side != self.inning_half {
+                    if *side != self.inning_half {
                         warn!("Unexpected inning side in {}: expected {:?}, but saw {side:?}", self.game_id, self.inning_half);
                     }
 
                     // TODO Implement the full extra innings rule
-                    if number == 9 {
+                    if *number == 9 {
                         self.phase = GamePhase::ExpectGameEnd;
                     } else {
                         self.phase = GamePhase::ExpectInningStart;
@@ -1006,8 +1006,8 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
     }
 
     pub fn to_parsed_contact(&self) -> ParsedEventMessage<&str> {
-        // We're going to construct a FairBall for this no matter 
-        // whether we had the type. 
+        // We're going to construct a FairBall for this no matter
+        // whether we had the type.
         ParsedEventMessage::FairBall {
             batter: self.batter_name.as_ref(),
             hit: HitType::Popup,
