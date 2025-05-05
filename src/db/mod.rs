@@ -5,10 +5,10 @@
 mod taxa;
 mod to_db_format;
 
-pub use crate::db::taxa::{Taxa, TaxaEventType, TaxaHitType, TaxaFairBallType};
+pub use crate::db::taxa::{Taxa, TaxaEventType, TaxaHitType, TaxaPosition, TaxaFairBallType};
 
 use crate::ingest::EventDetail;
-use crate::models::{DbEvent, DbFielder, Ingest, NewIngest};
+use crate::models::{DbEvent, DbFielder, DbRunner, Ingest, NewIngest};
 use chrono::{DateTime, Utc};
 use rocket_db_pools::diesel::AsyncPgConnection;
 use rocket_db_pools::diesel::prelude::*;
@@ -71,20 +71,28 @@ pub async fn events_for_game<'e>(
         .load(conn)
         .await?;
 
-    // Just get all the fielders for all the events, unassociated
+    let db_runners = Vec::new();
+    // let db_runners = DbRunner::belonging_to(&db_events)
+    //     .select(DbRunner::as_select())
+    //     .load(conn)
+    //     .await?
+    //     .grouped_by(&db_events);
+
     let db_fielders = DbFielder::belonging_to(&db_events)
         .select(DbFielder::as_select())
         .load(conn)
-        .await?;
-
-    // Group the fielders per book
-    let db_fielders_per_event = db_fielders
+        .await?
         .grouped_by(&db_events);
+    
+    // This complicated-looking statement just zips all the iterators
+    // together and passes the corresponding elements to row_to_event
     Ok(
-        std::iter::zip(db_events, db_fielders_per_event)
+        db_events
             .into_iter()
-            .map(|(db_event, db_fielders)| {
-                to_db_format::row_to_event(taxa, db_event, db_fielders)
+            .zip(db_runners)
+            .zip(db_fielders)
+            .map(|((db_event, db_runners), db_fielders)| {
+                to_db_format::row_to_event(taxa, db_event, db_runners, db_fielders)
             })
             .collect()
     )

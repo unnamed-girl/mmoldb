@@ -31,6 +31,13 @@ create table taxa.fair_ball_type (
     unique (name)
 );
 
+create table taxa.base (
+    id bigserial primary key not null,
+    name text not null,
+    display_name text not null,
+    unique (name)
+);
+
 create table data.events (
     -- bookkeeping
     id bigserial primary key not null,
@@ -49,6 +56,7 @@ create table data.events (
     hit_type bigint references taxa.hit_type,
     -- should be populated for every event type where there's a fair ball
     fair_ball_type bigint references taxa.fair_ball_type,
+    fair_ball_direction bigint references taxa.position,
     count_balls int not null,
     count_strikes int not null,
     outs_before int not null,
@@ -60,6 +68,12 @@ create table data.events (
     batter_name text not null,
     pitcher_name text not null
     -- note: more data is in data.event_baserunners and data.event_fielders
+
+    -- fair_ball_event_index, fair_ball_type, and fair_ball_direction should in sync w/r/t null-ness
+    -- DEBUG: These constraints are disabled because the nature of a batch insert makes it hard to debug them. I have
+    -- Rust-layer checks for violations, and I'll enable these once the Rust ones pass
+--     constraint fair_ball_type_null_sync check ((fair_ball_event_index is not null) = (fair_ball_type is not null)),
+--     constraint fair_ball_direction_null_sync check ((fair_ball_event_index is not null) = (fair_ball_direction is not null))
  );
 
 create table data.event_baserunners (
@@ -82,8 +96,8 @@ create table data.event_baserunners (
     --   - i don't know what a row with base_before == null and
     --     base_after == null would mean, but i reserve the right to
     --     have one
-    base_before int, -- null == not on base before (i.e. this was the hit/walk/etc that put them on base)
-    base_after int, -- null == not on base after because of getting out. if they scored, this will be 0
+    base_before bigint references taxa.base, -- null == not on base before (i.e. this was the hit/walk/etc that put them on base)
+    base_after bigint references taxa.base, -- null == not on base after because of getting out. if they scored, this will be 0
     steal bool not null -- this records all ATTEMPTED steals. identify failed steals by looking for base_after == null
 );
 

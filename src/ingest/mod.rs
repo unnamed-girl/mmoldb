@@ -205,14 +205,16 @@ async fn ingest_game(pool: Db, taxa: &Taxa, ingest_id: i64, game_info: &CashewsG
             //   clone() inside ingest_game(). Do that.
             let detail = game.next(index, &parsed).expect("TODO Error handling");
             
-            if let Some(d) = &detail {
-                // TODO Figure out how to also do this for the preceding fair ball event
-                assert_eq!(
-                    parsed,
-                    d.to_parsed(),
-                    "Failed to round-trip EventDetail",
-                )
-            }
+            // Temporarily disabled because I want to get earlier errors from
+            // full round-tripping through the db
+            // if let Some(d) = &detail {
+            //     // TODO Figure out how to also do this for the preceding fair ball event
+            //     assert_eq!(
+            //         parsed,
+            //         d.to_parsed(),
+            //         "Failed to round-trip EventDetail",
+            //     )
+            // }
             
             detail
         })

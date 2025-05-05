@@ -1,4 +1,4 @@
-use crate::db::{TaxaEventType, TaxaFairBallType, TaxaHitType};
+use crate::db::{TaxaEventType, TaxaFairBallType, TaxaPosition, TaxaHitType};
 use itertools::Itertools;
 use log::{debug, info, warn};
 use mmolb_parsing::ParsedEventMessage;
@@ -48,17 +48,24 @@ pub struct EventDetail<StrT> {
     pub detail_type: TaxaEventType,
     pub hit_type: Option<TaxaHitType>,
     pub fair_ball_type: Option<TaxaFairBallType>,
+    pub fair_ball_direction: Option<TaxaPosition>,
 
     pub advances: Vec<RunnerAdvance<StrT>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
+struct FairBall {
+    index: usize,
+    hit_type: HitType,
+    hit_destination: HitDestination
+}
+
+#[derive(Debug, Copy, Clone)]
 enum GamePhase {
     ExpectInningStart,
     ExpectNowBatting,
     ExpectPitch,
-    // HitType here corresponds to TaxaFairBallType, NOT TaxaHitType
-    ExpectFairBallOutcome(usize, HitType),
+    ExpectFairBallOutcome(FairBall),
     ExpectInningEnd,
     ExpectMoundVisitOutcome,
     ExpectGameEnd,
@@ -200,15 +207,17 @@ struct EventDetailBuilder<'a, 'g> {
     game_event_index: usize,
     fair_ball_event_index: Option<usize>,
     fair_ball_type: Option<TaxaFairBallType>,
+    fair_ball_direction: Option<TaxaPosition>,
     hit_type: Option<TaxaHitType>,
     fielders: Vec<PositionedPlayer<&'g str>>,
     advances: Vec<RunnerAdvance<&'g str>>,
 }
 
 impl<'a, 'g> EventDetailBuilder<'a, 'g> {
-    fn fair_ball(mut self, fair_ball_event_index: usize, fair_ball_type: TaxaFairBallType) -> Self {
-        self.fair_ball_event_index = Some(fair_ball_event_index);
-        self.fair_ball_type = Some(fair_ball_type);
+    fn fair_ball(mut self, fair_ball: FairBall) -> Self {
+        self.fair_ball_event_index = Some(fair_ball.index);
+        self.fair_ball_type = Some(fair_ball.hit_type.into());
+        self.fair_ball_direction = Some(fair_ball.hit_destination.into());
         self
     }
 
@@ -289,6 +298,7 @@ impl<'a, 'g> EventDetailBuilder<'a, 'g> {
             detail_type: type_detail,
             hit_type: self.hit_type,
             fair_ball_type: self.fair_ball_type,
+            fair_ball_direction: self.fair_ball_direction,
             advances: self.advances,
         }
     }
@@ -490,6 +500,7 @@ impl<'g> Game<'g> {
             advances: Vec::new(),
             hit_type: None,
             fair_ball_type: None,
+            fair_ball_direction: None,
         }
     }
 
@@ -686,11 +697,14 @@ impl<'g> Game<'g> {
                         })
                 },
                 [ParsedEventMessageDiscriminants::FairBall]
-                // TODO handle every single member of this variant
-                ParsedEventMessage::FairBall { batter, hit, .. } => {
+                ParsedEventMessage::FairBall { batter, hit, destination } => {
                     self.check_batter(batter, event.discriminant());
 
-                    self.phase = GamePhase::ExpectFairBallOutcome(index, *hit);
+                    self.phase = GamePhase::ExpectFairBallOutcome(FairBall {
+                        index,
+                        hit_type: *hit,
+                        hit_destination: *destination,
+                    });
                     None
                 },
                 [ParsedEventMessageDiscriminants::Walk]
@@ -712,7 +726,7 @@ impl<'g> Game<'g> {
                         .build_some(TaxaEventType::HitByPitch)
                 },
             ),
-            GamePhase::ExpectFairBallOutcome(fair_ball_index, fair_ball_type) => game_event!(
+            GamePhase::ExpectFairBallOutcome(fair_ball) => game_event!(
                 (previous_event, event),
                 [ParsedEventMessageDiscriminants::CaughtOut]
                 // TODO handle every single member of this variant
@@ -721,7 +735,7 @@ impl<'g> Game<'g> {
                     self.finish_pa();
                     self.add_out();
                     self.detail_builder(index)
-                        .fair_ball(fair_ball_index, fair_ball_type.into())
+                        .fair_ball(fair_ball)
                         .fielder(*catcher)
                         .build_some(TaxaEventType::CaughtOut)
                 },
@@ -732,7 +746,7 @@ impl<'g> Game<'g> {
                     self.finish_pa();
                     self.add_out();
                     self.detail_builder(index)
-                        .fair_ball(fair_ball_index, fair_ball_type.into())
+                        .fair_ball(fair_ball)
                         .fielders(fielders.clone())
                         .build_some(TaxaEventType::GroundedOut)
                 },
@@ -743,7 +757,7 @@ impl<'g> Game<'g> {
                     self.finish_pa();
 
                     self.detail_builder(index)
-                        .fair_ball(fair_ball_index, fair_ball_type.into())
+                        .fair_ball(fair_ball)
                         .hit_type((*distance).into())
                         .fielder(*fielder)
                         .advances(advances.clone())
@@ -756,7 +770,7 @@ impl<'g> Game<'g> {
                     self.finish_pa();
 
                     self.detail_builder(index)
-                        .fair_ball(fair_ball_index, fair_ball_type.into())
+                        .fair_ball(fair_ball)
                         .fielder(*fielder)
                         .build_some(TaxaEventType::FieldingError)
                 },
@@ -767,7 +781,7 @@ impl<'g> Game<'g> {
                     self.finish_pa();
 
                     self.detail_builder(index)
-                        .fair_ball(fair_ball_index, fair_ball_type.into())
+                        .fair_ball(fair_ball)
                         .build_some(TaxaEventType::HomeRun)
                 },
                 [ParsedEventMessageDiscriminants::DoublePlayCaught]
@@ -779,7 +793,7 @@ impl<'g> Game<'g> {
                     self.add_out(); // It's a double play -- we add two outs
 
                     self.detail_builder(index)
-                        .fair_ball(fair_ball_index, fair_ball_type.into())
+                        .fair_ball(fair_ball)
                         .build_some(TaxaEventType::DoublePlay)
                 },
                 [ParsedEventMessageDiscriminants::DoublePlayGrounded]
@@ -791,7 +805,7 @@ impl<'g> Game<'g> {
                     self.add_out(); // It's a double play -- we add two outs
 
                     self.detail_builder(index)
-                        .fair_ball(fair_ball_index, fair_ball_type.into())
+                        .fair_ball(fair_ball)
                         .build_some(TaxaEventType::DoublePlay)
                 },
                 [ParsedEventMessageDiscriminants::ForceOut]
@@ -802,7 +816,7 @@ impl<'g> Game<'g> {
                     self.add_out();
 
                     self.detail_builder(index)
-                        .fair_ball(fair_ball_index, fair_ball_type.into())
+                        .fair_ball(fair_ball)
                         .build_some(TaxaEventType::ForceOut)
                 },
             ),
@@ -1037,7 +1051,9 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                     hit: self.fair_ball_type
                         .expect("HomeRun type must have a fair_ball_type")
                         .into(),
-                    destination: HitDestination::ShortStop, // TODO
+                    destination: self.fair_ball_direction
+                        .expect("HomeRun type must have a fair_ball_direction")
+                        .into(),
                     scores: vec![],
                 }
             }
@@ -1078,8 +1094,12 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
         // whether we had the type.
         ParsedEventMessage::FairBall {
             batter: self.batter_name.as_ref(),
-            hit: HitType::Popup,
-            destination: HitDestination::Catcher,
+            hit: self.fair_ball_type
+                .expect("Event with a fair_ball_index must have a fair_ball_type")
+                .into(),
+            destination: self.fair_ball_direction
+                .expect("Event with a fair_ball_index must have a fair_ball_direction")
+                .into(),
         }
     }
 }

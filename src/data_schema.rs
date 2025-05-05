@@ -6,8 +6,8 @@ pub mod data {
             id -> Int8,
             event_id -> Int8,
             baserunner_name -> Text,
-            base_before -> Nullable<Int4>,
-            base_after -> Nullable<Int4>,
+            base_before -> Nullable<Int8>,
+            base_after -> Nullable<Int8>,
             steal -> Bool,
         }
     }
@@ -34,6 +34,7 @@ pub mod data {
             event_type -> Int8,
             hit_type -> Nullable<Int8>,
             fair_ball_type -> Nullable<Int8>,
+            fair_ball_direction -> Nullable<Int8>,
             count_balls -> Int4,
             count_strikes -> Int4,
             outs_before -> Int4,

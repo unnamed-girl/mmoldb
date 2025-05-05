@@ -30,6 +30,13 @@ pub struct NewFairBallType<'a> {
 }
 
 #[derive(Insertable)]
+#[diesel(table_name = crate::taxa_schema::taxa::base)]
+pub struct NewBase<'a> {
+    pub name: &'a str,
+    pub display_name: &'a str,
+}
+
+#[derive(Insertable)]
 #[diesel(table_name = crate::data_schema::data::ingests)]
 pub struct NewIngest {
     pub date_started: NaiveDateTime,
@@ -56,6 +63,7 @@ pub struct NewEvent<'a> {
     pub event_type: i64,
     pub hit_type: Option<i64>,
     pub fair_ball_type: Option<i64>,
+    pub fair_ball_direction: Option<i64>,
     pub count_balls: i32,
     pub count_strikes: i32,
     pub outs_before: i32,
@@ -78,6 +86,7 @@ pub struct DbEvent {
     pub event_type: i64,
     pub hit_type: Option<i64>,
     pub fair_ball_type: Option<i64>,
+    pub fair_ball_direction: Option<i64>,
     pub count_balls: i32,
     pub count_strikes: i32,
     pub outs_before: i32,
@@ -92,8 +101,21 @@ pub struct DbEvent {
 pub struct NewBaserunner<'a> {
     pub event_id: i64,
     pub baserunner_name: &'a str,
-    pub base_before: Option<i32>,
-    pub base_after: Option<i32>,
+    pub base_before: Option<i64>,
+    pub base_after: Option<i64>,
+    pub steal: bool,
+}
+
+#[derive(Queryable, Selectable, Identifiable, Associations)]
+#[diesel(belongs_to(DbEvent, foreign_key = event_id))]
+#[diesel(table_name = crate::data_schema::data::event_baserunners)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct DbRunner {
+    pub id: i64,
+    pub event_id: i64,
+    pub baserunner_name: String,
+    pub base_before: Option<i64>,
+    pub base_after: Option<i64>,
     pub steal: bool,
 }
 
