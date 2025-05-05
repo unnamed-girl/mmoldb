@@ -17,6 +17,13 @@ create table taxa.hit_type (
     unique (name)
 );
 
+create table taxa.position (
+    id bigserial primary key not null,
+    name text not null,
+    display_name text not null,
+    unique (name)
+);
+
 create table data.events (
     -- bookkeeping
     id bigserial primary key not null,
@@ -36,24 +43,19 @@ create table data.events (
     count_strikes int not null,
     outs_before int not null,
     outs_after int not null,
-    ends_inning boolean not null,
     -- note: runs scored, outs on play, steal info, etc. are all computed from data.event_baserunners
 
     -- player info
     batter_count int not null, -- starts at 0 and increments every time a new batter steps up
     batter_name text not null,
-    pitcher_name text not null,
-    fielder_names text[] not null,
-
-    -- ensure there can't be nulls in the fielder_names array
-    constraint no_null_fielder_names
-        check ( cardinality(fielder_names) = cardinality(array_remove(fielder_names, null)))
-);
+    pitcher_name text not null
+    -- note: more data is in data.event_baserunners and data.event_fielders
+ );
 
 create table data.event_baserunners (
     -- bookkeeping
     id bigserial primary key not null,
-    event_id bigserial references data.events not null,
+    event_id bigint references data.events on delete cascade not null,
 
     -- actual data
     baserunner_name text not null,
@@ -73,4 +75,15 @@ create table data.event_baserunners (
     base_before int, -- null == not on base before (i.e. this was the hit/walk/etc that put them on base)
     base_after int, -- null == not on base after because of getting out. if they scored, this will be 0
     steal bool not null -- this records all ATTEMPTED steals. identify failed steals by looking for base_after == null
+);
+
+create table data.event_fielders (
+    -- bookkeeping
+    id bigserial primary key not null,
+    event_id bigint references data.events on delete cascade not null,
+
+    -- actual data
+    fielder_name text not null,
+    fielder_position bigint references taxa.position not null,
+    play_order int not null
 );

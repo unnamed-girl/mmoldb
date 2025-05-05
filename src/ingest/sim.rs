@@ -6,6 +6,7 @@ use mmolb_parsing::parsed_event::{ParsedEventDiscriminants, PositionedPlayer};
 use std::fmt::Debug;
 use strum::IntoDiscriminant;
 use thiserror::Error;
+use itertools::Itertools;
 
 #[derive(Debug, Error)]
 pub enum SimError {
@@ -37,11 +38,10 @@ pub struct EventDetail<StrT> {
     pub count_strikes: u8,
     pub outs_before: i32,
     pub outs_after: i32,
-    pub ends_inning: bool,
     pub batter_count: usize,
     pub batter_name: StrT,
     pub pitcher_name: StrT,
-    pub fielder_names: Vec<StrT>,
+    pub fielders: Vec<PositionedPlayer<StrT>>,
 
     pub detail_type: TaxaEventType,
     pub hit_type: Option<TaxaHitType>,
@@ -195,6 +195,7 @@ struct EventDetailBuilder<'a, 'g> {
     game: &'a Game<'g>,
     contact_event_index: Option<usize>,
     game_event_index: usize,
+    fielders: Vec<PositionedPlayer<&'g str>>,
     advances: Vec<()>,
     hit_type: Option<TaxaHitType>,
 }
@@ -207,6 +208,11 @@ impl<'a, 'g> EventDetailBuilder<'a, 'g> {
 
     fn hit_type(mut self, hit_type: TaxaHitType) -> Self {
         self.hit_type = Some(hit_type);
+        self
+    }
+
+    fn add_fielder(mut self, fielder: PositionedPlayer<&'g str>) -> Self {
+        self.fielders.push(fielder);
         self
     }
 
@@ -225,14 +231,13 @@ impl<'a, 'g> EventDetailBuilder<'a, 'g> {
             count_strikes: self.game.count_strikes,
             outs_before: self.game.outs,
             outs_after: self.game.outs,
-            ends_inning: false,
             batter_count: self.game.batting_team().batter_count
                 .expect("sim::Game state machine should ensure batter_count is set before any EventDetail is constructed"),
             batter_name: self.game.active_batter()
                 .expect("sim::Game state machine should ensure batter_name is set before any EventDetail is constructed")
                 .name,
             pitcher_name: self.game.defending_team().pitcher_name,
-            fielder_names: vec![],
+            fielders: self.fielders,
             detail_type: type_detail,
             hit_type: self.hit_type,
             advances: self.advances,
@@ -434,6 +439,7 @@ impl<'g> Game<'g> {
             game: self,
             contact_event_index: None,
             game_event_index,
+            fielders: Vec::new(),
             advances: Vec::new(),
             hit_type: None,
         }
@@ -562,7 +568,8 @@ impl<'g> Game<'g> {
             GamePhase::ExpectNowBatting => game_event!(
                (previous_event, event),
                [ParsedEventDiscriminants::NowBatting]
-               ParsedEvent::NowBatting { batter: batter_name, stats } => {
+               // TODO Handle stats
+               ParsedEvent::NowBatting { batter: batter_name, stats: _ } => {
                    self.increment_batter_count();
                    self.check_batter(batter_name, event.discriminant());
 
@@ -662,12 +669,13 @@ impl<'g> Game<'g> {
                 (previous_event, event),
                 [ParsedEventDiscriminants::CaughtOut]
                 // TODO handle every single member of this variant
-                ParsedEvent::CaughtOut { batter, .. } => {
+                ParsedEvent::CaughtOut { batter, catcher, .. } => {
                     self.check_batter(batter, event.discriminant());
                     self.finish_pa();
                     self.add_out();
                     self.detail_builder(index)
                         .contact_event_index(contact_event_index)
+                        .add_fielder(catcher)
                         .build_some(TaxaEventType::CaughtOut)
                 },
                 [ParsedEventDiscriminants::GroundedOut]
@@ -820,6 +828,13 @@ impl<'g> Game<'g> {
     }
 }
 
+fn positioned_player_as_ref<StrT: AsRef<str>>(p: &PositionedPlayer<StrT>) -> PositionedPlayer<&str> {
+    PositionedPlayer {
+        name: p.name.as_ref(),
+        position: p.position,
+    }
+}
+
 impl<StrT: AsRef<str>> EventDetail<StrT> {
     fn count(&self) -> (u8, u8) {
         (self.count_balls, self.count_strikes)
@@ -889,10 +904,16 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                 }
             }
             TaxaEventType::CaughtOut => {
+                let (catcher,) = self.fielders
+                    .iter()
+                    .map(positioned_player_as_ref)
+                    .collect_tuple()
+                    .expect("CaughtOut must have exactly one fielder. TODO Handle this properly.");
+
                 ParsedEvent::CaughtOut {
                     batter: self.batter_name.as_ref(),
                     hit: HitType::GroundBall,  // TODO
-                    catcher: todo!(),
+                    catcher,
                     scores: vec![],
                     advances: vec![],
                     sacrifice: false,  // TODO

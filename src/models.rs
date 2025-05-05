@@ -9,6 +9,20 @@ pub struct NewEventType<'a> {
 }
 
 #[derive(Insertable)]
+#[diesel(table_name = crate::taxa_schema::taxa::hit_type)]
+pub struct NewHitType<'a> {
+    pub name: &'a str,
+    pub display_name: &'a str,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = crate::taxa_schema::taxa::position)]
+pub struct NewPosition<'a> {
+    pub name: &'a str,
+    pub display_name: &'a str,
+}
+
+#[derive(Insertable)]
 #[diesel(table_name = crate::data_schema::data::ingests)]
 pub struct NewIngest {
     pub date_started: NaiveDateTime,
@@ -38,14 +52,11 @@ pub struct NewEvent<'a> {
     pub count_strikes: i32,
     pub outs_before: i32,
     pub outs_after: i32,
-    pub ends_inning: bool,
     pub batter_count: i32,
     pub batter_name: &'a str,
     pub pitcher_name: &'a str,
-    pub fielder_names: Vec<&'a str>,
 }
-
-#[derive(Queryable, Selectable)]
+#[derive(Queryable, Selectable, Identifiable)]
 #[diesel(table_name = crate::data_schema::data::events)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct DbEvent {
@@ -62,14 +73,9 @@ pub struct DbEvent {
     pub count_strikes: i32,
     pub outs_before: i32,
     pub outs_after: i32,
-    pub ends_inning: bool,
     pub batter_count: i32,
     pub batter_name: String,
     pub pitcher_name: String,
-    // Diesel forces array columns to have nullable entries because
-    // Postgres doesn't have a way to specify that they're not nullable.
-    // I have a constraint that should prevent that.
-    pub fielder_names: Vec<Option<String>>,
 }
 
 #[derive(Insertable)]
@@ -80,4 +86,25 @@ pub struct NewBaserunner<'a> {
     pub base_before: Option<i32>,
     pub base_after: Option<i32>,
     pub steal: bool,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = crate::data_schema::data::event_fielders)]
+pub struct NewFielder<'a> {
+    pub event_id: i64,
+    pub fielder_name: &'a str,
+    pub fielder_position: i64,
+    pub play_order: i32,
+}
+
+#[derive(Queryable, Selectable, Identifiable, Associations)]
+#[diesel(belongs_to(DbEvent, foreign_key = event_id))]
+#[diesel(table_name = crate::data_schema::data::event_fielders)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct DbFielder {
+    pub id: i64,
+    pub event_id: i64,
+    pub fielder_name: String,
+    pub fielder_position: i64,
+    pub play_order: i32,
 }

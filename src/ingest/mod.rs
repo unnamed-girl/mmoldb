@@ -12,8 +12,6 @@ use log::info;
 use reqwest_middleware::ClientWithMiddleware;
 use rocket::tokio;
 use rocket::tokio::task::JoinHandle;
-use rocket_db_pools::diesel::prelude::*;
-use rocket_db_pools::diesel::scoped_futures::ScopedFutureExt;
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -69,24 +67,24 @@ pub enum IngestSetupError {
 pub async fn launch_ingest_task(
     pool: Db,
 ) -> Result<JoinHandle<impl Future<Output = ()>>, IngestSetupError> {
+    Ok(tokio::spawn(async move { ingest_task(pool) }))
+}
+
+pub async fn ingest_task(pool: Db) {
     let client = http::get_caching_http_client();
 
     let taxa = {
         let mut conn = pool
             .get()
             .await
-            .map_err(|err| IngestSetupError::SetupConnectionAcquisitionFailed(err))?;
+            .map_err(|err| IngestSetupError::SetupConnectionAcquisitionFailed(err))
+            .expect("TODO Error handling");
 
         Taxa::new(&mut conn)
             .await
-            .map_err(|err| IngestSetupError::TaxaSetupError(err))?
+            .map_err(|err| IngestSetupError::TaxaSetupError(err))
+            .expect("TODO Error handling")
     };
-
-    Ok(tokio::spawn(async move { ingest_task(pool, client, taxa) }))
-}
-
-pub async fn ingest_task(pool: Db, client: ClientWithMiddleware, taxa: Taxa) {
-    let taxa_ref = &taxa; // Needed because of Rust's lacking lambda capture syntax
 
     // ------------ This is where the loop will start -------------
 
@@ -107,6 +105,7 @@ pub async fn ingest_task(pool: Db, client: ClientWithMiddleware, taxa: Taxa) {
     // not be cached
     let games_response = client
         .get("https://freecashe.ws/api/games")
+        // ... except in development
         // .with_extension(http_cache_reqwest::CacheMode::NoStore)
         .send()
         .await
@@ -155,82 +154,86 @@ pub async fn ingest_task(pool: Db, client: ClientWithMiddleware, taxa: Taxa) {
             game_data.day,
         );
 
-        // I'm adding enumeration to parsed, then stripping it out for
-        // the iterator fed to Game::new, on purpose. I need the
-        // counting to count every event, but I don't need the count
-        // inside Game::new.
-        let parsed_copy = mmolb_parsing::process_events(&game_data);
-        // This clone is probably avoidable, but I don't feel like it right now
-        let mut parsed = parsed_copy
-            .clone()
-            .into_iter()
-            .zip(&game_data.event_log)
-            .enumerate();
-
-        let mut game = {
-            let mut parsed_for_game = (&mut parsed).map(|(_, (parsed, _))| parsed);
-
-            Game::new(&game_info.game_id, &mut parsed_for_game).expect("TODO Error handling")
-        };
-
-        info!(
-            "Constructed game for for {} {} @ {} {} s{}d{}",
-            game_data.away_team_emoji,
-            game_data.away_team_name,
-            game_data.home_team_emoji,
-            game_data.home_team_name,
-            game_data.season,
-            game_data.day,
-        );
-
-        let detail_events: Vec<_> = parsed
-            .flat_map(|(index, (parsed, raw))| {
-                let unparsed = parsed.clone().unparse();
-                assert_eq!(unparsed, raw.message);
-
-                info!("Applying event \"{}\"", raw.message);
-
-                game.next(index, parsed).expect("TODO Error handling")
-            })
-            .collect();
-
-        // Scope to drop conn as soon as I'm done with it
-        let inserted_events = {
-            let mut conn = pool.get().await.expect("TODO Error handling");
-            // This is temporary during debugging. In production, we'll just 
-            // skip games we already have.
-            db::delete_events_for_game(&mut conn, &game_info.game_id).await.expect("TODO Error handling");
-            
-            db::insert_events(&mut conn, taxa_ref, ingest_id, &detail_events).await.expect("TODO Error handling");
-            
-            // We can rebuild them
-            db::events_for_game(&mut conn, taxa_ref, &game_info.game_id).await.expect("TODO Error handling")
-        };
-        
-        assert_eq!(inserted_events.len(), detail_events.len());
-        for event in inserted_events {
-            let index = event.game_event_index;
-            let contact_index = event.contact_game_event_index;
-            
-            assert_eq!(
-                parsed_copy[index],
-                event.to_parsed(),
-                "Event round-trip failed"
-            );
-            
-            if let Some(index) = contact_index {
-                assert_eq!(
-                    parsed_copy[index],
-                    event.to_parsed_contact(),
-                    "Contact event round-trip failed"
-                );
-
-            }
-        }
+        ingest_game(pool, &taxa, ingest_id, &game_info, game_data).await;
 
         break; // TEMP: Only process one (1) game
     }
 
     info!("{num_incomplete_games_skipped} incomplete games skipped");
     info!("{num_already_ingested_games_skipped} games already ingested");
+}
+
+async fn ingest_game(pool: Db, taxa: &Taxa, ingest_id: i64, game_info: &CashewsGameResponse, game_data: mmolb_parsing::Game) {
+    // I'm adding enumeration to parsed, then stripping it out for
+    // the iterator fed to Game::new, on purpose. I need the
+    // counting to count every event, but I don't need the count
+    // inside Game::new.
+    let parsed_copy = mmolb_parsing::process_events(&game_data);
+    
+    // This clone is probably avoidable, but I don't feel like it right now
+    let mut parsed = parsed_copy
+        .clone()
+        .into_iter()
+        .zip(&game_data.event_log)
+        .enumerate();
+
+    let mut game = {
+        let mut parsed_for_game = (&mut parsed).map(|(_, (parsed, _))| parsed);
+
+        Game::new(&game_info.game_id, &mut parsed_for_game).expect("TODO Error handling")
+    };
+
+    info!(
+        "Constructed game for {} {} @ {} {} s{}d{}",
+        game_data.away_team_emoji,
+        game_data.away_team_name,
+        game_data.home_team_emoji,
+        game_data.home_team_name,
+        game_data.season,
+        game_data.day,
+    );
+
+    let detail_events: Vec<_> = parsed
+        .flat_map(|(index, (parsed, raw))| {
+            let unparsed = parsed.clone().unparse();
+            assert_eq!(unparsed, raw.message);
+
+            info!("Applying event \"{}\"", raw.message);
+
+            game.next(index, parsed).expect("TODO Error handling")
+        })
+        .collect();
+
+    // Scope to drop conn as soon as I'm done with it
+    let inserted_events = {
+        let mut conn = pool.get().await.expect("TODO Error handling");
+        // This is temporary during debugging. In production, we'll just
+        // skip games we already have.
+        db::delete_events_for_game(&mut conn, &game_info.game_id).await.expect("TODO Error handling");
+
+        db::insert_events(&mut conn, &taxa, ingest_id, &detail_events).await.expect("TODO Error handling");
+
+        // We can rebuild them
+        db::events_for_game(&mut conn, &taxa, &game_info.game_id).await.expect("TODO Error handling")
+    };
+
+    assert_eq!(inserted_events.len(), detail_events.len());
+    for event in inserted_events {
+        let index = event.game_event_index;
+        let contact_index = event.contact_game_event_index;
+
+        assert_eq!(
+            parsed_copy[index],
+            event.to_parsed(),
+            "Event round-trip failed"
+        );
+
+        if let Some(index) = contact_index {
+            assert_eq!(
+                parsed_copy[index],
+                event.to_parsed_contact(),
+                "Contact event round-trip failed"
+            );
+        }
+    }
 }

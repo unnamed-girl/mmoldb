@@ -1,3 +1,5 @@
+#[warn(clippy::future_not_send)]
+
 mod db;
 #[rustfmt::skip] // This is a generated file
 mod data_schema;

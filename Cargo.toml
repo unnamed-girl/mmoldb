@@ -19,3 +19,4 @@ http-cache-reqwest = "0.15.1"
 strum = { version = "0.27.1", features = ["derive"] }
 mmolb_parsing = { git = "https://github.com/beiju/mmolb_parsing.git", branch = "top-bottom-utility-methods" }
 enum-map = "2.7.3"
+itertools = "0.14.0"

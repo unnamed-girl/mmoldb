@@ -13,6 +13,16 @@ pub mod data {
     }
 
     diesel::table! {
+        data.event_fielders (id) {
+            id -> Int8,
+            event_id -> Int8,
+            fielder_name -> Text,
+            fielder_position -> Int8,
+            play_order -> Int4,
+        }
+    }
+
+    diesel::table! {
         data.events (id) {
             id -> Int8,
             ingest -> Int8,
@@ -27,11 +37,9 @@ pub mod data {
             count_strikes -> Int4,
             outs_before -> Int4,
             outs_after -> Int4,
-            ends_inning -> Bool,
             batter_count -> Int4,
             batter_name -> Text,
             pitcher_name -> Text,
-            fielder_names -> Array<Nullable<Text>>,
         }
     }
 
@@ -44,10 +52,12 @@ pub mod data {
     }
 
     diesel::joinable!(event_baserunners -> events (event_id));
+    diesel::joinable!(event_fielders -> events (event_id));
     diesel::joinable!(events -> ingests (ingest));
 
     diesel::allow_tables_to_appear_in_same_query!(
         event_baserunners,
+        event_fielders,
         events,
         ingests,
     );
