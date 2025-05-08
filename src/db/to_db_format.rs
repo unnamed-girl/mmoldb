@@ -78,7 +78,7 @@ pub fn row_to_event<'e>(
             }
         })
         .collect();
-    
+
     let fielders = fielders
         .into_iter()
         .map(|f| {

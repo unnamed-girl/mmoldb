@@ -5,6 +5,7 @@
 mod taxa;
 mod to_db_format;
 
+use std::cmp::Ordering;
 pub use crate::db::taxa::{Taxa, TaxaEventType, TaxaFairBallType, TaxaHitType, TaxaPosition, TaxaBase};
 
 use crate::ingest::EventDetail;
@@ -63,6 +64,8 @@ pub async fn events_for_game<'e>(
     for_game_id: &str,
 ) -> QueryResult<Vec<EventDetail<String>>> {
     use crate::data_schema::data::events::dsl::*;
+    use crate::data_schema::data::event_baserunners::dsl as runner;
+    use crate::data_schema::data::event_fielders::dsl as fielder;
 
     let db_events = events
         .filter(game_id.eq(for_game_id))
@@ -72,12 +75,14 @@ pub async fn events_for_game<'e>(
         .await?;
 
     let db_runners = DbRunner::belonging_to(&db_events)
+        .order((runner::event_id, runner::base_before.desc().nulls_last()))
         .select(DbRunner::as_select())
         .load(conn)
         .await?
         .grouped_by(&db_events);
 
     let db_fielders = DbFielder::belonging_to(&db_events)
+        .order((fielder::event_id, fielder::play_order))
         .select(DbFielder::as_select())
         .load(conn)
         .await?

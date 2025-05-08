@@ -1164,7 +1164,7 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
         self.fielders_iter().collect()
     }
     
-    // An advance is a baserunner who was on base before AND after this event
+    // An advance is a baserunner who was on a non-home base before AND after this event
     fn advances_iter(&self) -> impl Iterator<Item = RunnerAdvance<&str>> {
         self
             .baserunners
@@ -1175,10 +1175,14 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                 let _base_before = runner.base_before?;
                 let base_after = runner.base_after?;
                 
-                Some(RunnerAdvance {
-                    runner: runner.name.as_ref(),
-                    base: base_after.into(),
-                })
+                if base_after == TaxaBase::Home {
+                    None
+                } else {
+                    Some(RunnerAdvance {
+                        runner: runner.name.as_ref(),
+                        base: base_after.into(),
+                    })
+                }
             })
     }
     
@@ -1272,7 +1276,7 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                         .expect("BatterToBase type must have a fair_ball_type")
                         .into(),
                     fielder,
-                    scores: vec![],
+                    scores: self.scores(),
                     advances: self.advances(),
                 }
             }
@@ -1282,8 +1286,8 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                     fielders: self.fielders(),
                     hit: HitType::GroundBall, // TODO
                     out: todo!(),
-                    scores: vec![],
-                    advances: vec![],
+                    scores: self.scores(),
+                    advances: self.advances(),
                 }
             }
             TaxaEventType::CaughtOut => {
@@ -1299,8 +1303,8 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                         .expect("CaughtOut type must have a fair_ball_type")
                         .into(),
                     catcher,
-                    scores: vec![],
-                    advances: vec![],
+                    scores: self.scores(),
+                    advances: self.advances(),
                     sacrifice: false, // TODO
                     perfect: false,   // TODO
                 }
@@ -1308,13 +1312,13 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
             TaxaEventType::GroundedOut => ParsedEventMessage::GroundedOut {
                 batter: self.batter_name.as_ref(),
                 fielders: self.fielders(),
-                scores: vec![],
-                advances: vec![],
+                scores: self.scores(),
+                advances: self.advances(),
             },
             TaxaEventType::Walk => ParsedEventMessage::Walk {
                 batter: self.batter_name.as_ref(),
-                scores: vec![],
-                advances: vec![],
+                scores: self.scores(),
+                advances: self.advances(),
             },
             TaxaEventType::HomeRun => {
                 ParsedEventMessage::HomeRun {
@@ -1338,14 +1342,14 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                     batter: self.batter_name.as_ref(),
                     fielder,
                     error: FieldingErrorType::Throwing, // TODO
-                    scores: vec![],
-                    advances: vec![],
+                    scores: self.scores(),
+                    advances: self.advances(),
                 }
             }
             TaxaEventType::HitByPitch => ParsedEventMessage::HitByPitch {
                 batter: self.batter_name.as_ref(),
-                scores: vec![],
-                advances: vec![],
+                scores: self.scores(),
+                advances: self.advances(),
             },
             TaxaEventType::DoublePlay => {
                 ParsedEventMessage::DoublePlayCaught {
@@ -1353,8 +1357,8 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                     hit: HitType::Popup, // TODO
                     fielders: self.fielders(),
                     play: todo!(),
-                    scores: vec![],
-                    advances: vec![],
+                    scores: self.scores(),
+                    advances: self.advances(),
                 }
             }
         }

@@ -264,12 +264,12 @@ fn check_round_trip(
     assert_eq!(
         parsed,
         original_detail,
-        "{label} EventDetail round-trip failed (left is original, right is reconstructed)"
+        "{label} round-trip through EventDetail failed (left is original, right is reconstructed)"
     );
 
     assert_eq!(
         parsed,
         reconstructed_detail,
-        "{label} db round-trip failed (left is original, right is reconstructed)"
+        "{label} round-trip through db failed (left is original, right is reconstructed)"
     );
 }
