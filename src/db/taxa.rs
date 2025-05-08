@@ -229,13 +229,14 @@ impl From<mmolb_parsing::enums::HitType> for TaxaFairBallType {
 }
 
 #[derive(
-    Debug, enum_map::Enum, Eq, PartialEq, Hash, Copy, Clone, strum::Display, strum::EnumMessage,
+    Debug, enum_map::Enum, Eq, PartialEq, Hash, Copy, Clone, strum::Display, strum::EnumMessage, Ord, PartialOrd
 )]
+#[repr(i32)]
 pub enum TaxaBase {
-    Home,
-    First,
-    Second,
-    Third,
+    Home = 0,
+    First = 1,
+    Second = 2,
+    Third = 3,
 }
 
 impl<'a> AsInsertable<'a> for TaxaBase {
@@ -269,6 +270,33 @@ impl From<mmolb_parsing::enums::Base> for TaxaBase {
             mmolb_parsing::enums::Base::First => { Self::First }
             mmolb_parsing::enums::Base::Second => { Self::Second }
             mmolb_parsing::enums::Base::Third => { Self::Third }
+        }
+    }
+}
+
+impl From<mmolb_parsing::enums::Distance> for TaxaBase {
+    fn from(value: mmolb_parsing::enums::Distance) -> Self {
+        match value {
+            mmolb_parsing::enums::Distance::Single => { Self::First }
+            mmolb_parsing::enums::Distance::Double => { Self::Second }
+            mmolb_parsing::enums::Distance::Triple => { Self::Third }
+        }
+    }
+}
+
+impl From<mmolb_parsing::enums::BaseNameVariants> for TaxaBase {
+    fn from(value: mmolb_parsing::enums::BaseNameVariants) -> Self {
+        match value {
+            mmolb_parsing::enums::BaseNameVariants::First => { TaxaBase::First }
+            mmolb_parsing::enums::BaseNameVariants::FirstBase => { TaxaBase::First }
+            mmolb_parsing::enums::BaseNameVariants::OneB => { TaxaBase::First }
+            mmolb_parsing::enums::BaseNameVariants::Second => { TaxaBase::Second }
+            mmolb_parsing::enums::BaseNameVariants::SecondBase => { TaxaBase::Second }
+            mmolb_parsing::enums::BaseNameVariants::TwoB => { TaxaBase::Second }
+            mmolb_parsing::enums::BaseNameVariants::ThirdBase => { TaxaBase::Third }
+            mmolb_parsing::enums::BaseNameVariants::Third => { TaxaBase::Third }
+            mmolb_parsing::enums::BaseNameVariants::ThreeB => { TaxaBase::Third }
+            mmolb_parsing::enums::BaseNameVariants::Home => { TaxaBase::Home }
         }
     }
 }

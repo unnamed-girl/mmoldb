@@ -14,6 +14,7 @@ use reqwest_middleware::ClientWithMiddleware;
 use rocket::tokio;
 use rocket::tokio::task::JoinHandle;
 use serde::Deserialize;
+use strum::IntoDiscriminant;
 use thiserror::Error;
 
 #[derive(Deserialize, Eq, PartialEq, Debug)]
@@ -199,25 +200,12 @@ async fn ingest_game(pool: Db, taxa: &Taxa, ingest_id: i64, game_info: &CashewsG
             let unparsed = parsed.clone().unparse();
             assert_eq!(unparsed, raw.message);
 
-            info!("Applying event \"{}\"", raw.message);
+            info!("Applying event {:#?} \"{}\"", parsed.discriminant(), raw.message);
 
             // TODO This TODO is out of place, but I just changed Game::next to
             //   accept a reference to parsed. I think this lets me get rid of a
             //   clone() inside ingest_game(). Do that.
-            let detail = game.next(index, &parsed).expect("TODO Error handling");
-
-            // Temporarily disabled because I want to get earlier errors from
-            // full round-tripping through the db
-            // if let Some(d) = &detail {
-            //     // TODO Figure out how to also do this for the preceding fair ball event
-            //     assert_eq!(
-            //         parsed,
-            //         d.to_parsed(),
-            //         "Failed to round-trip EventDetail",
-            //     )
-            // }
-            
-            detail
+            game.next(index, &parsed, &raw).expect("TODO Error handling")
         })
         .collect();
 
