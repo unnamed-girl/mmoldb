@@ -123,14 +123,14 @@ pub struct Game<'g> {
 }
 
 #[derive(Debug)]
-struct ParsedEventMessageIter<'g, 'a, IterT: Iterator<Item = ParsedEventMessage<&'g str>>> {
+struct ParsedEventMessageIter<'g: 'a, 'a, IterT: Iterator<Item = &'a ParsedEventMessage<&'g str>>> {
     inner: &'a mut IterT,
     prev_event_type: Option<ParsedEventMessageDiscriminants>,
 }
 
-impl<'g, 'a, IterT> ParsedEventMessageIter<'g, 'a, IterT>
+impl<'g: 'a, 'a, IterT> ParsedEventMessageIter<'g, 'a, IterT>
 where
-    IterT: Iterator<Item = ParsedEventMessage<&'g str>>,
+    IterT: Iterator<Item = &'a ParsedEventMessage<&'g str>>,
 {
     pub fn new(iter: &'a mut IterT) -> Self {
         Self {
@@ -142,7 +142,7 @@ where
     pub fn next(
         &mut self,
         expected: &'static [ParsedEventMessageDiscriminants],
-    ) -> Result<ParsedEventMessage<&'g str>, SimError> {
+    ) -> Result<&'a ParsedEventMessage<&'g str>, SimError> {
         match self.inner.next() {
             Some(val) => {
                 self.prev_event_type = Some(val.discriminant());
@@ -437,9 +437,10 @@ impl<'a, 'g> EventDetailBuilder<'a, 'g> {
 }
 
 impl<'g> Game<'g> {
-    pub fn new<IterT>(game_id: &'g str, events: &mut IterT) -> Result<Game<'g>, SimError>
+    pub fn new<'a, IterT>(game_id: &'g str, events: &'a mut IterT) -> Result<Game<'g>, SimError>
     where
-        IterT: Iterator<Item = ParsedEventMessage<&'g str>>,
+        'g: 'a,
+        IterT: Iterator<Item = &'a ParsedEventMessage<&'g str>>,
     {
         let mut events = ParsedEventMessageIter::new(events);
 
@@ -534,14 +535,14 @@ impl<'g> Game<'g> {
                 team_name: away_team_name,
                 team_emoji: away_team_emoji,
                 pitcher_name: away_pitcher_name,
-                lineup: away_lineup,
+                lineup: away_lineup.clone(),
                 batter_count: None,
             },
             home: TeamInGame {
                 team_name: home_team_name,
                 team_emoji: home_team_emoji,
                 pitcher_name: home_pitcher_name,
-                lineup: home_lineup,
+                lineup: home_lineup.clone(),
                 batter_count: None,
             },
             state: GameState {

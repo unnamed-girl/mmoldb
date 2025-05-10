@@ -179,16 +179,14 @@ pub async fn ingest_task(pool: Db, is_debug: bool) {
 }
 
 async fn ingest_game(pool: Db, taxa: &Taxa, ingest_id: i64, game_info: &CashewsGameResponse, game_data: mmolb_parsing::Game) {
+    let parsed_copy = mmolb_parsing::process_game(&game_data);
+
     // I'm adding enumeration to parsed, then stripping it out for
     // the iterator fed to Game::new, on purpose. I need the
     // counting to count every event, but I don't need the count
     // inside Game::new.
-    let parsed_copy = mmolb_parsing::process_game(&game_data);
-    
-    // This clone is probably avoidable, but I don't feel like it right now
     let mut parsed = parsed_copy
-        .clone()
-        .into_iter()
+        .iter()
         .zip(&game_data.event_log)
         .enumerate();
 
@@ -215,9 +213,6 @@ async fn ingest_game(pool: Db, taxa: &Taxa, ingest_id: i64, game_info: &CashewsG
 
             info!("Applying event {:#?} \"{}\"", parsed.discriminant(), raw.message);
 
-            // TODO This TODO is out of place, but I just changed Game::next to
-            //   accept a reference to parsed. I think this lets me get rid of a
-            //   clone() inside ingest_game(). Do that.
             game.next(index, &parsed, &raw).expect("TODO Error handling")
         })
         .collect();
