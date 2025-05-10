@@ -1,4 +1,4 @@
-use crate::models::{NewEventType, NewHitType, NewPosition, NewFairBallType, NewBase};
+use crate::models::{NewEventType, NewHitType, NewPosition, NewFairBallType, NewBase, NewBaseDescriptionFormat};
 use diesel::{ExpressionMethods, QueryResult};
 use enum_map::EnumMap;
 use rocket_db_pools::diesel::{AsyncPgConnection, RunQueryDsl};
@@ -31,7 +31,8 @@ pub enum TaxaEventType {
     HomeRun,
     FieldingError,
     HitByPitch,
-    DoublePlay,
+    DoublePlayCaught,
+    DoublePlayGrounded,
 }
 
 impl<'a> AsInsertable<'a> for TaxaEventType {
@@ -150,34 +151,34 @@ impl From<mmolb_parsing::enums::Position> for TaxaPosition {
     }
 }
 
-impl Into<mmolb_parsing::enums::HitDestination> for TaxaPosition {
-    fn into(self) -> mmolb_parsing::enums::HitDestination {
+impl Into<mmolb_parsing::enums::FairBallDestination> for TaxaPosition {
+    fn into(self) -> mmolb_parsing::enums::FairBallDestination {
         match self {
-            TaxaPosition::Pitcher => { mmolb_parsing::enums::HitDestination::Pitcher }
-            TaxaPosition::Catcher => { mmolb_parsing::enums::HitDestination::Catcher }
-            TaxaPosition::FirstBase => { mmolb_parsing::enums::HitDestination::FirstBase }
-            TaxaPosition::SecondBase => { mmolb_parsing::enums::HitDestination::SecondBase }
-            TaxaPosition::ThirdBase => { mmolb_parsing::enums::HitDestination::ThirdBase }
-            TaxaPosition::Shortstop => { mmolb_parsing::enums::HitDestination::ShortStop }
-            TaxaPosition::LeftField => { mmolb_parsing::enums::HitDestination::LeftField }
-            TaxaPosition::CenterField => { mmolb_parsing::enums::HitDestination::CenterField }
-            TaxaPosition::RightField => { mmolb_parsing::enums::HitDestination::RightField }
+            TaxaPosition::Pitcher => { mmolb_parsing::enums::FairBallDestination::Pitcher }
+            TaxaPosition::Catcher => { mmolb_parsing::enums::FairBallDestination::Catcher }
+            TaxaPosition::FirstBase => { mmolb_parsing::enums::FairBallDestination::FirstBase }
+            TaxaPosition::SecondBase => { mmolb_parsing::enums::FairBallDestination::SecondBase }
+            TaxaPosition::ThirdBase => { mmolb_parsing::enums::FairBallDestination::ThirdBase }
+            TaxaPosition::Shortstop => { mmolb_parsing::enums::FairBallDestination::ShortStop }
+            TaxaPosition::LeftField => { mmolb_parsing::enums::FairBallDestination::LeftField }
+            TaxaPosition::CenterField => { mmolb_parsing::enums::FairBallDestination::CenterField }
+            TaxaPosition::RightField => { mmolb_parsing::enums::FairBallDestination::RightField }
         }
     }
 }
 
-impl From<mmolb_parsing::enums::HitDestination> for TaxaPosition {
-    fn from(other: mmolb_parsing::enums::HitDestination) -> Self {
+impl From<mmolb_parsing::enums::FairBallDestination> for TaxaPosition {
+    fn from(other: mmolb_parsing::enums::FairBallDestination) -> Self {
         match other {
-            mmolb_parsing::enums::HitDestination::Pitcher => { TaxaPosition::Pitcher }
-            mmolb_parsing::enums::HitDestination::Catcher => { TaxaPosition::Catcher }
-            mmolb_parsing::enums::HitDestination::FirstBase => { TaxaPosition::FirstBase }
-            mmolb_parsing::enums::HitDestination::SecondBase => { TaxaPosition::SecondBase }
-            mmolb_parsing::enums::HitDestination::ThirdBase => { TaxaPosition::ThirdBase }
-            mmolb_parsing::enums::HitDestination::ShortStop => { TaxaPosition::Shortstop }
-            mmolb_parsing::enums::HitDestination::LeftField => { TaxaPosition::LeftField }
-            mmolb_parsing::enums::HitDestination::CenterField => { TaxaPosition::CenterField }
-            mmolb_parsing::enums::HitDestination::RightField => { TaxaPosition::RightField }
+            mmolb_parsing::enums::FairBallDestination::Pitcher => { TaxaPosition::Pitcher }
+            mmolb_parsing::enums::FairBallDestination::Catcher => { TaxaPosition::Catcher }
+            mmolb_parsing::enums::FairBallDestination::FirstBase => { TaxaPosition::FirstBase }
+            mmolb_parsing::enums::FairBallDestination::SecondBase => { TaxaPosition::SecondBase }
+            mmolb_parsing::enums::FairBallDestination::ThirdBase => { TaxaPosition::ThirdBase }
+            mmolb_parsing::enums::FairBallDestination::ShortStop => { TaxaPosition::Shortstop }
+            mmolb_parsing::enums::FairBallDestination::LeftField => { TaxaPosition::LeftField }
+            mmolb_parsing::enums::FairBallDestination::CenterField => { TaxaPosition::CenterField }
+            mmolb_parsing::enums::FairBallDestination::RightField => { TaxaPosition::RightField }
             _ => panic!("TaxaPosition currently only represents defense positions"),
         }
     }
@@ -206,24 +207,24 @@ impl<'a> AsInsertable<'a> for TaxaFairBallType {
     }
 }
 
-impl Into<mmolb_parsing::enums::HitType> for TaxaFairBallType {
-    fn into(self) -> mmolb_parsing::enums::HitType {
+impl Into<mmolb_parsing::enums::FairBallType> for TaxaFairBallType {
+    fn into(self) -> mmolb_parsing::enums::FairBallType {
         match self {
-            Self::GroundBall => { mmolb_parsing::enums::HitType::GroundBall }
-            Self::FlyBall => { mmolb_parsing::enums::HitType::FlyBall }
-            Self::LineDrive => { mmolb_parsing::enums::HitType::LineDrive }
-            Self::Popup => { mmolb_parsing::enums::HitType::Popup }
+            Self::GroundBall => { mmolb_parsing::enums::FairBallType::GroundBall }
+            Self::FlyBall => { mmolb_parsing::enums::FairBallType::FlyBall }
+            Self::LineDrive => { mmolb_parsing::enums::FairBallType::LineDrive }
+            Self::Popup => { mmolb_parsing::enums::FairBallType::Popup }
         }
     }
 }
 
-impl From<mmolb_parsing::enums::HitType> for TaxaFairBallType {
-    fn from(value: mmolb_parsing::enums::HitType) -> Self {
+impl From<mmolb_parsing::enums::FairBallType> for TaxaFairBallType {
+    fn from(value: mmolb_parsing::enums::FairBallType) -> Self {
         match value {
-            mmolb_parsing::enums::HitType::GroundBall => { Self::GroundBall }
-            mmolb_parsing::enums::HitType::FlyBall => { Self::FlyBall }
-            mmolb_parsing::enums::HitType::LineDrive => { Self::LineDrive }
-            mmolb_parsing::enums::HitType::Popup => { Self::Popup }
+            mmolb_parsing::enums::FairBallType::GroundBall => { Self::GroundBall }
+            mmolb_parsing::enums::FairBallType::FlyBall => { Self::FlyBall }
+            mmolb_parsing::enums::FairBallType::LineDrive => { Self::LineDrive }
+            mmolb_parsing::enums::FairBallType::Popup => { Self::Popup }
         }
     }
 }
@@ -301,12 +302,72 @@ impl From<mmolb_parsing::enums::BaseNameVariants> for TaxaBase {
     }
 }
 
+#[derive(
+    Debug, enum_map::Enum, Eq, PartialEq, Hash, Copy, Clone, strum::Display, strum::EnumMessage
+)]
+pub enum TaxaBaseDescriptionFormat {
+    NumberB, // e.g. "1B"
+    Name, // e.g. "first"
+    NameBase, // e.g. "first base"
+}
+
+impl<'a> AsInsertable<'a> for TaxaBaseDescriptionFormat {
+    type Insertable = NewBaseDescriptionFormat<'a>;
+
+    fn as_insertable(&self, code_friendly_name: &'a str) -> Self::Insertable {
+        let human_friendly_name = self.get_message().unwrap_or_else(|| &code_friendly_name);
+
+        NewBaseDescriptionFormat {
+            name: &code_friendly_name,
+            display_name: &human_friendly_name,
+        }
+    }
+}
+
+// Newtype just to hang a From impl on
+pub struct TaxaBaseWithDescriptionFormat(pub TaxaBase, pub TaxaBaseDescriptionFormat);
+
+impl Into<mmolb_parsing::enums::BaseNameVariants> for TaxaBaseWithDescriptionFormat {
+    fn into(self) -> mmolb_parsing::enums::BaseNameVariants {
+        match (self.0, self.1) {
+            (TaxaBase::First, TaxaBaseDescriptionFormat::NumberB) => mmolb_parsing::enums::BaseNameVariants::OneB,
+            (TaxaBase::First, TaxaBaseDescriptionFormat::Name) => mmolb_parsing::enums::BaseNameVariants::First,
+            (TaxaBase::First, TaxaBaseDescriptionFormat::NameBase) => mmolb_parsing::enums::BaseNameVariants::FirstBase,
+            (TaxaBase::Second, TaxaBaseDescriptionFormat::NumberB) => mmolb_parsing::enums::BaseNameVariants::TwoB,
+            (TaxaBase::Second, TaxaBaseDescriptionFormat::Name) => mmolb_parsing::enums::BaseNameVariants::Second,
+            (TaxaBase::Second, TaxaBaseDescriptionFormat::NameBase) => mmolb_parsing::enums::BaseNameVariants::SecondBase,
+            (TaxaBase::Third, TaxaBaseDescriptionFormat::NumberB) => mmolb_parsing::enums::BaseNameVariants::ThreeB,
+            (TaxaBase::Third, TaxaBaseDescriptionFormat::Name) => mmolb_parsing::enums::BaseNameVariants::Third,
+            (TaxaBase::Third, TaxaBaseDescriptionFormat::NameBase) => mmolb_parsing::enums::BaseNameVariants::ThirdBase,
+            (TaxaBase::Home, _) => mmolb_parsing::enums::BaseNameVariants::Home,
+        }
+    }
+}
+
+impl From<mmolb_parsing::enums::BaseNameVariants> for TaxaBaseDescriptionFormat {
+    fn from(value: mmolb_parsing::enums::BaseNameVariants) -> Self {
+        match value {
+            mmolb_parsing::enums::BaseNameVariants::First => { TaxaBaseDescriptionFormat::Name }
+            mmolb_parsing::enums::BaseNameVariants::FirstBase => { TaxaBaseDescriptionFormat::NameBase }
+            mmolb_parsing::enums::BaseNameVariants::OneB => { TaxaBaseDescriptionFormat::NumberB }
+            mmolb_parsing::enums::BaseNameVariants::Second => { TaxaBaseDescriptionFormat::Name }
+            mmolb_parsing::enums::BaseNameVariants::SecondBase => { TaxaBaseDescriptionFormat::NameBase }
+            mmolb_parsing::enums::BaseNameVariants::TwoB => { TaxaBaseDescriptionFormat::NumberB }
+            mmolb_parsing::enums::BaseNameVariants::ThirdBase => { TaxaBaseDescriptionFormat::Name }
+            mmolb_parsing::enums::BaseNameVariants::Third => { TaxaBaseDescriptionFormat::NameBase }
+            mmolb_parsing::enums::BaseNameVariants::ThreeB => { TaxaBaseDescriptionFormat::NumberB }
+            mmolb_parsing::enums::BaseNameVariants::Home => { TaxaBaseDescriptionFormat::Name}
+        }
+    }
+}
+
 pub struct Taxa {
     event_type_mapping: EnumMap<TaxaEventType, i64>,
     hit_type_mapping: EnumMap<TaxaHitType, i64>,
     position_mapping: EnumMap<TaxaPosition, i64>,
     fair_ball_type_mapping: EnumMap<TaxaFairBallType, i64>,
     base_mapping: EnumMap<TaxaBase, i64>,
+    base_description_format_mapping: EnumMap<TaxaBaseDescriptionFormat, i64>,
 }
 
 macro_rules! make_mapping {
@@ -398,6 +459,14 @@ impl Taxa {
                 crate::taxa_schema::taxa::base::dsl::id,
                 conn,
             },
+            base_description_format_mapping: make_mapping!{
+                TaxaBaseDescriptionFormat,
+                crate::taxa_schema::taxa::base_description_format::dsl::base_description_format,
+                crate::taxa_schema::taxa::base_description_format::dsl::name,
+                crate::taxa_schema::taxa::base_description_format::dsl::display_name,
+                crate::taxa_schema::taxa::base_description_format::dsl::id,
+                conn,
+            },
         })
     }
 
@@ -419,6 +488,10 @@ impl Taxa {
 
     pub fn base_id(&self, ty: TaxaBase) -> i64 {
         self.base_mapping[ty]
+    }
+
+    pub fn base_description_format_id(&self, ty: TaxaBaseDescriptionFormat) -> i64 {
+        self.base_description_format_mapping[ty]
     }
 
     pub fn event_type_from_id(&self, id: i64) -> TaxaEventType {
@@ -458,6 +531,14 @@ impl Taxa {
             .iter()
             .find(|(_, ty_id)| id == **ty_id)
             .expect("TODO Handle unknown base type")
+            .0
+    }
+
+    pub fn base_description_format_from_id(&self, id: i64) -> TaxaBaseDescriptionFormat {
+        self.base_description_format_mapping
+            .iter()
+            .find(|(_, ty_id)| id == **ty_id)
+            .expect("TODO Handle unknown base_description_format type")
             .0
     }
 }

@@ -38,6 +38,13 @@ create table taxa.base (
     unique (name)
 );
 
+create table taxa.base_description_format (
+    id bigserial primary key not null,
+    name text not null,
+    display_name text not null,
+    unique (name)
+);
+
 create table data.events (
     -- bookkeeping
     id bigserial primary key not null,
@@ -98,6 +105,7 @@ create table data.event_baserunners (
     --     have one
     base_before bigint references taxa.base, -- null == not on base before (i.e. this was the hit/walk/etc that put them on base)
     base_after bigint references taxa.base, -- null == not on base after because of getting out. if they scored, this will be 0
+    base_description_format bigint references taxa.base_description_format, -- null == not applicable because this event didn't name the base in a way that could be formatted
     steal bool not null -- this records all ATTEMPTED steals. identify failed steals by looking for base_after == null
 );
 

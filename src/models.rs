@@ -37,6 +37,13 @@ pub struct NewBase<'a> {
 }
 
 #[derive(Insertable)]
+#[diesel(table_name = crate::taxa_schema::taxa::base_description_format)]
+pub struct NewBaseDescriptionFormat<'a> {
+    pub name: &'a str,
+    pub display_name: &'a str,
+}
+
+#[derive(Insertable)]
 #[diesel(table_name = crate::data_schema::data::ingests)]
 pub struct NewIngest {
     pub date_started: NaiveDateTime,
@@ -103,6 +110,7 @@ pub struct NewBaserunner<'a> {
     pub baserunner_name: &'a str,
     pub base_before: Option<i64>,
     pub base_after: Option<i64>,
+    pub base_description_format: Option<i64>,
     pub steal: bool,
 }
 
@@ -116,6 +124,7 @@ pub struct DbRunner {
     pub baserunner_name: String,
     pub base_before: Option<i64>,
     pub base_after: Option<i64>,
+    pub base_description_format: Option<i64>,
     pub steal: bool,
 }
 

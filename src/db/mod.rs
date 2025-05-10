@@ -5,8 +5,7 @@
 mod taxa;
 mod to_db_format;
 
-use std::cmp::Ordering;
-pub use crate::db::taxa::{Taxa, TaxaEventType, TaxaFairBallType, TaxaHitType, TaxaPosition, TaxaBase};
+pub use crate::db::taxa::{Taxa, TaxaEventType, TaxaFairBallType, TaxaHitType, TaxaPosition, TaxaBase, TaxaBaseDescriptionFormat, TaxaBaseWithDescriptionFormat};
 
 use crate::ingest::EventDetail;
 use crate::models::{DbEvent, DbFielder, DbRunner, Ingest, NewIngest};
@@ -45,17 +44,13 @@ pub async fn has_game(conn: &mut AsyncPgConnection, with_id: &str) -> QueryResul
         .await
 }
 
-pub async fn delete_events_for_game(conn: &mut AsyncPgConnection, with_id: &str) -> QueryResult<()> {
+pub async fn delete_events_for_game(conn: &mut AsyncPgConnection, with_id: &str) -> QueryResult<usize> {
     use diesel::dsl::*;
     use crate::data_schema::data::events::dsl::*;
-    
-    // 
 
     delete(events.filter(game_id.eq(with_id)))
         .execute(conn)
-        .await?;
-    
-    Ok(())
+        .await
 }
 
 pub async fn events_for_game<'e>(

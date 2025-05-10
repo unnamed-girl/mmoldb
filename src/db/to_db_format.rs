@@ -40,6 +40,7 @@ pub fn event_to_baserunners<'e>(
             baserunner_name: runner.name,
             base_before: runner.base_before.map(|b| taxa.base_id(b)),
             base_after: runner.base_after.map(|b| taxa.base_id(b)),
+            base_description_format: runner.base_description_format.map(|f| taxa.base_description_format_id(f)),
             steal: runner.is_steal,
         })
         .collect()
@@ -74,11 +75,12 @@ pub fn row_to_event<'e>(
                 name: r.baserunner_name,
                 base_before: r.base_before.map(|id| taxa.base_from_id(id)),
                 base_after: r.base_after.map(|id| taxa.base_from_id(id)),
+                base_description_format: r.base_description_format.map(|id| taxa.base_description_format_from_id(id)),
                 is_steal: r.steal,
             }
         })
         .collect();
-
+    
     let fielders = fielders
         .into_iter()
         .map(|f| {

@@ -10,6 +10,14 @@ pub mod taxa {
     }
 
     diesel::table! {
+        taxa.base_description_format (id) {
+            id -> Int8,
+            name -> Text,
+            display_name -> Text,
+        }
+    }
+
+    diesel::table! {
         taxa.event_type (id) {
             id -> Int8,
             name -> Text,
@@ -43,6 +51,7 @@ pub mod taxa {
 
     diesel::allow_tables_to_appear_in_same_query!(
         base,
+        base_description_format,
         event_type,
         fair_ball_type,
         hit_type,

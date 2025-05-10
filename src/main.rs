@@ -92,9 +92,11 @@ fn rocket() -> _ {
             let pool = Db::fetch(&rocket)
                 .expect("Rocket is not managing a Db pool")
                 .clone();
+            
+            let is_debug = rocket.config().profile == "debug";
 
-            Box::pin(async {
-                ingest::launch_ingest_task(pool)
+            Box::pin(async move {
+                ingest::launch_ingest_task(pool, is_debug)
                     .await
                     .expect("TODO Figure out how to expose this as an error ")
                     .await

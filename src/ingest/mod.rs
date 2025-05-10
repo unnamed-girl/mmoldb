@@ -68,11 +68,12 @@ pub enum IngestSetupError {
 // task itself to be handled within the task
 pub async fn launch_ingest_task(
     pool: Db,
+    is_debug: bool,
 ) -> Result<JoinHandle<impl Future<Output = ()>>, IngestSetupError> {
-    Ok(tokio::spawn(async move { ingest_task(pool) }))
+    Ok(tokio::spawn(async move { ingest_task(pool, is_debug) }))
 }
 
-pub async fn ingest_task(pool: Db) {
+pub async fn ingest_task(pool: Db, is_debug: bool) {
     let client = http::get_caching_http_client();
 
     let taxa = {
@@ -125,10 +126,22 @@ pub async fn ingest_task(pool: Db) {
             continue;
         }
 
-        let already_ingested = false;
-        // let already_ingested = db::has_game(&game_info.game_id)
-        //     .await
-        //     .expect("TODO Error handling");
+        let already_ingested = if !is_debug {
+            let mut conn = pool.get().await.expect("TODO Error handling");
+            db::has_game(&mut conn, &game_info.game_id)
+                .await
+                .expect("TODO Error handling")
+        } else {
+            let mut conn = pool.get().await.expect("TODO Error handling");
+            let num_deleted = db::delete_events_for_game(&mut conn, &game_info.game_id)
+                .await
+                .expect("TODO Error handling");
+            
+            if num_deleted > 0 {
+                info!("In debug mode, deleted {num_deleted} events for game {}", game_info.game_id);
+            }
+            false
+        };
 
         if already_ingested {
             num_already_ingested_games_skipped += 1;
@@ -212,9 +225,6 @@ async fn ingest_game(pool: Db, taxa: &Taxa, ingest_id: i64, game_info: &CashewsG
     // Scope to drop conn as soon as I'm done with it
     let inserted_events = {
         let mut conn = pool.get().await.expect("TODO Error handling");
-        // This is temporary during debugging. In production, we'll just
-        // skip games we already have.
-        db::delete_events_for_game(&mut conn, &game_info.game_id).await.expect("TODO Error handling");
 
         db::insert_events(&mut conn, &taxa, ingest_id, &detail_events).await.expect("TODO Error handling");
 
@@ -224,6 +234,12 @@ async fn ingest_game(pool: Db, taxa: &Taxa, ingest_id: i64, game_info: &CashewsG
 
     assert_eq!(inserted_events.len(), detail_events.len());
     for (reconstructed_detail, original_detail) in inserted_events.iter().zip(detail_events) {
+        println!(
+            "Original Baserunners:      {:?}\nReconstructed baserunners: {:?}", 
+            original_detail.baserunners, 
+            reconstructed_detail.baserunners,
+        );
+
         let index = reconstructed_detail.game_event_index;
         let fair_ball_index = reconstructed_detail.fair_ball_event_index;
 
