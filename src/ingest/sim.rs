@@ -2,13 +2,10 @@ use crate::db::{
     TaxaBase, TaxaBaseDescriptionFormat, TaxaBaseWithDescriptionFormat, TaxaEventType,
     TaxaFairBallType, TaxaHitType, TaxaPosition,
 };
-use itertools::{Itertools, PeekingNext};
+use itertools::{EitherOrBoth, Itertools, PeekingNext};
 use log::{info, warn};
 use mmolb_parsing::ParsedEventMessage;
-use mmolb_parsing::enums::{
-    Base, BaseNameVariants, Distance, FairBallDestination, FairBallType, FieldingErrorType,
-    FoulType, HomeAway, StrikeType, TopBottom,
-};
+use mmolb_parsing::enums::{Base, BaseNameVariants, BatterStat, Distance, FairBallDestination, FairBallType, FieldingErrorType, FoulType, HomeAway, NowBattingStats, StrikeType, TopBottom};
 use mmolb_parsing::parsed_event::{
     BaseSteal, ParsedEventMessageDiscriminants, Play, PositionedPlayer, RunnerAdvance, RunnerOut,
 };
@@ -98,11 +95,43 @@ enum GamePhase {
 }
 
 #[derive(Debug)]
+pub struct BatterStats {
+    hits: u8,
+    at_bats: u8,
+    stats: Vec<()>,
+}
+
+impl BatterStats {
+pub fn is_empty(&self) -> bool {
+        self.stats.is_empty() && self.hits == 0 && self.at_bats == 0
+    }
+}
+
+#[derive(Debug)]
+pub struct BatterInGame<StrT> {
+    name: StrT,
+    stats: BatterStats,
+}
+
+impl<'g> BatterInGame<&'g str> {
+    pub fn from_position_player(player: &PositionedPlayer<&'g str>) -> Self{
+        Self {
+            name: player.name,
+            stats: BatterStats {
+                hits: 0,
+                at_bats: 0,
+                stats: Vec::new(),
+            },
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct TeamInGame<'g> {
     team_name: &'g str,
     team_emoji: &'g str,
     pitcher_name: &'g str,
-    lineup: Vec<PositionedPlayer<&'g str>>,
+    lineup: Vec<BatterInGame<&'g str>>,
     // This is incremented when a PA finishes, so in between PAs (and before the first PA) it
     // represents the next batter
     batter_count: usize,
@@ -702,14 +731,14 @@ impl<'g> Game<'g> {
                 team_name: away_team_name,
                 team_emoji: away_team_emoji,
                 pitcher_name: away_pitcher_name,
-                lineup: away_lineup.clone(),
+                lineup: away_lineup.into_iter().map(BatterInGame::from_position_player).collect(),
                 batter_count: 0,
             },
             home: TeamInGame {
                 team_name: home_team_name,
                 team_emoji: home_team_emoji,
                 pitcher_name: home_pitcher_name,
-                lineup: home_lineup.clone(),
+                lineup: home_lineup.iter().map(BatterInGame::from_position_player).collect(),
                 batter_count: 0,
             },
             state: GameState {
@@ -761,13 +790,20 @@ impl<'g> Game<'g> {
         }
     }
 
-    fn active_batter(&self) -> &PositionedPlayer<&'g str> {
+    fn active_batter(&self) -> &BatterInGame<&'g str> {
         let batting_team = self.batting_team();
         let lineup = &batting_team.lineup;
         &lineup[batting_team.batter_count % lineup.len()]
     }
 
-    fn batter_for_active_team(&self, batter_count: usize) -> &PositionedPlayer<&'g str> {
+    fn active_batter_mut(&mut self) -> &mut BatterInGame<&'g str> {
+        let batting_team = self.batting_team_mut();
+        let lineup = &mut batting_team.lineup;
+        let lineup_len = lineup.len();
+        &mut lineup[batting_team.batter_count % lineup_len]
+    }
+
+    fn batter_for_active_team(&self, batter_count: usize) -> &BatterInGame<&'g str> {
         let batting_team = self.batting_team();
         let lineup = &batting_team.lineup;
         &lineup[batter_count % lineup.len()]
@@ -808,6 +844,10 @@ impl<'g> Game<'g> {
 
     // Note: Must happen after all outs for this event are added
     pub fn finish_pa(&mut self) {
+        // Occam's razor: assume "at bats" is actually PAs until proven
+        // otherwise
+        self.active_batter_mut().stats.at_bats += 1;
+
         self.state.count_strikes = 0;
         self.state.count_balls = 0;
 
@@ -857,7 +897,7 @@ impl<'g> Game<'g> {
     }
 
     pub fn batter_or_runner_out(&mut self, out: &RunnerOut<&'g str>) {
-        // For now, assume the batter is always out at first. I'll 
+        // For now, assume the batter is always out at first. I'll
         // change this if it turns out not to be true.
         if out.runner == self.active_batter().name && Base::First == out.base.into() {
             // Then assume this is the runner and all that's needed is to add an out
@@ -1160,9 +1200,10 @@ impl<'g> Game<'g> {
             GamePhase::ExpectNowBatting => game_event!(
                (previous_event, event),
                [ParsedEventMessageDiscriminants::NowBatting]
-               // TODO Handle stats
-               ParsedEventMessage::NowBatting { batter: batter_name, stats: _ } => {
+               ParsedEventMessage::NowBatting { batter: batter_name, stats } => {
                    self.check_batter(batter_name, event.discriminant());
+                   let batter = self.active_batter();
+                   check_now_batting_stats(&stats, &batter.stats);
 
                    self.state.phase = GamePhase::ExpectPitch;
                    None
@@ -1504,6 +1545,59 @@ impl<'g> Game<'g> {
         }
 
         Ok(result)
+    }
+}
+
+// This can be disabled once the to-do is addressed
+#[allow(unreachable_code, unused_variables)]
+fn check_now_batting_stats(stats: &NowBattingStats, batter_stats: &BatterStats) {
+    return; // TODO Finish implementing this
+    
+    match stats {
+        NowBattingStats::FirstPA => {
+            if !batter_stats.is_empty() {
+                warn!("In NowBatting, expected this batter to have no stats in the current game");
+            }
+        }
+        NowBattingStats::Stats { stats } => {
+            let mut their_stats = stats.iter();
+
+            match their_stats.next() {
+                None => {
+                    warn!("This NowBatting event had stats, but the vec was empty");
+                }
+                Some(BatterStat::HitsForAtBats { hits, at_bats}) => {
+                    if *hits != batter_stats.hits {
+                        warn!("NowBatting said player has {hits} hits, but our records say {}", batter_stats.hits);
+                    }
+                    if *at_bats != batter_stats.at_bats {
+                        warn!("NowBatting said player has {at_bats} at bats, but our records say {}", batter_stats.at_bats);
+                    }
+                }
+                Some(other) => {
+                    warn!("First item in stats was not HitsForAtBats {:?}", other);
+                }
+            }
+
+            let our_stats = batter_stats.stats.iter();
+
+            for zipped in their_stats.zip_longest(our_stats) {
+                match zipped {
+                    EitherOrBoth::Left(theirs) => {
+                        warn!("NowBatting event had unexpected stat entry {:?}", theirs);
+                    }
+                    EitherOrBoth::Right(ours) => {
+                        warn!("NowBatting missing expected stat entry {:?}", ours);
+                    }
+                    EitherOrBoth::Both(theirs, ours) => {
+                        todo!("Compare {:?} to {:?}", theirs, ours)
+                    }
+                }
+            }
+        }
+        NowBattingStats::NoStats => {
+            todo!("What does this mean?")
+        }
     }
 }
 
