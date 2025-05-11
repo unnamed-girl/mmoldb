@@ -833,9 +833,9 @@ impl<'g> Game<'g> {
     pub fn runner_out(&mut self, out: &RunnerOut<&'g str>) {
         self.check_internal_baserunner_consistency();
 
-        // TODO The runner can set out running to a base that had a
-        //   runner on it before and that should be considered a valid
-        //   advance candidate. Not sure how to handle this.
+        // Assume runner_out is called after all actual advances have
+        // been processed, so we know that bases that can be emptied
+        // will be emptied.
         let candidates = self.get_advance_candidates(out.runner, out.base.into());
 
         if candidates.is_empty() {
@@ -857,7 +857,8 @@ impl<'g> Game<'g> {
     }
 
     pub fn batter_or_runner_out(&mut self, out: &RunnerOut<&'g str>) {
-        // TODO Can I do this without assuming the batter gets out at first?
+        // For now, assume the batter is always out at first. I'll 
+        // change this if it turns out not to be true.
         if out.runner == self.active_batter().name && Base::First == out.base.into() {
             // Then assume this is the runner and all that's needed is to add an out
             self.add_out();
@@ -1051,10 +1052,6 @@ impl<'g> Game<'g> {
         self.do_advances__dont_call_directly(advances);
     }
 
-    // TODO Every time there's a { .. } in the match arm of an
-    //   extract_next!, extract the data. If it's redundant with
-    //   something else, check it against that other thing and issue a
-    //   warning if it doesn't match. Otherwise, record the data.
     pub fn next(
         &mut self,
         index: usize,

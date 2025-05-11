@@ -15,7 +15,6 @@ trait AsInsertable<'a> {
 
 // strum's Display is used as the code-friendly name and EnumMessage as
 // the human-friendly name (with fallback to Display)
-// TODO Populate display names with EnumMessage
 #[derive(
     Debug, enum_map::Enum, Eq, PartialEq, Hash, Copy, Clone, strum::Display, strum::EnumMessage,
 )]
