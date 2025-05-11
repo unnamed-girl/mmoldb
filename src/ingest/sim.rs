@@ -88,7 +88,9 @@ pub struct TeamInGame<'g> {
     team_emoji: &'g str,
     pitcher_name: &'g str,
     lineup: Vec<PositionedPlayer<&'g str>>,
-    batter_count: Option<usize>,
+    // This is incremented when a PA finishes, so in between PAs (and before the first PA) it 
+    // represents the next batter
+    batter_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -262,10 +264,10 @@ fn is_matching_steal<'g>(prev_runner: &RunnerOn<'g>, steal: &BaseSteal<&'g str>)
     }
 }
 
-struct EventDetailBuilder<'a, 'g> {
-    game: &'a Game<'g>,
+struct EventDetailBuilder<'g> {
     prev_game_state: GameState<'g>,
     game_event_index: usize,
+    batter_count_at_event_start: usize,
     fair_ball_event_index: Option<usize>,
     fair_ball_type: Option<TaxaFairBallType>,
     fair_ball_direction: Option<TaxaPosition>,
@@ -278,7 +280,7 @@ struct EventDetailBuilder<'a, 'g> {
     runner_out: Option<RunnerOut<&'g str>>,
 }
 
-impl<'a, 'g> EventDetailBuilder<'a, 'g> {
+impl<'g> EventDetailBuilder<'g> {
     fn fair_ball(mut self, fair_ball: FairBall) -> Self {
         self.fair_ball_event_index = Some(fair_ball.index);
         self.fair_ball_type = Some(fair_ball.fair_ball_type.into());
@@ -369,11 +371,11 @@ impl<'a, 'g> EventDetailBuilder<'a, 'g> {
         self
     }
 
-    pub fn build_some(self, type_detail: TaxaEventType) -> Option<EventDetail<&'g str>> {
-        Some(self.build(type_detail))
+    pub fn build_some(self, game: &Game<'g>, type_detail: TaxaEventType) -> Option<EventDetail<&'g str>> {
+        Some(self.build(game, type_detail))
     }
 
-    pub fn build(self, type_detail: TaxaEventType) -> EventDetail<&'g str> {
+    pub fn build(self, game: &Game<'g>, type_detail: TaxaEventType) -> EventDetail<&'g str> {
         let mut runner_state = "Building event with previous runners:".to_string();
         for runner in &self.prev_game_state.runners_on {
             write!(runner_state, "\n    - {} on {}", runner.runner_name, runner.base).unwrap();
@@ -468,21 +470,18 @@ impl<'a, 'g> EventDetailBuilder<'a, 'g> {
         assert!(steals.next().is_none(), "At least one stealing runner was not found!");
 
         EventDetail {
-            game_id: self.game.game_id,
+            game_id: game.game_id,
             game_event_index: self.game_event_index,
             fair_ball_event_index: self.fair_ball_event_index,
-            inning: self.game.state.inning_number,
-            top_of_inning: self.game.state.inning_half.is_top(),
-            count_balls: self.game.state.count_balls,
-            count_strikes: self.game.state.count_strikes,
+            inning: game.state.inning_number,
+            top_of_inning: game.state.inning_half.is_top(),
+            count_balls: game.state.count_balls,
+            count_strikes: game.state.count_strikes,
             outs_before: self.prev_game_state.outs,
-            outs_after: self.game.state.outs,
-            batter_count: self.game.batting_team().batter_count
-                .expect("sim::Game state machine should ensure batter_count is set before any EventDetail is constructed"),
-            batter_name: self.game.active_batter()
-                .expect("sim::Game state machine should ensure batter_name is set before any EventDetail is constructed")
-                .name,
-            pitcher_name: self.game.defending_team().pitcher_name,
+            outs_after: game.state.outs,
+            batter_count: self.batter_count_at_event_start,
+            batter_name: game.batter_for_active_team(self.batter_count_at_event_start).name,
+            pitcher_name: game.defending_team().pitcher_name,
             fielders: self.fielders,
             detail_type: type_detail,
             hit_type: self.hit_type,
@@ -593,14 +592,14 @@ impl<'g> Game<'g> {
                 team_emoji: away_team_emoji,
                 pitcher_name: away_pitcher_name,
                 lineup: away_lineup.clone(),
-                batter_count: None,
+                batter_count: 0,
             },
             home: TeamInGame {
                 team_name: home_team_name,
                 team_emoji: home_team_emoji,
                 pitcher_name: home_pitcher_name,
                 lineup: home_lineup.clone(),
-                batter_count: None,
+                batter_count: 0,
             },
             state: GameState {
                 prev_event_type: ParsedEventMessageDiscriminants::PlayBall,
@@ -658,35 +657,32 @@ impl<'g> Game<'g> {
         }
     }
 
-    fn active_batter(&self) -> Option<&PositionedPlayer<&'g str>> {
-        if let Some(batter_count) = self.batting_team().batter_count {
-            let lineup = &self.batting_team().lineup;
-            Some(&lineup[batter_count % lineup.len()])
-        } else {
-            None
-        }
+    fn active_batter(&self) -> &PositionedPlayer<&'g str> {
+        let batting_team = self.batting_team();
+        let lineup = &batting_team.lineup;
+        &lineup[batting_team.batter_count % lineup.len()]
+    }
+
+    fn batter_for_active_team(&self, batter_count: usize) -> &PositionedPlayer<&'g str> {
+        let batting_team = self.batting_team();
+        let lineup = &batting_team.lineup;
+        &lineup[batter_count % lineup.len()]
     }
 
     fn check_batter(&self, batter_name: &str, event_type: ParsedEventMessageDiscriminants) {
-        if let Some(active_batter) = self.active_batter() {
-            if active_batter.name != batter_name {
-                warn!(
+        let active_batter = self.active_batter();
+        if active_batter.name != batter_name {
+            warn!(
                     "Unexpected batter name in {:#?}: Expected {}, but saw {}",
                     event_type, active_batter.name, batter_name,
                 );
-            }
-        } else {
-            warn!(
-                "Unexpected batter name in {:#?}: Expected no batter, but saw {batter_name} ",
-                event_type,
-            );
         }
     }
 
-    fn emit<'a>(&'a self, prev_game_state: GameState<'g>, game_event_index: usize) -> EventDetailBuilder<'a, 'g> {
+    fn detail_builder(&self, prev_game_state: GameState<'g>, game_event_index: usize, batter_count: usize) -> EventDetailBuilder<'g> {
         EventDetailBuilder {
-            game: self,
             prev_game_state,
+            batter_count_at_event_start: batter_count,
             fair_ball_event_index: None,
             game_event_index,
             fielders: Vec::new(),
@@ -701,15 +697,6 @@ impl<'g> Game<'g> {
         }
     }
 
-    // The semantics of this method are that None + 1 == Some(0)
-    pub fn increment_batter_count(&mut self) {
-        if let Some(batter_count) = &mut self.batting_team_mut().batter_count {
-            *batter_count += 1;
-        } else {
-            self.batting_team_mut().batter_count = Some(0);
-        }
-    }
-
     // Note: Must happen after all outs for this event are added
     pub fn finish_pa(&mut self) {
         self.state.count_strikes = 0;
@@ -720,6 +707,8 @@ impl<'g> Game<'g> {
         } else {
             self.state.phase = GamePhase::ExpectNowBatting;
         }
+
+        self.batting_team_mut().batter_count += 1;
     }
 
     pub fn add_out(&mut self) {
@@ -927,9 +916,10 @@ impl<'g> Game<'g> {
         event: &ParsedEventMessage<&'g str>,
         raw_event: &mmolb_parsing::game::Event,
     ) -> Result<Option<EventDetail<&'g str>>, SimError> {
-        let prev_state = self.state.clone();
         let previous_event = self.state.prev_event_type;
         let this_event_discriminant = event.discriminant();
+        
+        let detail_builder = self.detail_builder(self.state.clone(), index, self.batting_team().batter_count);
 
         let result = match self.state.phase {
             GamePhase::ExpectInningStart => game_event!(
@@ -1029,7 +1019,6 @@ impl<'g> Game<'g> {
                [ParsedEventMessageDiscriminants::NowBatting]
                // TODO Handle stats
                ParsedEventMessage::NowBatting { batter: batter_name, stats: _ } => {
-                   self.increment_batter_count();
                    self.check_batter(batter_name, event.discriminant());
 
                    self.state.phase = GamePhase::ExpectPitch;
@@ -1051,9 +1040,9 @@ impl<'g> Game<'g> {
                     self.check_count(*count);
                     self.update_runners(&[], &[], steals);
 
-                    self.emit(prev_state, index)
+                    detail_builder
                         .steals(steals.clone())
-                        .build_some(TaxaEventType::Ball)
+                        .build_some(self, TaxaEventType::Ball)
                 },
                 [ParsedEventMessageDiscriminants::Strike]
                 // TODO handle every single member of this variant
@@ -1062,9 +1051,9 @@ impl<'g> Game<'g> {
                     self.check_count(*count);
                     self.update_runners(&[], &[], steals);
 
-                    self.emit(prev_state, index)
+                    detail_builder
                         .steals(steals.clone())
-                        .build_some(match strike {
+                        .build_some(self, match strike {
                             StrikeType::Looking => { TaxaEventType::StrikeLooking }
                             StrikeType::Swinging => { TaxaEventType::StrikeSwinging }
                         })
@@ -1081,9 +1070,9 @@ impl<'g> Game<'g> {
                     self.add_out();
                     self.finish_pa();
 
-                    self.emit(prev_state, index)
+                    detail_builder
                         .steals(steals.clone())
-                        .build_some(match strike {
+                        .build_some(self, match strike {
                             StrikeType::Looking => { TaxaEventType::StrikeLooking }
                             StrikeType::Swinging => { TaxaEventType::StrikeSwinging }
                         })
@@ -1097,8 +1086,8 @@ impl<'g> Game<'g> {
                     }
                     self.check_count(*count);
 
-                    self.emit(prev_state, index)
-                        .build_some(match foul {
+                    detail_builder
+                        .build_some(self, match foul {
                             FoulType::Tip => TaxaEventType::FoulTip,
                             FoulType::Ball => TaxaEventType::FoulBall,
                         })
@@ -1121,10 +1110,10 @@ impl<'g> Game<'g> {
                     self.add_runner(batter, TaxaBase::First);
                     self.finish_pa();
 
-                    self.emit(prev_state, index)
+                    detail_builder
                         .runner_changes(advances.clone(), scores.clone())
                         .add_runner(batter, TaxaBase::First)
-                        .build_some(TaxaEventType::Walk)
+                        .build_some(self, TaxaEventType::Walk)
                 },
                 [ParsedEventMessageDiscriminants::HitByPitch]
                 // TODO handle every single member of this variant
@@ -1134,9 +1123,9 @@ impl<'g> Game<'g> {
                     self.add_runner(batter, TaxaBase::First);
                     self.finish_pa();
 
-                    self.emit(prev_state, index)
+                    detail_builder
                         .runner_changes(advances.clone(), scores.clone())
-                        .build_some(TaxaEventType::HitByPitch)
+                        .build_some(self, TaxaEventType::HitByPitch)
                 },
             ),
             GamePhase::ExpectFairBallOutcome(fair_ball) => game_event!(
@@ -1149,11 +1138,11 @@ impl<'g> Game<'g> {
                     self.add_out();
                     self.finish_pa();
 
-                    self.emit(prev_state, index)
+                    detail_builder
                         .fair_ball(fair_ball)
                         .fielder(*caught_by)
                         .runner_changes(advances.clone(), scores.clone())
-                        .build_some(TaxaEventType::CaughtOut)
+                        .build_some(self, TaxaEventType::CaughtOut)
                 },
                 [ParsedEventMessageDiscriminants::GroundedOut]
                 // TODO handle every single member of this variant
@@ -1163,11 +1152,11 @@ impl<'g> Game<'g> {
                     self.add_out();
                     self.finish_pa();
 
-                    self.emit(prev_state, index)
+                    detail_builder
                         .fair_ball(fair_ball)
                         .fielders(fielders.clone())
                         .runner_changes(advances.clone(), scores.clone())
-                        .build_some(TaxaEventType::GroundedOut)
+                        .build_some(self, TaxaEventType::GroundedOut)
                 },
                 [ParsedEventMessageDiscriminants::BatterToBase]
                 // TODO handle every single member of this variant
@@ -1179,12 +1168,12 @@ impl<'g> Game<'g> {
 
                     info!("BatterToBase with advances: {:?}", advances);
 
-                    self.emit(prev_state, index)
+                    detail_builder
                         .fair_ball(fair_ball)
                         .hit_type((*distance).into())
                         .fielder(*fielder)
                         .runner_changes(advances.clone(), scores.clone())
-                        .build_some(TaxaEventType::Hit)
+                        .build_some(self, TaxaEventType::Hit)
                 },
                 [ParsedEventMessageDiscriminants::ReachOnFieldingError]
                 // TODO handle every single member of this variant
@@ -1194,11 +1183,11 @@ impl<'g> Game<'g> {
                     self.add_runner(batter, TaxaBase::First);
                     self.finish_pa();
 
-                    self.emit(prev_state, index)
+                    detail_builder
                         .fair_ball(fair_ball)
                         .fielder(*fielder)
                         .runner_changes(advances.clone(), scores.clone())
-                        .build_some(TaxaEventType::FieldingError)
+                        .build_some(self, TaxaEventType::FieldingError)
                 },
                 [ParsedEventMessageDiscriminants::HomeRun]
                 // TODO handle every single member of this variant
@@ -1210,10 +1199,26 @@ impl<'g> Game<'g> {
                     self.update_runners(scores, &[], &[]);
                     self.finish_pa();
 
-                    self.emit(prev_state, index)
+                    detail_builder
                         .fair_ball(fair_ball)
                         .runner_changes(Vec::new(), scores.clone())
-                        .build_some(TaxaEventType::HomeRun)
+                        .build_some(self, TaxaEventType::HomeRun)
+                },
+                // TODO Make this not just a clone of HomeRun
+                [ParsedEventMessageDiscriminants::GrandSlam]
+                // TODO handle every single member of this variant
+                ParsedEventMessage::GrandSlam { batter, scores, .. } => {
+                    self.check_batter(batter, event.discriminant());
+                    // This is the one situation where you can have
+                    // scores but no advances, because after everyone
+                    // scores there's no one left to advance
+                    self.update_runners(scores, &[], &[]);
+                    self.finish_pa();
+
+                    detail_builder
+                        .fair_ball(fair_ball)
+                        .runner_changes(Vec::new(), scores.clone())
+                        .build_some(self, TaxaEventType::HomeRun)
                 },
                 [ParsedEventMessageDiscriminants::DoublePlayCaught]
                 // TODO handle every single member of this variant
@@ -1228,11 +1233,11 @@ impl<'g> Game<'g> {
                     self.runner_out(out);
                     self.finish_pa();  // Must be after all outs are added 
 
-                    self.emit(prev_state, index)
+                    detail_builder
                         .fair_ball(fair_ball)
                         .runner_changes(advances.clone(), scores.clone())
                         .add_out(*out)
-                        .build_some(TaxaEventType::DoublePlayCaught)
+                        .build_some(self, TaxaEventType::DoublePlayCaught)
                 },
                 [ParsedEventMessageDiscriminants::DoublePlayGrounded]
                 // TODO handle every single member of this variant
@@ -1247,12 +1252,12 @@ impl<'g> Game<'g> {
                     self.runner_out(out);
                     self.finish_pa();
 
-                    self.emit(prev_state, index)
+                    detail_builder
                         .fair_ball(fair_ball)
                         .runner_changes(advances.clone(), scores.clone())
                         .add_out(*out)
                         .fielders(fielders.clone())
-                        .build_some(TaxaEventType::DoublePlayGrounded)
+                        .build_some(self, TaxaEventType::DoublePlayGrounded)
                 },
                 [ParsedEventMessageDiscriminants::ForceOut]
                 // TODO handle every single member of this variant
@@ -1262,11 +1267,11 @@ impl<'g> Game<'g> {
                     self.add_runner_and_force_advance(batter, TaxaBase::First);
                     self.finish_pa();
 
-                    self.emit(prev_state, index)
+                    detail_builder
                         .fair_ball(fair_ball)
                         .add_out(*out)
                         .fielders(fielders.clone())
-                        .build_some(TaxaEventType::ForceOut)
+                        .build_some(self, TaxaEventType::ForceOut)
                 },
             ),
             GamePhase::ExpectInningEnd => game_event!(
@@ -1280,14 +1285,19 @@ impl<'g> Game<'g> {
                     if *side != self.state.inning_half {
                         warn!("Unexpected inning side in {}: expected {:?}, but saw {side:?}", self.game_id, self.state.inning_half);
                     }
+                    
+                    // These get cleared at the end of a PA, but the PA doesn't end for an inning-
+                    // ending caught stealing
+                    self.state.count_balls = 0;
+                    self.state.count_strikes = 0;
 
                     self.state.runners_on.clear();
 
-                    // TODO Implement the full extra innings rule
-                    if *number == 9 {
-                        self.state.phase = GamePhase::ExpectGameEnd;
-                    } else {
+                    if *number < 9 {
+                        // Game never ends if inning number is less than 9
                         self.state.phase = GamePhase::ExpectInningStart;
+                    } else {
+                        self.state.phase = GamePhase::ExpectGameEnd;
                     }
                     None
                 },
@@ -1315,7 +1325,7 @@ impl<'g> Game<'g> {
             ),
             GamePhase::ExpectGameEnd => game_event!(
                 (previous_event, event),
-                [ParsedEventMessageDiscriminants::PitcherSwap]
+                [ParsedEventMessageDiscriminants::GameOver]
                 ParsedEventMessage::GameOver => {
                     self.state.phase = GamePhase::ExpectFinalScore;
                     None
