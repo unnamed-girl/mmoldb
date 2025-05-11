@@ -240,6 +240,17 @@ pub enum TaxaBase {
     Third = 3,
 }
 
+impl TaxaBase {
+    pub fn next_base(self)  -> TaxaBase {
+        match self {
+            TaxaBase::Home => { TaxaBase::First }
+            TaxaBase::First => { TaxaBase::Second }
+            TaxaBase::Second => { TaxaBase::Third }
+            TaxaBase::Third => { TaxaBase::Home }
+        }
+    }
+}
+
 impl<'a> AsInsertable<'a> for TaxaBase {
     type Insertable = NewBase<'a>;
 
@@ -353,8 +364,8 @@ impl From<mmolb_parsing::enums::BaseNameVariants> for TaxaBaseDescriptionFormat 
             mmolb_parsing::enums::BaseNameVariants::Second => { TaxaBaseDescriptionFormat::Name }
             mmolb_parsing::enums::BaseNameVariants::SecondBase => { TaxaBaseDescriptionFormat::NameBase }
             mmolb_parsing::enums::BaseNameVariants::TwoB => { TaxaBaseDescriptionFormat::NumberB }
-            mmolb_parsing::enums::BaseNameVariants::ThirdBase => { TaxaBaseDescriptionFormat::Name }
-            mmolb_parsing::enums::BaseNameVariants::Third => { TaxaBaseDescriptionFormat::NameBase }
+            mmolb_parsing::enums::BaseNameVariants::ThirdBase => { TaxaBaseDescriptionFormat::NameBase }
+            mmolb_parsing::enums::BaseNameVariants::Third => { TaxaBaseDescriptionFormat::Name }
             mmolb_parsing::enums::BaseNameVariants::ThreeB => { TaxaBaseDescriptionFormat::NumberB }
             mmolb_parsing::enums::BaseNameVariants::Home => { TaxaBaseDescriptionFormat::Name}
         }

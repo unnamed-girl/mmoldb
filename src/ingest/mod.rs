@@ -169,9 +169,8 @@ pub async fn ingest_task(pool: Db, is_debug: bool) {
             game_data.day,
         );
 
-        ingest_game(pool, &taxa, ingest_id, &game_info, game_data).await;
-
-        break; // TEMP: Only process one (1) game
+        // I think cloning pool is the intended behavior
+        ingest_game(pool.clone(), &taxa, ingest_id, &game_info, game_data).await;
     }
 
     info!("{num_incomplete_games_skipped} incomplete games skipped");
