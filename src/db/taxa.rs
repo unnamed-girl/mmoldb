@@ -18,20 +18,36 @@ trait AsInsertable<'a> {
     Debug, enum_map::Enum, Eq, PartialEq, Hash, Copy, Clone, strum::Display, strum::EnumMessage,
 )]
 pub enum TaxaEventType {
+    #[strum(message = "ball")]
     Ball,
-    StrikeLooking,
-    StrikeSwinging,
+    #[strum(message = "called strike")]
+    CalledStrike,
+    #[strum(message = "swinging strike")]
+    SwingingStrike,
+    #[strum(message = "foul tip")]
     FoulTip,
+    #[strum(message = "foul ball")]
     FoulBall,
+    #[strum(message = "hit")] 
     Hit,
+    #[strum(message = "force out")]
     ForceOut,
+    #[strum(message = "caught out")]
     CaughtOut,
+    #[strum(message = "grounded out")]
     GroundedOut,
+    #[strum(message = "walk")]
     Walk,
+    #[strum(message = "home run")]
     HomeRun,
+    #[strum(message = "fielding error")]
     FieldingError,
+    #[strum(message = "hit by pitch")]
     HitByPitch,
+    #[strum(message = "double play")]
     DoublePlayCaught,
+    // TODO Merge these and use the number of runners out to distinguish them
+    #[strum(message = "double play")]
     DoublePlayGrounded,
 }
 
