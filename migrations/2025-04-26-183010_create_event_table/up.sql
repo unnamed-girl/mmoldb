@@ -102,13 +102,11 @@ create table data.event_baserunners (
     --     base_description_format becomes relevant, but I don't
     --     recommend assuming base_description_format == null
     --     correlates with is_out == true.
-    --   - Batters who get out without a chance to run to first (e.g.
-    --     strikeout, foul tip) do not show up in this table. Batters
-    --     who begin to run to first but get out before they get there,
-    --     including by force out, have a single row with base_before
-    --     == null and is_out == true. TODO Update this description:
-    --     there's no row for a ground out after all because it doesn't
-    --     say what base the batter-runner was out at.
+    --   - Batters (who become batter-runners and) who are put out at a
+    --     named base have a row in this table where both base_before
+    --     is null and is_out is true. Batters who get out in a way
+    --     that doesn't name a base don't have a row in this table at
+    --     all.
     --   - Runners who don't move during an event have a row in this
     --     table with base_before == base_after.
     --   - Runners stranded on base simply stop showing up in this
