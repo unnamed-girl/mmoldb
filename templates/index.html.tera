@@ -1,3 +1,6 @@
+{# All one line to avoid newlines being turned into spaces by HTML whitespace collapse. #}
+{% macro date_format(date) %}<span title="{{ date.absolute }}">{{ date.relative }}</span>{% endmacro date_format %}
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -24,7 +27,8 @@
         <ul class="ingests">
             {% for ingest in ingests %}
                 <li class="ingest">
-                    Ingest started {{ ingest.age }}
+                    {# All one line to avoid newlines being turned into spaces by HTML whitespace collapse. #}
+                    Ingest {{ ingest.id }} started {{ self::date_format(date=ingest.started_at) }}{% if ingest.finished_at %} and finished {{ self::date_format(date=ingest.finished_at) }}{% endif %}.
                 </li>
             {% endfor %}
         </ul>

@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::fmt::Write;
 use crate::db::{TaxaEventType, TaxaFairBallType, TaxaPosition, TaxaHitType, TaxaBase, TaxaBaseDescriptionFormat, TaxaBaseWithDescriptionFormat};
 use itertools::{Itertools, PeekingNext};
-use log::{debug, info, warn};
+use log::{info, warn};
 use mmolb_parsing::ParsedEventMessage;
 use mmolb_parsing::enums::{BaseNameVariants, Distance, FieldingErrorType, FoulType, FairBallDestination, FairBallType, HomeAway, StrikeType, TopBottom, Base};
 use mmolb_parsing::parsed_event::{BaseSteal, ParsedEventMessageDiscriminants, Play, PositionedPlayer, RunnerAdvance, RunnerOut};
@@ -290,11 +290,6 @@ impl<'g> EventDetailBuilder<'g> {
 
     fn hit_type(mut self, hit_type: TaxaHitType) -> Self {
         self.hit_type = Some(hit_type);
-        self
-    }
-
-    fn fair_ball_type(mut self, fair_ball_type: TaxaFairBallType) -> Self {
-        self.fair_ball_type = Some(fair_ball_type);
         self
     }
 
@@ -632,13 +627,6 @@ impl<'g> Game<'g> {
         match self.state.inning_half {
             TopBottom::Top => &self.home,
             TopBottom::Bottom => &self.away,
-        }
-    }
-
-    fn defending_team_mut(&mut self) -> &mut TeamInGame<'g> {
-        match self.state.inning_half {
-            TopBottom::Top => &mut self.home,
-            TopBottom::Bottom => &mut self.away,
         }
     }
 
@@ -1368,21 +1356,6 @@ fn positioned_player_as_ref<StrT: AsRef<str>>(
     }
 }
 
-fn runner_advance_as_ref<StrT: AsRef<str>>(
-    a: &RunnerAdvance<StrT>,
-) -> RunnerAdvance<&str> {
-    RunnerAdvance {
-        runner: a.runner.as_ref(),
-        base: a.base,
-    }
-}
-
-fn runner_score_as_ref(
-    a: &(),
-) -> () {
-    ()
-}
-
 impl<StrT: AsRef<str>> EventDetail<StrT> {
     fn count(&self) -> (u8, u8) {
         (self.count_balls, self.count_strikes)
@@ -1492,10 +1465,6 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                 
                 (runner.name.as_ref(), TaxaBaseWithDescriptionFormat(which_base, base_format).into())
             })
-    }
-    
-    fn runners_out(&self) -> Vec<(&str, BaseNameVariants)> {
-        self.runners_out_iter().collect()
     }
 
     pub fn to_parsed(&self) -> ParsedEventMessage<&str> where StrT: Debug {

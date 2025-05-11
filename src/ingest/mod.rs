@@ -8,9 +8,9 @@ use crate::ingest::sim::Game;
 use crate::{Db, db};
 use chrono::serde::ts_milliseconds;
 use chrono::{DateTime, Utc};
+use chrono_humanize::HumanTime;
 use log::info;
 use mmolb_parsing::ParsedEventMessage;
-use reqwest_middleware::ClientWithMiddleware;
 use rocket::tokio;
 use rocket::tokio::task::JoinHandle;
 use serde::Deserialize;
@@ -37,6 +37,10 @@ pub enum GameState {
     InningEnd,
 }
 
+// Allowing dead code because I want to keep the unused members of this 
+// struct so that it's easy to see that I have them if I find a use for
+// them.
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct CashewsGameResponse {
     pub game_id: String,
@@ -104,15 +108,21 @@ pub async fn ingest_task(pool: Db, is_debug: bool) {
 
     info!("Recorded ingest start in database");
 
-    // Override the cache policy: This is a live-changing endpoint and should
-    // not be cached
-    let games_response = client
-        .get("https://freecashe.ws/api/games")
-        // ... except in development
-        // .with_extension(http_cache_reqwest::CacheMode::NoStore)
+    let games_request = if is_debug {
+        // In development we want to always cache this
+        client.get("https://freecashe.ws/api/games")
+    } else {
+        // Override the cache policy: This is a live-changing endpoint and should
+        // not be cached
+        client.get("https://freecashe.ws/api/games")
+            .with_extension(http_cache_reqwest::CacheMode::NoStore)
+    };
+    
+    let games_response = games_request
         .send()
         .await
         .expect("TODO Error handling");
+
     let games: GamesResponse = games_response.json().await.expect("TODO Error handling");
 
     info!("Running ingest on {} games", games.len());
@@ -171,10 +181,21 @@ pub async fn ingest_task(pool: Db, is_debug: bool) {
 
         // I think cloning pool is the intended behavior
         ingest_game(pool.clone(), &taxa, ingest_id, &game_info, game_data).await;
+        
+        break; // TEMP
     }
 
     info!("{num_incomplete_games_skipped} incomplete games skipped");
     info!("{num_already_ingested_games_skipped} games already ingested");
+
+    let ingest_end = Utc::now();
+    {
+        let mut conn = pool.get().await.expect("TODO Error handling");
+        db::mark_ingest_finished(&mut conn, ingest_id, ingest_end)
+            .await
+            .expect("TODO Error handling")
+    }
+    info!("Marked ingest {ingest_id} finished {:#}.", HumanTime::from(ingest_end - ingest_start));
 }
 
 async fn ingest_game(pool: Db, taxa: &Taxa, ingest_id: i64, game_info: &CashewsGameResponse, game_data: mmolb_parsing::Game) {
@@ -270,6 +291,12 @@ fn check_round_trip(
         original_detail,
         reconstructed_detail,
     );
+    
+    // The linter incorrectly marks `label` as dead code even though 
+    // it's used in the assert statements. This lets me silence only
+    // that warning without having to silence dead_code in the whole
+    // function.
+    #[allow(path_statements)] label;
 
     assert_eq!(
         parsed,

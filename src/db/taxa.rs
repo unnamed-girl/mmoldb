@@ -179,7 +179,6 @@ impl From<mmolb_parsing::enums::FairBallDestination> for TaxaPosition {
             mmolb_parsing::enums::FairBallDestination::LeftField => { TaxaPosition::LeftField }
             mmolb_parsing::enums::FairBallDestination::CenterField => { TaxaPosition::CenterField }
             mmolb_parsing::enums::FairBallDestination::RightField => { TaxaPosition::RightField }
-            _ => panic!("TaxaPosition currently only represents defense positions"),
         }
     }
 }

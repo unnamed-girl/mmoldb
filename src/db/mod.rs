@@ -35,6 +35,16 @@ pub async fn start_ingest(conn: &mut AsyncPgConnection, start: DateTime<Utc>) ->
     .await
 }
 
+pub async fn mark_ingest_finished(conn: &mut AsyncPgConnection, ingest_id: i64, end: DateTime<Utc>) -> QueryResult<()> {
+    use crate::data_schema::data::ingests::dsl::*;
+
+    diesel::update(ingests.filter(id.eq(ingest_id)))
+        .set(date_finished.eq(end.naive_utc()))
+        .execute(conn)
+        .await
+        .map(|_| ())
+}
+
 pub async fn has_game(conn: &mut AsyncPgConnection, with_id: &str) -> QueryResult<bool> {
     use diesel::dsl::*;
     use crate::data_schema::data::events::dsl::*;

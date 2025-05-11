@@ -8,7 +8,7 @@ mod taxa_schema;
 mod ingest;
 mod models;
 
-use chrono::{TimeZone, Utc};
+use chrono::{NaiveDateTime, TimeZone, Utc};
 use chrono_humanize::HumanTime;
 use log::error;
 use rocket::fairing::AdHoc;
@@ -56,18 +56,37 @@ impl<'r, 'o: 'r> Responder<'r, 'o> for AppError {
 #[get("/")]
 async fn index(mut db: Connection<Db>) -> Result<Template, AppError> {
     #[derive(Serialize)]
+    struct FormattedDateContext {
+        relative: String,
+        absolute: String,
+    }
+
+    impl From<&NaiveDateTime> for FormattedDateContext {
+        fn from(value: &NaiveDateTime) -> Self {
+            let value_utc = Utc.from_utc_datetime(value);
+            let human = HumanTime::from(value_utc);
+            
+            Self {
+                relative: human.to_string(),
+                absolute: value_utc.to_string(),
+            }
+        }
+    }
+
+    #[derive(Serialize)]
     struct IngestContext {
-        age: String,
+        id: i64,
+        started_at: FormattedDateContext,
+        finished_at: Option<FormattedDateContext>,
     }
 
     let ingests: Vec<_> = db::latest_ingests(&mut db)
         .await?
         .into_iter()
         .map(|ingest| IngestContext {
-            age: HumanTime::from(Utc.from_utc_datetime(&ingest.date_started)).to_text_en(
-                chrono_humanize::Accuracy::Precise,
-                chrono_humanize::Tense::Past,
-            ),
+            id: ingest.id,
+            started_at: (&ingest.date_started).into(),
+            finished_at: ingest.date_finished.as_ref().map(Into::into),
         })
         .collect();
 
