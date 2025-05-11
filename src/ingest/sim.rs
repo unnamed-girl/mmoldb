@@ -1,12 +1,20 @@
-use std::collections::VecDeque;
-use std::fmt::Write;
-use crate::db::{TaxaEventType, TaxaFairBallType, TaxaPosition, TaxaHitType, TaxaBase, TaxaBaseDescriptionFormat, TaxaBaseWithDescriptionFormat};
+use crate::db::{
+    TaxaBase, TaxaBaseDescriptionFormat, TaxaBaseWithDescriptionFormat, TaxaEventType,
+    TaxaFairBallType, TaxaHitType, TaxaPosition,
+};
 use itertools::{Itertools, PeekingNext};
 use log::{info, warn};
 use mmolb_parsing::ParsedEventMessage;
-use mmolb_parsing::enums::{BaseNameVariants, Distance, FieldingErrorType, FoulType, FairBallDestination, FairBallType, HomeAway, StrikeType, TopBottom, Base};
-use mmolb_parsing::parsed_event::{BaseSteal, ParsedEventMessageDiscriminants, Play, PositionedPlayer, RunnerAdvance, RunnerOut};
+use mmolb_parsing::enums::{
+    Base, BaseNameVariants, Distance, FairBallDestination, FairBallType, FieldingErrorType,
+    FoulType, HomeAway, StrikeType, TopBottom,
+};
+use mmolb_parsing::parsed_event::{
+    BaseSteal, ParsedEventMessageDiscriminants, Play, PositionedPlayer, RunnerAdvance, RunnerOut,
+};
+use std::collections::VecDeque;
 use std::fmt::Debug;
+use std::fmt::Write;
 use strum::IntoDiscriminant;
 use thiserror::Error;
 
@@ -40,6 +48,12 @@ pub struct EventDetailRunner<StrT> {
 }
 
 #[derive(Debug)]
+pub struct EventDetailFielder<StrT> {
+    pub name: StrT,
+    pub position: TaxaPosition,
+}
+
+#[derive(Debug)]
 pub struct EventDetail<StrT> {
     pub game_id: StrT,
     pub game_event_index: usize,
@@ -53,7 +67,7 @@ pub struct EventDetail<StrT> {
     pub batter_count: usize,
     pub batter_name: StrT,
     pub pitcher_name: StrT,
-    pub fielders: Vec<PositionedPlayer<StrT>>,
+    pub fielders: Vec<EventDetailFielder<StrT>>,
 
     pub detail_type: TaxaEventType,
     pub hit_type: Option<TaxaHitType>,
@@ -67,7 +81,7 @@ pub struct EventDetail<StrT> {
 struct FairBall {
     index: usize,
     fair_ball_type: FairBallType,
-    fair_ball_destination: FairBallDestination
+    fair_ball_destination: FairBallDestination,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -89,7 +103,7 @@ pub struct TeamInGame<'g> {
     team_emoji: &'g str,
     pitcher_name: &'g str,
     lineup: Vec<PositionedPlayer<&'g str>>,
-    // This is incremented when a PA finishes, so in between PAs (and before the first PA) it 
+    // This is incremented when a PA finishes, so in between PAs (and before the first PA) it
     // represents the next batter
     batter_count: usize,
 }
@@ -109,7 +123,7 @@ struct GameState<'g> {
     count_balls: u8,
     count_strikes: u8,
     outs: i32,
-    runners_on: VecDeque<RunnerOn<'g>>
+    runners_on: VecDeque<RunnerOn<'g>>,
 }
 
 #[derive(Debug)]
@@ -252,7 +266,10 @@ fn is_matching_runner_out<'g>(prev_runner: &RunnerOn<'g>, out: &RunnerOut<&'g st
 fn is_matching_steal<'g>(prev_runner: &RunnerOn<'g>, steal: &BaseSteal<&'g str>) -> bool {
     if prev_runner.runner_name != steal.runner {
         // If it's not the same runner, no match
-        info!("SB: {} doesn't match {}", prev_runner.runner_name, steal.runner);
+        info!(
+            "SB: {} doesn't match {}",
+            prev_runner.runner_name, steal.runner
+        );
         false
     } else if !(prev_runner.base < steal.base.into()) && steal.base != Base::Home {
         // If the base they advanced to isn't ahead of the base they started on, no match
@@ -260,7 +277,10 @@ fn is_matching_steal<'g>(prev_runner: &RunnerOn<'g>, steal: &BaseSteal<&'g str>)
         info!("SB: Can't steal {} from {}", steal.base, prev_runner.base);
         false
     } else {
-        info!("SB: {} stole {} from {}", prev_runner.runner_name, steal.base, prev_runner.base);
+        info!(
+            "SB: {} stole {} from {}",
+            prev_runner.runner_name, steal.base, prev_runner.base
+        );
         true
     }
 }
@@ -298,15 +318,12 @@ impl<'g> EventDetailBuilder<'g> {
         if !self.fielders.is_empty() {
             warn!("EventDetailBuilder overwrote existing fielders");
         }
-        
+
         self.fielders = vec![fielder];
         self
     }
 
-    fn fielders(
-        mut self,
-        fielders: Vec<PositionedPlayer<&'g str>>,
-    ) -> Self {
+    fn fielders(mut self, fielders: Vec<PositionedPlayer<&'g str>>) -> Self {
         if !self.fielders.is_empty() {
             warn!("EventDetailBuilder overwrote existing fielders");
         }
@@ -337,10 +354,7 @@ impl<'g> EventDetailBuilder<'g> {
         self
     }
 
-    fn steals(
-        mut self,
-        steals: Vec<BaseSteal<&'g str>>,
-    ) -> Self {
+    fn steals(mut self, steals: Vec<BaseSteal<&'g str>>) -> Self {
         if !self.advances.is_empty() {
             warn!("Called runner_changes() and steals() on the same EventDetailBuilder");
         }
@@ -356,32 +370,51 @@ impl<'g> EventDetailBuilder<'g> {
         self.steals = steals;
         self
     }
-    
+
     fn add_runner(mut self, runner_name: &'g str, to_base: TaxaBase) -> Self {
         self.runner_added = Some((runner_name, to_base));
         self
     }
-    
+
     fn add_out(mut self, runner_out: RunnerOut<&'g str>) -> Self {
         self.runners_out.push(runner_out);
         self
     }
 
-    pub fn build_some(self, game: &Game<'g>, type_detail: TaxaEventType) -> Option<EventDetail<&'g str>> {
+    pub fn build_some(
+        self,
+        game: &Game<'g>,
+        type_detail: TaxaEventType,
+    ) -> Option<EventDetail<&'g str>> {
         Some(self.build(game, type_detail))
     }
 
     pub fn build(self, game: &Game<'g>, type_detail: TaxaEventType) -> EventDetail<&'g str> {
         let mut runner_state = "Building event with previous runners:".to_string();
         for runner in &self.prev_game_state.runners_on {
-            write!(runner_state, "\n    - {} on {}", runner.runner_name, runner.base).unwrap();
+            write!(
+                runner_state,
+                "\n    - {} on {}",
+                runner.runner_name, runner.base
+            )
+            .unwrap();
         }
         write!(runner_state, "\nsteals:").unwrap();
         for steal in &self.steals {
             if steal.caught {
-                write!(runner_state, "\n    - {} tried to steal {}", steal.runner, steal.base).unwrap();
+                write!(
+                    runner_state,
+                    "\n    - {} tried to steal {}",
+                    steal.runner, steal.base
+                )
+                .unwrap();
             } else {
-                write!(runner_state, "\n    - {} stole {}", steal.runner, steal.base).unwrap();
+                write!(
+                    runner_state,
+                    "\n    - {} stole {}",
+                    steal.runner, steal.base
+                )
+                .unwrap();
             }
         }
         write!(runner_state, "\nscores:").unwrap();
@@ -390,7 +423,12 @@ impl<'g> EventDetailBuilder<'g> {
         }
         write!(runner_state, "\nadvances:").unwrap();
         for advance in &self.advances {
-            write!(runner_state, "\n    - {} to {}", advance.runner, advance.base).unwrap();
+            write!(
+                runner_state,
+                "\n    - {} to {}",
+                advance.runner, advance.base
+            )
+            .unwrap();
         }
         write!(runner_state, "\nrunners out:").unwrap();
         for out in &self.runners_out {
@@ -402,15 +440,20 @@ impl<'g> EventDetailBuilder<'g> {
         }
         info!("{}", runner_state);
 
-        let batter_name = game.batter_for_active_team(self.batter_count_at_event_start).name;
-        
+        let batter_name = game
+            .batter_for_active_team(self.batter_count_at_event_start)
+            .name;
+
         let mut scores = self.scores.into_iter();
         let mut advances = self.advances.into_iter().peekable();
         let mut runners_out = self.runners_out.into_iter().peekable();
         let mut steals = self.steals.into_iter().peekable();
 
         let runners_out_ref = &mut runners_out;
-        let mut baserunners: Vec<_> = self.prev_game_state.runners_on.into_iter()
+        let mut baserunners: Vec<_> = self
+            .prev_game_state
+            .runners_on
+            .into_iter()
             .map(|prev_runner| {
                 if let Some(steal) = steals.peeking_next(|s| is_matching_steal(&prev_runner, s)) {
                     // There can't be steals and scorers in the same event so we're safe to do this first
@@ -436,7 +479,9 @@ impl<'g> EventDetailBuilder<'g> {
                         base_description_format: None,
                         is_steal: false,
                     }
-                } else if let Some(advance) = advances.peeking_next(|a| is_matching_advance(&prev_runner, a)) {
+                } else if let Some(advance) =
+                    advances.peeking_next(|a| is_matching_advance(&prev_runner, a))
+                {
                     // If the runner didn't score, they may have advanced
                     EventDetailRunner {
                         name: prev_runner.runner_name,
@@ -446,7 +491,9 @@ impl<'g> EventDetailBuilder<'g> {
                         base_description_format: None,
                         is_steal: false,
                     }
-                } else if let Some(out) = runners_out_ref.peeking_next(|o| is_matching_runner_out(&prev_runner, o)) {
+                } else if let Some(out) =
+                    runners_out_ref.peeking_next(|o| is_matching_runner_out(&prev_runner, o))
+                {
                     // If the runner didn't score or advance, they may have gotten out
                     EventDetailRunner {
                         name: prev_runner.runner_name,
@@ -470,17 +517,16 @@ impl<'g> EventDetailBuilder<'g> {
             })
             .chain(
                 // Add runners who made it to base this event
-                self.runner_added.into_iter()
-                    .map(|(name, base)| {
-                        EventDetailRunner {
-                            name,
-                            base_before: None,
-                            base_after: base,
-                            is_out: false,
-                            base_description_format: None,
-                            is_steal: false,
-                        }
-                    })
+                self.runner_added
+                    .into_iter()
+                    .map(|(name, base)| EventDetailRunner {
+                        name,
+                        base_before: None,
+                        base_after: base,
+                        is_out: false,
+                        base_description_format: None,
+                        is_steal: false,
+                    }),
             )
             .collect();
 
@@ -508,10 +554,31 @@ impl<'g> EventDetailBuilder<'g> {
                 })
         );
 
-        assert!(scores.next().is_none(), "At least one scoring runner was not found!");
-        assert!(advances.next().is_none(), "At least one advancing runner was not found!");
-        assert!(runners_out.next().is_none(), "At least one runner out was not found!");
-        assert!(steals.next().is_none(), "At least one stealing runner was not found!");
+        assert!(
+            scores.next().is_none(),
+            "At least one scoring runner was not found!"
+        );
+        assert!(
+            advances.next().is_none(),
+            "At least one advancing runner was not found!"
+        );
+        assert!(
+            runners_out.next().is_none(),
+            "At least one runner out was not found!"
+        );
+        assert!(
+            steals.next().is_none(),
+            "At least one stealing runner was not found!"
+        );
+
+        let fielders = self
+            .fielders
+            .iter()
+            .map(|f| EventDetailFielder {
+                name: f.name,
+                position: f.position.into(),
+            })
+            .collect();
 
         EventDetail {
             game_id: game.game_id,
@@ -526,7 +593,7 @@ impl<'g> EventDetailBuilder<'g> {
             batter_count: self.batter_count_at_event_start,
             batter_name,
             pitcher_name: game.defending_team().pitcher_name,
-            fielders: self.fielders,
+            fielders,
             detail_type: type_detail,
             hit_type: self.hit_type,
             fair_ball_type: self.fair_ball_type,
@@ -710,13 +777,18 @@ impl<'g> Game<'g> {
         let active_batter = self.active_batter();
         if active_batter.name != batter_name {
             warn!(
-                    "Unexpected batter name in {:#?}: Expected {}, but saw {}",
-                    event_type, active_batter.name, batter_name,
-                );
+                "Unexpected batter name in {:#?}: Expected {}, but saw {}",
+                event_type, active_batter.name, batter_name,
+            );
         }
     }
 
-    fn detail_builder(&self, prev_game_state: GameState<'g>, game_event_index: usize, batter_count: usize) -> EventDetailBuilder<'g> {
+    fn detail_builder(
+        &self,
+        prev_game_state: GameState<'g>,
+        game_event_index: usize,
+        batter_count: usize,
+    ) -> EventDetailBuilder<'g> {
         EventDetailBuilder {
             prev_game_state,
             batter_count_at_event_start: batter_count,
@@ -750,7 +822,7 @@ impl<'g> Game<'g> {
 
     pub fn add_out(&mut self) {
         self.state.outs += 1;
-        
+
         // This is usually redundant with finish_pa, but not in the case of inning-ending
         // caught stealing
         if self.state.outs >= 3 {
@@ -761,7 +833,7 @@ impl<'g> Game<'g> {
     pub fn runner_out(&mut self, out: &RunnerOut<&'g str>) {
         self.check_internal_baserunner_consistency();
 
-        // TODO The runner can set out running to a base that had a 
+        // TODO The runner can set out running to a base that had a
         //   runner on it before and that should be considered a valid
         //   advance candidate. Not sure how to handle this.
         let candidates = self.get_advance_candidates(out.runner, out.base.into());
@@ -770,16 +842,20 @@ impl<'g> Game<'g> {
             panic!("Tried to put a runner out but there are no matching runners");
         } else {
             if candidates.len() > 1 {
-                warn!("Multiple candidates for a runner out. Taking the one who's farthest on the basepaths.");
+                warn!(
+                    "Multiple candidates for a runner out. Taking the one who's farthest on the basepaths."
+                );
             }
-            self.state.runners_on.remove(candidates[0])
+            self.state
+                .runners_on
+                .remove(candidates[0])
                 .expect("Tried to remove a runner who did not exist");
         }
         self.add_out();
 
         self.check_internal_baserunner_consistency();
     }
-    
+
     pub fn batter_or_runner_out(&mut self, out: &RunnerOut<&'g str>) {
         // TODO Can I do this without assuming the batter gets out at first?
         if out.runner == self.active_batter().name && Base::First == out.base.into() {
@@ -791,10 +867,9 @@ impl<'g> Game<'g> {
     }
 
     pub fn add_runner(&mut self, runner_name: &'g str, base: TaxaBase) {
-        self.state.runners_on.push_back(RunnerOn {
-            runner_name,
-            base,
-        })
+        self.state
+            .runners_on
+            .push_back(RunnerOn { runner_name, base })
     }
 
     pub fn add_runner_and_force_advance(&mut self, runner_name: &'g str, base: TaxaBase) {
@@ -808,7 +883,7 @@ impl<'g> Game<'g> {
                 break;
             }
         }
-        
+
         self.add_runner(runner_name, base)
     }
 
@@ -822,9 +897,9 @@ impl<'g> Game<'g> {
         for runner in &self.state.runners_on {
             match runner.base {
                 TaxaBase::Home => {}
-                TaxaBase::First => { on_1b = true }
-                TaxaBase::Second => { on_2b = true }
-                TaxaBase::Third => { on_3b = true }
+                TaxaBase::First => on_1b = true,
+                TaxaBase::Second => on_2b = true,
+                TaxaBase::Third => on_3b = true,
             }
         }
 
@@ -835,7 +910,10 @@ impl<'g> Game<'g> {
 
     fn check_internal_baserunner_consistency(&self) {
         assert!(
-            self.state.runners_on.iter().is_sorted_by(|a, b| a.base > b.base),
+            self.state
+                .runners_on
+                .iter()
+                .is_sorted_by(|a, b| a.base > b.base),
             "Baserunners list must always be sorted descending by base",
         );
 
@@ -853,7 +931,10 @@ impl<'g> Game<'g> {
             match self.state.runners_on.pop_front() {
                 None => panic!("Tried to score a runner who didn't exist"),
                 Some(s) if s.runner_name == scorer => (),
-                Some(s) => panic!("Tried to score {scorer}, but {} was ahead of them on the bases", s.runner_name),
+                Some(s) => panic!(
+                    "Tried to score {scorer}, but {} was ahead of them on the bases",
+                    s.runner_name
+                ),
             }
         }
     }
@@ -870,10 +951,16 @@ impl<'g> Game<'g> {
                 panic!("Tried to advance runner but there are no matching runners to advance")
             } else {
                 if candidates.len() > 1 {
-                    warn!("Multiple candidates for a baserunner advance. Taking the one who's farthest on the basepaths.")
+                    warn!(
+                        "Multiple candidates for a baserunner advance. Taking the one who's \
+                        farthest on the basepaths."
+                    )
                 }
                 if advance.base == Base::Home {
-                    warn!("Batter advanced to Home, which should be reported as a score rather than an advance.");
+                    warn!(
+                        "Batter advanced to Home, which should be reported as a score rather than \
+                        an advance."
+                    );
                 }
                 self.state.runners_on[candidates[0]].base = advancing_to_base;
             }
@@ -890,10 +977,16 @@ impl<'g> Game<'g> {
             let candidates = self.get_advance_candidates(steal.runner, advancing_to_base);
 
             if candidates.is_empty() {
-                panic!("Tried to advance runner for stolen base but there are no matching runners to advance")
+                panic!(
+                    "Tried to advance runner for stolen base but there are no matching runners to \
+                    advance"
+                )
             } else {
                 if candidates.len() > 1 {
-                    warn!("Multiple candidates for a baserunner advance for stolen base. Taking the one who's farthest on the basepaths.")
+                    warn!(
+                        "Multiple candidates for a baserunner advance for stolen base. Taking the \
+                        one who's farthest on the basepaths."
+                    )
                 }
                 if steal.caught || advancing_to_base == TaxaBase::Home {
                     self.state.runners_on.remove(candidates[0]);
@@ -926,7 +1019,7 @@ impl<'g> Game<'g> {
                     Some(TaxaBase::Home) => {
                         warn!("Player on home base in do_advances");
                         true
-                    },
+                    }
                     // You can advance if the previous runner is ahead of the base you
                     // are advancing to. Because home is base 0 this wouldn't match advances
                     // to home, but advances to home must have no batter ahead of you so they
@@ -945,7 +1038,12 @@ impl<'g> Game<'g> {
         candidates
     }
 
-    fn update_runners(&mut self, scores: &[&'g str], advances: &[RunnerAdvance<&'g str>], steals: &[BaseSteal<&'g str>]) {
+    fn update_runners(
+        &mut self,
+        scores: &[&'g str],
+        advances: &[RunnerAdvance<&'g str>],
+        steals: &[BaseSteal<&'g str>],
+    ) {
         // When these methods say don't call directly, this function is
         // the one they want you to call instead
         self.do_steals__dont_call_directly(steals);
@@ -965,8 +1063,9 @@ impl<'g> Game<'g> {
     ) -> Result<Option<EventDetail<&'g str>>, SimError> {
         let previous_event = self.state.prev_event_type;
         let this_event_discriminant = event.discriminant();
-        
-        let detail_builder = self.detail_builder(self.state.clone(), index, self.batting_team().batter_count);
+
+        let detail_builder =
+            self.detail_builder(self.state.clone(), index, self.batting_team().batter_count);
 
         let result = match self.state.phase {
             GamePhase::ExpectInningStart => game_event!(
@@ -1279,7 +1378,7 @@ impl<'g> Game<'g> {
                     self.update_runners(scores, advances, &[]);
                     self.add_out(); // This is the out for the batter
                     self.runner_out(out);
-                    self.finish_pa();  // Must be after all outs are added 
+                    self.finish_pa();  // Must be after all outs are added
 
                     detail_builder
                         .fair_ball(fair_ball)
@@ -1337,7 +1436,7 @@ impl<'g> Game<'g> {
                     if *side != self.state.inning_half {
                         warn!("Unexpected inning side in {}: expected {:?}, but saw {side:?}", self.game_id, self.state.inning_half);
                     }
-                    
+
                     // These get cleared at the end of a PA, but the PA doesn't end for an inning-
                     // ending caught stealing
                     self.state.count_balls = 0;
@@ -1412,11 +1511,11 @@ impl<'g> Game<'g> {
 }
 
 fn positioned_player_as_ref<StrT: AsRef<str>>(
-    p: &PositionedPlayer<StrT>,
+    p: &EventDetailFielder<StrT>,
 ) -> PositionedPlayer<&str> {
     PositionedPlayer {
         name: p.name.as_ref(),
-        position: p.position,
+        position: p.position.into(),
     }
 }
 
@@ -1424,97 +1523,84 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
     fn count(&self) -> (u8, u8) {
         (self.count_balls, self.count_strikes)
     }
-    
+
     fn fielders_iter(&self) -> impl Iterator<Item = PositionedPlayer<&str>> {
-        self
-            .fielders
-            .iter()
-            .map(positioned_player_as_ref)
+        self.fielders.iter().map(positioned_player_as_ref)
     }
-    
+
     fn fielders(&self) -> Vec<PositionedPlayer<&str>> {
         self.fielders_iter().collect()
     }
-    
+
     fn steals_iter(&self) -> impl Iterator<Item = BaseSteal<&str>> {
-        self
-            .baserunners
-            .iter()
-            .flat_map(|runner| {
-                if runner.is_steal {
-                    Some(BaseSteal {
-                        runner: runner.name.as_ref(),
-                        base: runner.base_after.into(),
-                        caught: runner.is_out,
-                    })
-                } else {
-                    None
-                }
-            })
+        self.baserunners.iter().flat_map(|runner| {
+            if runner.is_steal {
+                Some(BaseSteal {
+                    runner: runner.name.as_ref(),
+                    base: runner.base_after.into(),
+                    caught: runner.is_out,
+                })
+            } else {
+                None
+            }
+        })
     }
-    
+
     fn steals(&self) -> Vec<BaseSteal<&str>> {
         self.steals_iter().collect()
     }
-    
+
     // An advance is a baserunner who was on a non-home base before AND after this event
     fn advances_iter(&self) -> impl Iterator<Item = RunnerAdvance<&str>> {
-        self
-            .baserunners
-            .iter()
-            .flat_map(|runner| {
-                let base_before = runner.base_before?;
-                let base_after = runner.base_after;
-                
-                if runner.is_out || base_after == TaxaBase::Home || base_before == base_after {
-                    None
-                } else {
-                    Some(RunnerAdvance {
-                        runner: runner.name.as_ref(),
-                        base: base_after.into(),
-                    })
-                }
-            })
+        self.baserunners.iter().flat_map(|runner| {
+            let base_before = runner.base_before?;
+            let base_after = runner.base_after;
+
+            if runner.is_out || base_after == TaxaBase::Home || base_before == base_after {
+                None
+            } else {
+                Some(RunnerAdvance {
+                    runner: runner.name.as_ref(),
+                    base: base_after.into(),
+                })
+            }
+        })
     }
-    
+
     fn advances(&self) -> Vec<RunnerAdvance<&str>> {
         self.advances_iter().collect()
     }
-    
+
     // A score is any runner whose final base is Home
     fn scores_iter(&self) -> impl Iterator<Item = &str> {
-        self
-            .baserunners
-            .iter()
-            .flat_map(|runner| {
-                if !runner.is_out && runner.base_after == TaxaBase::Home {
-                    Some(runner.name.as_ref())
-                } else {
-                    None
-                }
-            })
+        self.baserunners.iter().flat_map(|runner| {
+            if !runner.is_out && runner.base_after == TaxaBase::Home {
+                Some(runner.name.as_ref())
+            } else {
+                None
+            }
+        })
     }
-    
+
     fn scores(&self) -> Vec<&str> {
         self.scores_iter().collect()
     }
-    
+
     // A runner out is any runner where the final base is None
     // Every such runner must have a base_before of Some
     fn runners_out_iter(&self) -> impl Iterator<Item = (&str, BaseNameVariants)> {
-        self
-            .baserunners
+        self.baserunners
             .iter()
-            .filter(|runner| {
-                runner.is_out
-            })
+            .filter(|runner| runner.is_out)
             .map(|runner| {
-                let base_format = runner.base_description_format
-                    .expect(
-                        "Runner who got out must have a base_description_format"
-                    );
-                
-                (runner.name.as_ref(), TaxaBaseWithDescriptionFormat(runner.base_after, base_format).into())
+                let base_format = runner
+                    .base_description_format
+                    .expect("Runner who got out must have a base_description_format");
+
+                (
+                    runner.name.as_ref(),
+                    TaxaBaseWithDescriptionFormat(runner.base_after, base_format).into(),
+                )
             })
     }
 
@@ -1522,7 +1608,11 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
         self.runners_out_iter().collect()
     }
 
-    pub fn to_parsed(&self) -> ParsedEventMessage<&str> where StrT: Debug {
+    // TODO Is this debug bound necessary?
+    pub fn to_parsed(&self) -> ParsedEventMessage<&str>
+    where
+        StrT: Debug,
+    {
         match self.detail_type {
             TaxaEventType::Ball => ParsedEventMessage::Ball {
                 steals: self.steals(),
@@ -1587,7 +1677,8 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                         Some(TaxaHitType::Double) => Distance::Double,
                         Some(TaxaHitType::Triple) => Distance::Triple,
                     },
-                    fair_ball_type: self.fair_ball_type
+                    fair_ball_type: self
+                        .fair_ball_type
                         .expect("BatterToBase type must have a fair_ball_type")
                         .into(),
                     fielder,
@@ -1596,10 +1687,10 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                 }
             }
             TaxaEventType::ForceOut => {
-                let ((runner_out_name, runner_out_at_base),) = self
-                    .runners_out_iter()
-                    .collect_tuple()
-                    .expect("ForceOut must have exactly one runner out. TODO Handle this properly.");
+                let ((runner_out_name, runner_out_at_base),) =
+                    self.runners_out_iter().collect_tuple().expect(
+                        "ForceOut must have exactly one runner out. TODO Handle this properly.",
+                    );
 
                 ParsedEventMessage::ForceOut {
                     batter: self.batter_name.as_ref(),
@@ -1646,23 +1737,22 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                 scores: self.scores(),
                 advances: self.advances(),
             },
-            TaxaEventType::HomeRun => {
-                ParsedEventMessage::HomeRun {
-                    batter: self.batter_name.as_ref(),
-                    fair_ball_type: self.fair_ball_type
-                        .expect("HomeRun type must have a fair_ball_type")
-                        .into(),
-                    destination: self.fair_ball_direction
-                        .expect("HomeRun type must have a fair_ball_direction")
-                        .into(),
-                    scores: self.scores(),
-                }
-            }
+            TaxaEventType::HomeRun => ParsedEventMessage::HomeRun {
+                batter: self.batter_name.as_ref(),
+                fair_ball_type: self
+                    .fair_ball_type
+                    .expect("HomeRun type must have a fair_ball_type")
+                    .into(),
+                destination: self
+                    .fair_ball_direction
+                    .expect("HomeRun type must have a fair_ball_direction")
+                    .into(),
+                scores: self.scores(),
+            },
             TaxaEventType::FieldingError => {
-                let (fielder,) = self
-                    .fielders_iter()
-                    .collect_tuple()
-                    .expect("FieldingError must have exactly one fielder. TODO Handle this properly.");
+                let (fielder,) = self.fielders_iter().collect_tuple().expect(
+                    "FieldingError must have exactly one fielder. TODO Handle this properly.",
+                );
 
                 ParsedEventMessage::ReachOnFieldingError {
                     batter: self.batter_name.as_ref(),
@@ -1733,10 +1823,12 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
         // whether we had the type.
         ParsedEventMessage::FairBall {
             batter: self.batter_name.as_ref(),
-            fair_ball_type: self.fair_ball_type
+            fair_ball_type: self
+                .fair_ball_type
                 .expect("Event with a fair_ball_index must have a fair_ball_type")
                 .into(),
-            destination: self.fair_ball_direction
+            destination: self
+                .fair_ball_direction
                 .expect("Event with a fair_ball_index must have a fair_ball_direction")
                 .into(),
         }

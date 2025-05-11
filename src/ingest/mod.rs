@@ -1,7 +1,7 @@
 mod http;
 mod sim;
 
-pub use sim::{EventDetail, EventDetailRunner};
+pub use sim::{EventDetail, EventDetailFielder, EventDetailRunner};
 
 use crate::db::Taxa;
 use crate::ingest::sim::Game;
@@ -37,7 +37,7 @@ pub enum GameState {
     InningEnd,
 }
 
-// Allowing dead code because I want to keep the unused members of this 
+// Allowing dead code because I want to keep the unused members of this
 // struct so that it's easy to see that I have them if I find a use for
 // them.
 #[allow(dead_code)]
@@ -114,14 +114,12 @@ pub async fn ingest_task(pool: Db, is_debug: bool) {
     } else {
         // Override the cache policy: This is a live-changing endpoint and should
         // not be cached
-        client.get("https://freecashe.ws/api/games")
+        client
+            .get("https://freecashe.ws/api/games")
             .with_extension(http_cache_reqwest::CacheMode::NoStore)
     };
-    
-    let games_response = games_request
-        .send()
-        .await
-        .expect("TODO Error handling");
+
+    let games_response = games_request.send().await.expect("TODO Error handling");
 
     let games: GamesResponse = games_response.json().await.expect("TODO Error handling");
 
@@ -146,9 +144,12 @@ pub async fn ingest_task(pool: Db, is_debug: bool) {
             let num_deleted = db::delete_events_for_game(&mut conn, &game_info.game_id)
                 .await
                 .expect("TODO Error handling");
-            
+
             if num_deleted > 0 {
-                info!("In debug mode, deleted {num_deleted} events for game {}", game_info.game_id);
+                info!(
+                    "In debug mode, deleted {num_deleted} events for game {}",
+                    game_info.game_id
+                );
             }
             false
         };
@@ -181,7 +182,7 @@ pub async fn ingest_task(pool: Db, is_debug: bool) {
 
         // I think cloning pool is the intended behavior
         ingest_game(pool.clone(), &taxa, ingest_id, &game_info, game_data).await;
-        
+
         break; // TEMP
     }
 
@@ -195,20 +196,26 @@ pub async fn ingest_task(pool: Db, is_debug: bool) {
             .await
             .expect("TODO Error handling")
     }
-    info!("Marked ingest {ingest_id} finished {:#}.", HumanTime::from(ingest_end - ingest_start));
+    info!(
+        "Marked ingest {ingest_id} finished {:#}.",
+        HumanTime::from(ingest_end - ingest_start)
+    );
 }
 
-async fn ingest_game(pool: Db, taxa: &Taxa, ingest_id: i64, game_info: &CashewsGameResponse, game_data: mmolb_parsing::Game) {
+async fn ingest_game(
+    pool: Db,
+    taxa: &Taxa,
+    ingest_id: i64,
+    game_info: &CashewsGameResponse,
+    game_data: mmolb_parsing::Game,
+) {
     let parsed_copy = mmolb_parsing::process_game(&game_data);
 
     // I'm adding enumeration to parsed, then stripping it out for
     // the iterator fed to Game::new, on purpose. I need the
     // counting to count every event, but I don't need the count
     // inside Game::new.
-    let mut parsed = parsed_copy
-        .iter()
-        .zip(&game_data.event_log)
-        .enumerate();
+    let mut parsed = parsed_copy.iter().zip(&game_data.event_log).enumerate();
 
     let mut game = {
         let mut parsed_for_game = (&mut parsed).map(|(_, (parsed, _))| parsed);
@@ -231,9 +238,14 @@ async fn ingest_game(pool: Db, taxa: &Taxa, ingest_id: i64, game_info: &CashewsG
             let unparsed = parsed.clone().unparse();
             assert_eq!(unparsed, raw.message);
 
-            info!("Applying event {:#?} \"{}\"", parsed.discriminant(), raw.message);
+            info!(
+                "Applying event {:#?} \"{}\"",
+                parsed.discriminant(),
+                raw.message
+            );
 
-            game.next(index, &parsed, &raw).expect("TODO Error handling")
+            game.next(index, &parsed, &raw)
+                .expect("TODO Error handling")
         })
         .collect();
 
@@ -241,18 +253,21 @@ async fn ingest_game(pool: Db, taxa: &Taxa, ingest_id: i64, game_info: &CashewsG
     let inserted_events = {
         let mut conn = pool.get().await.expect("TODO Error handling");
 
-        db::insert_events(&mut conn, &taxa, ingest_id, &detail_events).await.expect("TODO Error handling");
+        db::insert_events(&mut conn, &taxa, ingest_id, &detail_events)
+            .await
+            .expect("TODO Error handling");
 
         // We can rebuild them
-        db::events_for_game(&mut conn, &taxa, &game_info.game_id).await.expect("TODO Error handling")
+        db::events_for_game(&mut conn, &taxa, &game_info.game_id)
+            .await
+            .expect("TODO Error handling")
     };
 
     assert_eq!(inserted_events.len(), detail_events.len());
     for (reconstructed_detail, original_detail) in inserted_events.iter().zip(detail_events) {
         println!(
-            "Original Baserunners:      {:?}\nReconstructed baserunners: {:?}", 
-            original_detail.baserunners, 
-            reconstructed_detail.baserunners,
+            "Original Baserunners:      {:?}\nReconstructed baserunners: {:?}",
+            original_detail.baserunners, reconstructed_detail.baserunners,
         );
 
         let index = reconstructed_detail.game_event_index;
@@ -260,10 +275,10 @@ async fn ingest_game(pool: Db, taxa: &Taxa, ingest_id: i64, game_info: &CashewsG
 
         if let Some(index) = fair_ball_index {
             check_round_trip(
-                "Contact event", 
+                "Contact event",
                 &parsed_copy[index],
                 &original_detail.to_parsed_contact(),
-                &reconstructed_detail.to_parsed_contact(), 
+                &reconstructed_detail.to_parsed_contact(),
             );
         }
 
@@ -280,7 +295,7 @@ fn check_round_trip(
     label: &str,
     parsed: &ParsedEventMessage<&str>,
     original_detail: &ParsedEventMessage<&str>,
-    reconstructed_detail: &ParsedEventMessage<&str>, 
+    reconstructed_detail: &ParsedEventMessage<&str>,
 ) {
     info!(
         "{}\n           Original: {:?}\
@@ -291,22 +306,21 @@ fn check_round_trip(
         original_detail,
         reconstructed_detail,
     );
-    
-    // The linter incorrectly marks `label` as dead code even though 
+
+    // The linter incorrectly marks `label` as dead code even though
     // it's used in the assert statements. This lets me silence only
     // that warning without having to silence dead_code in the whole
     // function.
-    #[allow(path_statements)] label;
+    #[allow(path_statements)]
+    label;
 
     assert_eq!(
-        parsed,
-        original_detail,
+        parsed, original_detail,
         "{label} round-trip through EventDetail failed (left is original, right is reconstructed)"
     );
 
     assert_eq!(
-        parsed,
-        reconstructed_detail,
+        parsed, reconstructed_detail,
         "{label} round-trip through db failed (left is original, right is reconstructed)"
     );
 }

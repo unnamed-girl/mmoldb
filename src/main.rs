@@ -1,5 +1,4 @@
 #[warn(clippy::future_not_send)]
-
 mod db;
 #[rustfmt::skip] // This is a generated file
 mod data_schema;
@@ -65,7 +64,7 @@ async fn index(mut db: Connection<Db>) -> Result<Template, AppError> {
         fn from(value: &NaiveDateTime) -> Self {
             let value_utc = Utc.from_utc_datetime(value);
             let human = HumanTime::from(value_utc);
-            
+
             Self {
                 relative: human.to_string(),
                 absolute: value_utc.to_string(),
@@ -111,7 +110,7 @@ fn rocket() -> _ {
             let pool = Db::fetch(&rocket)
                 .expect("Rocket is not managing a Db pool")
                 .clone();
-            
+
             let is_debug = rocket.config().profile == "debug";
 
             Box::pin(async move {

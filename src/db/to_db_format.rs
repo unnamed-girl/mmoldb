@@ -1,6 +1,5 @@
-use mmolb_parsing::parsed_event::PositionedPlayer;
-use crate::db::taxa::{Taxa};
-use crate::ingest::{EventDetail, EventDetailRunner};
+use crate::db::taxa::Taxa;
+use crate::ingest::{EventDetail, EventDetailFielder, EventDetailRunner};
 use crate::models::{DbEvent, DbFielder, DbRunner, NewBaserunner, NewEvent, NewFielder};
 
 pub fn event_to_row<'e>(
@@ -34,14 +33,18 @@ pub fn event_to_baserunners<'e>(
     event_id: i64,
     event: &'e EventDetail<&'e str>,
 ) -> Vec<NewBaserunner<'e>> {
-    event.baserunners.iter()
+    event
+        .baserunners
+        .iter()
         .map(|runner| NewBaserunner {
             event_id,
             baserunner_name: runner.name,
             base_before: runner.base_before.map(|b| taxa.base_id(b)),
             base_after: taxa.base_id(runner.base_after),
             is_out: runner.is_out,
-            base_description_format: runner.base_description_format.map(|f| taxa.base_description_format_id(f)),
+            base_description_format: runner
+                .base_description_format
+                .map(|f| taxa.base_description_format_id(f)),
             steal: runner.is_steal,
         })
         .collect()
@@ -52,12 +55,14 @@ pub fn event_to_fielders<'e>(
     event_id: i64,
     event: &'e EventDetail<&'e str>,
 ) -> Vec<NewFielder<'e>> {
-    event.fielders.iter()
+    event
+        .fielders
+        .iter()
         .enumerate()
         .map(|(i, fielder)| NewFielder {
             event_id,
             fielder_name: fielder.name,
-            fielder_position: taxa.position_id(fielder.position.into()),
+            fielder_position: taxa.position_id(fielder.position),
             play_order: i as i32,
         })
         .collect()
@@ -71,28 +76,25 @@ pub fn row_to_event<'e>(
 ) -> EventDetail<String> {
     let baserunners = runners
         .into_iter()
-        .map(|r| {
-            EventDetailRunner {
-                name: r.baserunner_name,
-                base_before: r.base_before.map(|id| taxa.base_from_id(id)),
-                base_after: taxa.base_from_id(r.base_after),
-                is_out: r.is_out,
-                base_description_format: r.base_description_format.map(|id| taxa.base_description_format_from_id(id)),
-                is_steal: r.steal,
-            }
+        .map(|r| EventDetailRunner {
+            name: r.baserunner_name,
+            base_before: r.base_before.map(|id| taxa.base_from_id(id)),
+            base_after: taxa.base_from_id(r.base_after),
+            is_out: r.is_out,
+            base_description_format: r
+                .base_description_format
+                .map(|id| taxa.base_description_format_from_id(id)),
+            is_steal: r.steal,
         })
         .collect();
-    
+
     let fielders = fielders
         .into_iter()
-        .map(|f| {
-            PositionedPlayer {
-                name: f.fielder_name,
-                position: taxa.position_from_id(f.fielder_position).into(),
-            }
+        .map(|f| EventDetailFielder {
+            name: f.fielder_name,
+            position: taxa.position_from_id(f.fielder_position).into(),
         })
         .collect();
-    
     EventDetail {
         game_id: row.game_id,
         game_event_index: row.game_event_index as usize,
