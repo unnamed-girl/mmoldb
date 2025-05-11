@@ -90,23 +90,37 @@ create table data.event_baserunners (
 
     -- actual data
     baserunner_name text not null,
-    -- base numbering plan:
+    -- Base numbering plan:
     --   - 0 is home base, 1 is first, etc.
-    --   - the batter is not considered to be "at home". a batter who
-    --     reaches first base moves from null to 1
-    --   - runners who score always reach base 0 (i.e. their
-    --     base_after is 0)
-    --   - runners who get out have a base_after of null, including if
-    --     by caught stealing
-    --   - batters who get out (e.g. strikeout, foul tip, ground out)
-    --     do not show up in this table
-    --   - i don't know what a row with base_before == null and
-    --     base_after == null would mean, but i reserve the right to
-    --     have one
+    --   - The batter is not considered to be "at home". A batter who
+    --     reaches first base moves from null to 1.
+    --   - Runners who score always reach home, meaning they will have
+    --     a row in this table where their base_after is 0.
+    --   - When a runner is out, they have a row in this table where
+    --     is_out is true. They will have a base_after, which indicates
+    --     which base they were out at. This is also when
+    --     base_description_format becomes relevant, but I don't
+    --     recommend assuming base_description_format == null
+    --     correlates with is_out == true.
+    --   - Batters who get out without a chance to run to first (e.g.
+    --     strikeout, foul tip) do not show up in this table. Batters
+    --     who begin to run to first but get out before they get there,
+    --     including by force out, have a single row with base_before
+    --     == null and is_out == true. TODO Update this description:
+    --     there's no row for a ground out after all because it doesn't
+    --     say what base the batter-runner was out at.
+    --   - Runners who don't move during an event have a row in this
+    --     table with base_before == base_after.
+    --   - Runners stranded on base simply stop showing up in this
+    --     table.
+    --   - Similarly, the automatic runner who stars on 2nd during
+    --     extra innings just starts showing up with a base_before
+    --     of 2nd and no previous row with a base_before of null.
     base_before bigint references taxa.base, -- null == not on base before (i.e. this was the hit/walk/etc that put them on base)
-    base_after bigint references taxa.base, -- null == not on base after because of getting out. if they scored, this will be 0
+    base_after bigint references taxa.base not null, -- `not null` is an experiment, it may have to become nullable
+    is_out bool not null,
     base_description_format bigint references taxa.base_description_format, -- null == not applicable because this event didn't name the base in a way that could be formatted
-    steal bool not null -- this records all ATTEMPTED steals. identify failed steals by looking for base_after == null
+    steal bool not null -- this records all ATTEMPTED steals. identify failed steals by looking at is_out
 );
 
 create table data.event_fielders (

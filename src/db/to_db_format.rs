@@ -39,7 +39,8 @@ pub fn event_to_baserunners<'e>(
             event_id,
             baserunner_name: runner.name,
             base_before: runner.base_before.map(|b| taxa.base_id(b)),
-            base_after: runner.base_after.map(|b| taxa.base_id(b)),
+            base_after: taxa.base_id(runner.base_after),
+            is_out: runner.is_out,
             base_description_format: runner.base_description_format.map(|f| taxa.base_description_format_id(f)),
             steal: runner.is_steal,
         })
@@ -74,7 +75,8 @@ pub fn row_to_event<'e>(
             EventDetailRunner {
                 name: r.baserunner_name,
                 base_before: r.base_before.map(|id| taxa.base_from_id(id)),
-                base_after: r.base_after.map(|id| taxa.base_from_id(id)),
+                base_after: taxa.base_from_id(r.base_after),
+                is_out: r.is_out,
                 base_description_format: r.base_description_format.map(|id| taxa.base_description_format_from_id(id)),
                 is_steal: r.steal,
             }

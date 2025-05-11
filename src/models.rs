@@ -109,7 +109,8 @@ pub struct NewBaserunner<'a> {
     pub event_id: i64,
     pub baserunner_name: &'a str,
     pub base_before: Option<i64>,
-    pub base_after: Option<i64>,
+    pub base_after: i64,
+    pub is_out: bool,
     pub base_description_format: Option<i64>,
     pub steal: bool,
 }
@@ -123,7 +124,8 @@ pub struct DbRunner {
     pub event_id: i64,
     pub baserunner_name: String,
     pub base_before: Option<i64>,
-    pub base_after: Option<i64>,
+    pub base_after: i64,
+    pub is_out: bool,
     pub base_description_format: Option<i64>,
     pub steal: bool,
 }

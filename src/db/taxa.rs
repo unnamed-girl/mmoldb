@@ -45,10 +45,7 @@ pub enum TaxaEventType {
     #[strum(message = "hit by pitch")]
     HitByPitch,
     #[strum(message = "double play")]
-    DoublePlayCaught,
-    // TODO Merge these and use the number of runners out to distinguish them
-    #[strum(message = "double play")]
-    DoublePlayGrounded,
+    DoublePlay,
 }
 
 impl<'a> AsInsertable<'a> for TaxaEventType {

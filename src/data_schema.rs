@@ -7,7 +7,8 @@ pub mod data {
             event_id -> Int8,
             baserunner_name -> Text,
             base_before -> Nullable<Int8>,
-            base_after -> Nullable<Int8>,
+            base_after -> Int8,
+            is_out -> Bool,
             base_description_format -> Nullable<Int8>,
             steal -> Bool,
         }
