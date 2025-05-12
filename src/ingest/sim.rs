@@ -6,11 +6,11 @@ use itertools::{EitherOrBoth, Itertools, PeekingNext};
 use log::{info, warn};
 use mmolb_parsing::ParsedEventMessage;
 use mmolb_parsing::enums::{
-    Base, BaseNameVariants, BatterStat, Distance, FairBallDestination, FairBallType,
+    Base, BaseNameVariant, BatterStat, Distance, FairBallDestination, FairBallType,
     FieldingErrorType, FoulType, HomeAway, NowBattingStats, StrikeType, TopBottom,
 };
 use mmolb_parsing::parsed_event::{
-    BaseSteal, ParsedEventMessageDiscriminants, Play, PositionedPlayer, RunnerAdvance, RunnerOut,
+    BaseSteal, ParsedEventMessageDiscriminants, PositionedPlayer, RunnerAdvance, RunnerOut,
 };
 use std::collections::VecDeque;
 use std::fmt::Debug;
@@ -287,7 +287,7 @@ fn is_matching_runner_out<'g>(prev_runner: &RunnerOn<'g>, out: &RunnerOut<&'g st
     if prev_runner.runner_name != out.runner {
         // If it's not the same runner, no match
         false
-    } else if !(prev_runner.base <= out.base.into()) && out.base != BaseNameVariants::Home {
+    } else if !(prev_runner.base <= out.base.into()) && out.base != BaseNameVariant::Home {
         // If the base they got out at to is behind the base they started on, no match
         false
     } else {
@@ -1404,7 +1404,7 @@ impl<'g> Game<'g> {
                         .build_some(self, TaxaEventType::FieldingError)
                 },
                 [ParsedEventMessageDiscriminants::HomeRun]
-                ParsedEventMessage::HomeRun { batter, fair_ball_type, destination, scores } => {
+                ParsedEventMessage::HomeRun { batter, fair_ball_type, destination, scores, grand_slam } => {
                     self.check_batter(batter, event.discriminant());
                     // This is the one situation where you can have
                     // scores but no advances, because after everyone
@@ -1413,36 +1413,28 @@ impl<'g> Game<'g> {
                     self.finish_pa();
 
                     if fair_ball.fair_ball_type != *fair_ball_type {
-                        warn!("Mismatched fair ball type in HomeRun: expected {} but saw {}", fair_ball.fair_ball_type, fair_ball_type);
+                        warn!(
+                            "Mismatched fair ball type in HomeRun: expected {} but saw {}",
+                            fair_ball.fair_ball_type,
+                            fair_ball_type,
+                        );
                     }
 
                     if fair_ball.fair_ball_destination != *destination {
-                        warn!("Mismatched fair ball destination in HomeRun: expected {} but saw {}", fair_ball.fair_ball_destination, destination);
+                        warn!(
+                            "Mismatched fair ball destination in HomeRun: expected {} but saw {}",
+                            fair_ball.fair_ball_destination,
+                            destination,
+                        );
                     }
 
-                    detail_builder
-                        .fair_ball(fair_ball)
-                        .runner_changes(Vec::new(), scores.clone())
-                        .build_some(self, TaxaEventType::HomeRun)
-                },
-                // I've deleted the to-do to merge this with HomeRun
-                // because the author of mmolb_parsing has promised to
-                // unify them
-                [ParsedEventMessageDiscriminants::GrandSlam]
-                ParsedEventMessage::GrandSlam { batter, fair_ball_type, destination, scores } => {
-                    self.check_batter(batter, event.discriminant());
-                    // This is the one situation where you can have
-                    // scores but no advances, because after everyone
-                    // scores there's no one left to advance
-                    self.update_runners(scores, &[], &[]);
-                    self.finish_pa();
-
-                    if fair_ball.fair_ball_type != *fair_ball_type {
-                        warn!("Mismatched fair ball type in HomeRun: expected {} but saw {}", fair_ball.fair_ball_type, fair_ball_type);
-                    }
-
-                    if fair_ball.fair_ball_destination != *destination {
-                        warn!("Mismatched fair ball destination in HomeRun: expected {} but saw {}", fair_ball.fair_ball_destination, destination);
+                    if *grand_slam && scores.len() != 4 {
+                        warn!(
+                            "Parsed a grand slam, but there were {} scores (expected 4)",
+                            scores.len(),
+                        );
+                    } else if !*grand_slam && scores.len() == 4 {
+                        warn!("There were 4 scores but we didn't parse a grand slam");
                     }
 
                     detail_builder
@@ -1454,33 +1446,23 @@ impl<'g> Game<'g> {
                 // TODO handle every single member of this variant
                 // TODO I'm not recording fielders on this event. Why is round-trip checking not
                 //   raising an error about that?
-                ParsedEventMessage::DoublePlayCaught { batter, advances, scores, play, .. } => {
-                    let Play::Out { out } = play else {
-                        panic!("TODO Support when play is an Error");
-                    };
+                ParsedEventMessage::DoublePlayCaught { batter, advances, scores, out_two, .. } => {
 
                     self.check_batter(batter, event.discriminant());
                     self.update_runners(scores, advances, &[]);
                     self.add_out(); // This is the out for the batter
-                    self.runner_out(out);
+                    self.runner_out(out_two);
                     self.finish_pa();  // Must be after all outs are added
 
                     detail_builder
                         .fair_ball(fair_ball)
                         .runner_changes(advances.clone(), scores.clone())
-                        .add_out(*out)
+                        .add_out(*out_two)
                         .build_some(self, TaxaEventType::DoublePlay)
                 },
                 [ParsedEventMessageDiscriminants::DoublePlayGrounded]
                 // TODO handle every single member of this variant
-                ParsedEventMessage::DoublePlayGrounded { batter, advances, scores, play_one, play_two, fielders, .. } => {
-                    let Play::Out { out: out_one } = play_one else {
-                        panic!("TODO Support when play_one is an Error");
-                    };
-                    let Play::Out { out: out_two } = play_two else {
-                        panic!("TODO Support when play_two is an Error");
-                    };
-
+                ParsedEventMessage::DoublePlayGrounded { batter, advances, scores, out_one, out_two, fielders, .. } => {
                     self.check_batter(batter, event.discriminant());
                     self.update_runners(scores, advances, &[]);
                     self.batter_or_runner_out(out_one);
@@ -1732,7 +1714,7 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
 
     // A runner out is any runner where the final base is None
     // Every such runner must have a base_before of Some
-    fn runners_out_iter(&self) -> impl Iterator<Item = (&str, BaseNameVariants)> {
+    fn runners_out_iter(&self) -> impl Iterator<Item = (&str, BaseNameVariant)> {
         self.baserunners
             .iter()
             .filter(|runner| runner.is_out)
@@ -1748,7 +1730,7 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
             })
     }
 
-    fn runners_out(&self) -> Vec<(&str, BaseNameVariants)> {
+    fn runners_out(&self) -> Vec<(&str, BaseNameVariant)> {
         self.runners_out_iter().collect()
     }
 
@@ -1881,17 +1863,22 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                 scores: self.scores(),
                 advances: self.advances(),
             },
-            TaxaEventType::HomeRun => ParsedEventMessage::HomeRun {
-                batter: self.batter_name.as_ref(),
-                fair_ball_type: self
-                    .fair_ball_type
-                    .expect("HomeRun type must have a fair_ball_type")
-                    .into(),
-                destination: self
-                    .fair_ball_direction
-                    .expect("HomeRun type must have a fair_ball_direction")
-                    .into(),
-                scores: self.scores(),
+            TaxaEventType::HomeRun => {
+                let scores = self.scores();
+                let grand_slam = scores.len() == 4;
+                ParsedEventMessage::HomeRun {
+                    batter: self.batter_name.as_ref(),
+                    fair_ball_type: self
+                        .fair_ball_type
+                        .expect("HomeRun type must have a fair_ball_type")
+                        .into(),
+                    destination: self
+                        .fair_ball_direction
+                        .expect("HomeRun type must have a fair_ball_direction")
+                        .into(),
+                    scores,
+                    grand_slam,
+                }
             },
             TaxaEventType::FieldingError => {
                 let (fielder,) = self.fielders_iter().collect_tuple().expect(
@@ -1920,12 +1907,9 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                             batter: self.batter_name.as_ref(),
                             fair_ball_type: FairBallType::Popup, // TODO
                             fielders: self.fielders(),
-                            // TODO Handle Play::Error
-                            play: Play::Out {
-                                out: RunnerOut {
-                                    runner: name,
-                                    base: *at_base,
-                                },
+                            out_two: RunnerOut {
+                                runner: name,
+                                base: *at_base,
                             },
                             scores: self.scores(),
                             advances: self.advances(),
@@ -1935,19 +1919,13 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                         ParsedEventMessage::DoublePlayGrounded {
                             batter: self.batter_name.as_ref(),
                             fielders: self.fielders(),
-                            // TODO Handle Play::Error
-                            play_one: Play::Out {
-                                out: RunnerOut {
-                                    runner: name_one,
-                                    base: *base_one,
-                                },
+                            out_one: RunnerOut {
+                                runner: name_one,
+                                base: *base_one,
                             },
-                            // TODO Handle Play::Error
-                            play_two: Play::Out {
-                                out: RunnerOut {
-                                    runner: name_two,
-                                    base: *base_two,
-                                },
+                            out_two: RunnerOut {
+                                runner: name_two,
+                                base: *base_two,
                             },
                             scores: self.scores(),
                             advances: self.advances(),

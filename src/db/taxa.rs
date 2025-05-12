@@ -319,19 +319,19 @@ impl From<mmolb_parsing::enums::Distance> for TaxaBase {
     }
 }
 
-impl From<mmolb_parsing::enums::BaseNameVariants> for TaxaBase {
-    fn from(value: mmolb_parsing::enums::BaseNameVariants) -> Self {
+impl From<mmolb_parsing::enums::BaseNameVariant> for TaxaBase {
+    fn from(value: mmolb_parsing::enums::BaseNameVariant) -> Self {
         match value {
-            mmolb_parsing::enums::BaseNameVariants::First => TaxaBase::First,
-            mmolb_parsing::enums::BaseNameVariants::FirstBase => TaxaBase::First,
-            mmolb_parsing::enums::BaseNameVariants::OneB => TaxaBase::First,
-            mmolb_parsing::enums::BaseNameVariants::Second => TaxaBase::Second,
-            mmolb_parsing::enums::BaseNameVariants::SecondBase => TaxaBase::Second,
-            mmolb_parsing::enums::BaseNameVariants::TwoB => TaxaBase::Second,
-            mmolb_parsing::enums::BaseNameVariants::ThirdBase => TaxaBase::Third,
-            mmolb_parsing::enums::BaseNameVariants::Third => TaxaBase::Third,
-            mmolb_parsing::enums::BaseNameVariants::ThreeB => TaxaBase::Third,
-            mmolb_parsing::enums::BaseNameVariants::Home => TaxaBase::Home,
+            mmolb_parsing::enums::BaseNameVariant::First => TaxaBase::First,
+            mmolb_parsing::enums::BaseNameVariant::FirstBase => TaxaBase::First,
+            mmolb_parsing::enums::BaseNameVariant::OneB => TaxaBase::First,
+            mmolb_parsing::enums::BaseNameVariant::Second => TaxaBase::Second,
+            mmolb_parsing::enums::BaseNameVariant::SecondBase => TaxaBase::Second,
+            mmolb_parsing::enums::BaseNameVariant::TwoB => TaxaBase::Second,
+            mmolb_parsing::enums::BaseNameVariant::ThirdBase => TaxaBase::Third,
+            mmolb_parsing::enums::BaseNameVariant::Third => TaxaBase::Third,
+            mmolb_parsing::enums::BaseNameVariant::ThreeB => TaxaBase::Third,
+            mmolb_parsing::enums::BaseNameVariant::Home => TaxaBase::Home,
         }
     }
 }
@@ -361,60 +361,60 @@ impl<'a> AsInsertable<'a> for TaxaBaseDescriptionFormat {
 // Newtype just to hang a From impl on
 pub struct TaxaBaseWithDescriptionFormat(pub TaxaBase, pub TaxaBaseDescriptionFormat);
 
-impl Into<mmolb_parsing::enums::BaseNameVariants> for TaxaBaseWithDescriptionFormat {
-    fn into(self) -> mmolb_parsing::enums::BaseNameVariants {
+impl Into<mmolb_parsing::enums::BaseNameVariant> for TaxaBaseWithDescriptionFormat {
+    fn into(self) -> mmolb_parsing::enums::BaseNameVariant {
         match (self.0, self.1) {
             (TaxaBase::First, TaxaBaseDescriptionFormat::NumberB) => {
-                mmolb_parsing::enums::BaseNameVariants::OneB
+                mmolb_parsing::enums::BaseNameVariant::OneB
             }
             (TaxaBase::First, TaxaBaseDescriptionFormat::Name) => {
-                mmolb_parsing::enums::BaseNameVariants::First
+                mmolb_parsing::enums::BaseNameVariant::First
             }
             (TaxaBase::First, TaxaBaseDescriptionFormat::NameBase) => {
-                mmolb_parsing::enums::BaseNameVariants::FirstBase
+                mmolb_parsing::enums::BaseNameVariant::FirstBase
             }
             (TaxaBase::Second, TaxaBaseDescriptionFormat::NumberB) => {
-                mmolb_parsing::enums::BaseNameVariants::TwoB
+                mmolb_parsing::enums::BaseNameVariant::TwoB
             }
             (TaxaBase::Second, TaxaBaseDescriptionFormat::Name) => {
-                mmolb_parsing::enums::BaseNameVariants::Second
+                mmolb_parsing::enums::BaseNameVariant::Second
             }
             (TaxaBase::Second, TaxaBaseDescriptionFormat::NameBase) => {
-                mmolb_parsing::enums::BaseNameVariants::SecondBase
+                mmolb_parsing::enums::BaseNameVariant::SecondBase
             }
             (TaxaBase::Third, TaxaBaseDescriptionFormat::NumberB) => {
-                mmolb_parsing::enums::BaseNameVariants::ThreeB
+                mmolb_parsing::enums::BaseNameVariant::ThreeB
             }
             (TaxaBase::Third, TaxaBaseDescriptionFormat::Name) => {
-                mmolb_parsing::enums::BaseNameVariants::Third
+                mmolb_parsing::enums::BaseNameVariant::Third
             }
             (TaxaBase::Third, TaxaBaseDescriptionFormat::NameBase) => {
-                mmolb_parsing::enums::BaseNameVariants::ThirdBase
+                mmolb_parsing::enums::BaseNameVariant::ThirdBase
             }
-            (TaxaBase::Home, _) => mmolb_parsing::enums::BaseNameVariants::Home,
+            (TaxaBase::Home, _) => mmolb_parsing::enums::BaseNameVariant::Home,
         }
     }
 }
 
-impl From<mmolb_parsing::enums::BaseNameVariants> for TaxaBaseDescriptionFormat {
-    fn from(value: mmolb_parsing::enums::BaseNameVariants) -> Self {
+impl From<mmolb_parsing::enums::BaseNameVariant> for TaxaBaseDescriptionFormat {
+    fn from(value: mmolb_parsing::enums::BaseNameVariant) -> Self {
         match value {
-            mmolb_parsing::enums::BaseNameVariants::First => TaxaBaseDescriptionFormat::Name,
-            mmolb_parsing::enums::BaseNameVariants::FirstBase => {
+            mmolb_parsing::enums::BaseNameVariant::First => TaxaBaseDescriptionFormat::Name,
+            mmolb_parsing::enums::BaseNameVariant::FirstBase => {
                 TaxaBaseDescriptionFormat::NameBase
             }
-            mmolb_parsing::enums::BaseNameVariants::OneB => TaxaBaseDescriptionFormat::NumberB,
-            mmolb_parsing::enums::BaseNameVariants::Second => TaxaBaseDescriptionFormat::Name,
-            mmolb_parsing::enums::BaseNameVariants::SecondBase => {
+            mmolb_parsing::enums::BaseNameVariant::OneB => TaxaBaseDescriptionFormat::NumberB,
+            mmolb_parsing::enums::BaseNameVariant::Second => TaxaBaseDescriptionFormat::Name,
+            mmolb_parsing::enums::BaseNameVariant::SecondBase => {
                 TaxaBaseDescriptionFormat::NameBase
             }
-            mmolb_parsing::enums::BaseNameVariants::TwoB => TaxaBaseDescriptionFormat::NumberB,
-            mmolb_parsing::enums::BaseNameVariants::ThirdBase => {
+            mmolb_parsing::enums::BaseNameVariant::TwoB => TaxaBaseDescriptionFormat::NumberB,
+            mmolb_parsing::enums::BaseNameVariant::ThirdBase => {
                 TaxaBaseDescriptionFormat::NameBase
             }
-            mmolb_parsing::enums::BaseNameVariants::Third => TaxaBaseDescriptionFormat::Name,
-            mmolb_parsing::enums::BaseNameVariants::ThreeB => TaxaBaseDescriptionFormat::NumberB,
-            mmolb_parsing::enums::BaseNameVariants::Home => TaxaBaseDescriptionFormat::Name,
+            mmolb_parsing::enums::BaseNameVariant::Third => TaxaBaseDescriptionFormat::Name,
+            mmolb_parsing::enums::BaseNameVariant::ThreeB => TaxaBaseDescriptionFormat::NumberB,
+            mmolb_parsing::enums::BaseNameVariant::Home => TaxaBaseDescriptionFormat::Name,
         }
     }
 }
