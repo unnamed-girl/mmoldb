@@ -183,7 +183,7 @@ pub async fn ingest_task(pool: Db, is_debug: bool) {
         // I think cloning pool is the intended behavior
         ingest_game(pool.clone(), &taxa, ingest_id, &game_info, game_data).await;
 
-        break; // TEMP
+        // break; // TEMP
     }
 
     info!("{num_incomplete_games_skipped} incomplete games skipped");
