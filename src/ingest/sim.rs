@@ -576,21 +576,24 @@ impl<'g> EventDetailBuilder<'g> {
             // who have a baserunner entry because we need to record which base they got out
             // at. This should be mutually exclusive with runners_added, so their relative
             // order doesn't matter.
-            runners_out_ref
-                .map(|out| {
-                    if out.runner != batter_name {
-                        warn!("Got a batter-runner entry in `baserunners` that has the wrong name ({}, expected {batter_name})", out.runner);
-                    }
+            runners_out_ref.map(|out| {
+                if out.runner != batter_name {
+                    warn!(
+                        "Got a batter-runner entry in `baserunners` that has the wrong name \
+                            ({}, expected {batter_name})",
+                        out.runner,
+                    );
+                }
 
-                    EventDetailRunner {
-                        name: out.runner,
-                        base_before: None,
-                        base_after: out.base.into(),
-                        is_out: true,
-                        base_description_format: Some(out.base.into()),
-                        is_steal: false,
-                    }
-                })
+                EventDetailRunner {
+                    name: out.runner,
+                    base_before: None,
+                    base_after: out.base.into(),
+                    is_out: true,
+                    base_description_format: Some(out.base.into()),
+                    is_steal: false,
+                }
+            }),
         );
 
         assert!(
@@ -901,7 +904,8 @@ impl<'g> Game<'g> {
         } else {
             if candidates.len() > 1 {
                 warn!(
-                    "Multiple candidates for a runner out. Taking the one who's farthest on the basepaths."
+                    "Multiple candidates for a runner out. Taking the one who's farthest on the \
+                    basepaths."
                 );
             }
             self.state
@@ -1275,7 +1279,12 @@ impl<'g> Game<'g> {
                 ParsedEventMessage::StrikeOut { foul, batter, strike, steals } => {
                     self.check_batter(batter, event.discriminant());
                     if self.state.count_strikes < 2 {
-                        warn!("Unexpected strikeout in {}: expected 2 strikes in the count, but there were {}", self.game_id, self.state.count_strikes);
+                        warn!(
+                            "Unexpected strikeout in {}: expected 2 strikes in the count, but \
+                            there were {}",
+                            self.game_id,
+                            self.state.count_strikes,
+                        );
                     }
 
                     assert!(foul.is_none(), "TODO Handle strikeout foul");
@@ -1352,7 +1361,11 @@ impl<'g> Game<'g> {
                     self.finish_pa();
 
                     if fair_ball.fair_ball_type != *fair_ball_type {
-                        warn!("Mismatched fair ball type in CaughtOut: expected {} but saw {}", fair_ball.fair_ball_type, fair_ball_type);
+                        warn!(
+                            "Mismatched fair ball type in CaughtOut: expected {} but saw {}",
+                            fair_ball.fair_ball_type,
+                            fair_ball_type,
+                        );
                     }
 
                     assert_eq!(*sacrifice, false, "TODO Handle sac outs");
@@ -1385,7 +1398,11 @@ impl<'g> Game<'g> {
                     self.finish_pa();
 
                     if fair_ball.fair_ball_type != *fair_ball_type {
-                        warn!("Mismatched fair ball type in BatterToBase: expected {} but saw {}", fair_ball.fair_ball_type, fair_ball_type);
+                        warn!(
+                            "Mismatched fair ball type in BatterToBase: expected {} but saw {}",
+                            fair_ball.fair_ball_type,
+                            fair_ball_type,
+                        );
                     }
 
                     info!("BatterToBase with advances: {:?}", advances);
@@ -1505,11 +1522,19 @@ impl<'g> Game<'g> {
                 [ParsedEventMessageDiscriminants::InningEnd]
                 ParsedEventMessage::InningEnd { number, side } => {
                     if *number != self.state.inning_number {
-                        warn!("Unexpected inning number in {}: expected {}, but saw {number}", self.game_id, self.state.inning_number);
+                        warn!(
+                            "Unexpected inning number in {}: expected {}, but saw {number}",
+                            self.game_id,
+                            self.state.inning_number,
+                        );
                     }
 
                     if *side != self.state.inning_half {
-                        warn!("Unexpected inning side in {}: expected {:?}, but saw {side:?}", self.game_id, self.state.inning_half);
+                        warn!(
+                            "Unexpected inning side in {}: expected {:?}, but saw {side:?}",
+                            self.game_id,
+                            self.state.inning_half,
+                        );
                     }
 
                     // These get cleared at the end of a PA, but the PA doesn't end for an inning-
