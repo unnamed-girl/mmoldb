@@ -263,6 +263,11 @@ async fn ingest_game(
             .expect("TODO Error handling")
     };
 
+    info!(
+        "Checking round-trip for https://mmolb.com/watch/{}",
+        game_info.game_id
+    );
+
     assert_eq!(inserted_events.len(), detail_events.len());
     for (reconstructed_detail, original_detail) in inserted_events.iter().zip(detail_events) {
         println!(

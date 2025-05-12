@@ -151,6 +151,8 @@ struct RunnerOn<'g> {
 struct GameState<'g> {
     prev_event_type: ParsedEventMessageDiscriminants,
     phase: GamePhase,
+    home_score: u8,
+    away_score: u8,
     inning_number: u8,
     inning_half: TopBottom,
     count_balls: u8,
@@ -764,6 +766,8 @@ impl<'g> Game<'g> {
             state: GameState {
                 prev_event_type: ParsedEventMessageDiscriminants::PlayBall,
                 phase: GamePhase::ExpectInningStart,
+                home_score: 0,
+                away_score: 0,
                 inning_number: 0,
                 inning_half: TopBottom::Bottom,
                 count_balls: 0,
@@ -989,6 +993,8 @@ impl<'g> Game<'g> {
 
     #[allow(non_snake_case)]
     fn do_scores__dont_call_directly(&mut self, scores: &[&'g str]) {
+        self.add_runs_to_batting_team(scores.len() as u8);
+
         // Scores is easy, runners ALWAYS score in order
         for &scorer in scores {
             match self.state.runners_on.pop_front() {
@@ -998,6 +1004,17 @@ impl<'g> Game<'g> {
                     "Tried to score {scorer}, but {} was ahead of them on the bases",
                     s.runner_name
                 ),
+            }
+        }
+    }
+
+    fn add_runs_to_batting_team(&mut self, runs: u8) {
+        match self.state.inning_half {
+            TopBottom::Top => {
+                self.state.away_score += runs;
+            }
+            TopBottom::Bottom => {
+                self.state.home_score += runs;
             }
         }
     }
@@ -1060,6 +1077,8 @@ impl<'g> Game<'g> {
 
             if steal.caught {
                 self.add_out()
+            } else if steal.base == Base::Home {
+                self.add_runs_to_batting_team(1);
             }
         }
         self.check_internal_baserunner_consistency();
@@ -1435,6 +1454,9 @@ impl<'g> Game<'g> {
                     // scores but no advances, because after everyone
                     // scores there's no one left to advance
                     self.update_runners(scores, &[], &[]);
+                    // Also the only situation where you have a score
+                    // without the runner
+                    self.add_runs_to_batting_team(1);
                     self.finish_pa();
 
                     if fair_ball.fair_ball_type != *fair_ball_type {
@@ -1453,13 +1475,13 @@ impl<'g> Game<'g> {
                         );
                     }
 
-                    if *grand_slam && scores.len() != 4 {
+                    if *grand_slam && scores.len() != 3 {
                         warn!(
-                            "Parsed a grand slam, but there were {} scores (expected 4)",
+                            "Parsed a grand slam, but there were {} runners scored (expected 3)",
                             scores.len(),
                         );
                     } else if !*grand_slam && scores.len() == 4 {
-                        warn!("There were 4 scores but we didn't parse a grand slam");
+                        warn!("There were 3 runners scored but we didn't parse a grand slam");
                     }
 
                     detail_builder
@@ -1547,8 +1569,17 @@ impl<'g> Game<'g> {
                     if *number < 9 {
                         // Game never ends if inning number is less than 9
                         self.state.phase = GamePhase::ExpectInningStart;
-                    } else {
+                    } else if *side == TopBottom::Top && self.state.home_score > self.state.away_score {
+                        // Game ends after the top of the inning if it's 9 or later and the home
+                        // team is winning
                         self.state.phase = GamePhase::ExpectGameEnd;
+                    } else if *side == TopBottom::Bottom && self.state.home_score != self.state.away_score {
+                        // Game ends after the bottom of the inning if it's 9 or later and it's not
+                        // a tie
+                        self.state.phase = GamePhase::ExpectGameEnd;
+                    } else {
+                        // Otherwise the game does not end
+                        self.state.phase = GamePhase::ExpectInningStart;
                     }
                     None
                 },
@@ -1586,7 +1617,39 @@ impl<'g> Game<'g> {
                 (previous_event, event),
                 [ParsedEventMessageDiscriminants::Recordkeeping]
                 // TODO handle every single member of this variant
-                ParsedEventMessage::Recordkeeping { .. } => {
+                ParsedEventMessage::Recordkeeping { winning_score, losing_score, .. } => {
+                    if self.state.away_score < self.state.home_score {
+                        if *winning_score != self.state.home_score {
+                            warn!(
+                                "Expected the winning score to be {} (home team) but it was {}",
+                                self.state.home_score,
+                                winning_score,
+                            );
+                        }
+                        if *losing_score != self.state.away_score {
+                            warn!(
+                                "Expected the losing score to be {} (away team) but it was {}",
+                                self.state.away_score,
+                                losing_score,
+                            );
+                        }
+                    } else {
+                        if *winning_score != self.state.away_score {
+                            warn!(
+                                "Expected the winning score to be {} (away team) but it was {}",
+                                self.state.away_score,
+                                winning_score,
+                            );
+                        }
+                        if *losing_score != self.state.home_score {
+                            warn!(
+                                "Expected the losing score to be {} (home team) but it was {}",
+                                self.state.home_score,
+                                losing_score,
+                            );
+                        }
+                    }
+
                     self.state.phase = GamePhase::Finished;
                     None
                 },
@@ -1898,7 +1961,7 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
             },
             TaxaEventType::HomeRun => {
                 let scores = self.scores();
-                let grand_slam = scores.len() == 4;
+                let grand_slam = scores.len() == 3;
                 ParsedEventMessage::HomeRun {
                     batter: self.batter_name.as_ref(),
                     fair_ball_type: self
