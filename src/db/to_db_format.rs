@@ -18,6 +18,9 @@ pub fn event_to_row<'e>(
         hit_type: event.hit_type.map(|ty| taxa.hit_type_id(ty)),
         fair_ball_type: event.fair_ball_type.map(|ty| taxa.fair_ball_type_id(ty)),
         fair_ball_direction: event.fair_ball_direction.map(|ty| taxa.position_id(ty)),
+        fielding_error_type: event
+            .fielding_error_type
+            .map(|ty| taxa.fielding_error_type_id(ty)),
         count_balls: event.count_balls as i32,
         count_strikes: event.count_strikes as i32,
         outs_before: event.outs_before,
@@ -112,6 +115,9 @@ pub fn row_to_event<'e>(
         hit_type: row.hit_type.map(|id| taxa.hit_type_from_id(id)),
         fair_ball_type: row.fair_ball_type.map(|id| taxa.fair_ball_type_from_id(id)),
         fair_ball_direction: row.fair_ball_direction.map(|id| taxa.position_from_id(id)),
+        fielding_error_type: row
+            .fielding_error_type
+            .map(|id| taxa.fielding_error_type_from_id(id)),
         fielders,
         baserunners,
     }

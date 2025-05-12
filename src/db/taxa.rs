@@ -1,5 +1,6 @@
 use crate::models::{
-    NewBase, NewBaseDescriptionFormat, NewEventType, NewFairBallType, NewHitType, NewPosition,
+    NewBase, NewBaseDescriptionFormat, NewEventType, NewFairBallType, NewFieldingErrorType,
+    NewHitType, NewPosition,
 };
 use diesel::{ExpressionMethods, QueryResult};
 use enum_map::EnumMap;
@@ -400,21 +401,56 @@ impl From<mmolb_parsing::enums::BaseNameVariant> for TaxaBaseDescriptionFormat {
     fn from(value: mmolb_parsing::enums::BaseNameVariant) -> Self {
         match value {
             mmolb_parsing::enums::BaseNameVariant::First => TaxaBaseDescriptionFormat::Name,
-            mmolb_parsing::enums::BaseNameVariant::FirstBase => {
-                TaxaBaseDescriptionFormat::NameBase
-            }
+            mmolb_parsing::enums::BaseNameVariant::FirstBase => TaxaBaseDescriptionFormat::NameBase,
             mmolb_parsing::enums::BaseNameVariant::OneB => TaxaBaseDescriptionFormat::NumberB,
             mmolb_parsing::enums::BaseNameVariant::Second => TaxaBaseDescriptionFormat::Name,
             mmolb_parsing::enums::BaseNameVariant::SecondBase => {
                 TaxaBaseDescriptionFormat::NameBase
             }
             mmolb_parsing::enums::BaseNameVariant::TwoB => TaxaBaseDescriptionFormat::NumberB,
-            mmolb_parsing::enums::BaseNameVariant::ThirdBase => {
-                TaxaBaseDescriptionFormat::NameBase
-            }
+            mmolb_parsing::enums::BaseNameVariant::ThirdBase => TaxaBaseDescriptionFormat::NameBase,
             mmolb_parsing::enums::BaseNameVariant::Third => TaxaBaseDescriptionFormat::Name,
             mmolb_parsing::enums::BaseNameVariant::ThreeB => TaxaBaseDescriptionFormat::NumberB,
             mmolb_parsing::enums::BaseNameVariant::Home => TaxaBaseDescriptionFormat::Name,
+        }
+    }
+}
+
+#[derive(
+    Debug, enum_map::Enum, Eq, PartialEq, Hash, Copy, Clone, strum::Display, strum::EnumMessage,
+)]
+pub enum TaxaFieldingErrorType {
+    Fielding,
+    Throwing,
+}
+
+impl<'a> AsInsertable<'a> for TaxaFieldingErrorType {
+    type Insertable = NewFieldingErrorType<'a>;
+
+    fn as_insertable(&self, code_friendly_name: &'a str) -> Self::Insertable {
+        let human_friendly_name = self.get_message().unwrap_or_else(|| &code_friendly_name);
+
+        NewFieldingErrorType {
+            name: &code_friendly_name,
+            display_name: &human_friendly_name,
+        }
+    }
+}
+
+impl Into<mmolb_parsing::enums::FieldingErrorType> for TaxaFieldingErrorType {
+    fn into(self) -> mmolb_parsing::enums::FieldingErrorType {
+        match self {
+            Self::Fielding => mmolb_parsing::enums::FieldingErrorType::Fielding,
+            Self::Throwing => mmolb_parsing::enums::FieldingErrorType::Throwing,
+        }
+    }
+}
+
+impl From<mmolb_parsing::enums::FieldingErrorType> for TaxaFieldingErrorType {
+    fn from(value: mmolb_parsing::enums::FieldingErrorType) -> Self {
+        match value {
+            mmolb_parsing::enums::FieldingErrorType::Fielding => Self::Fielding,
+            mmolb_parsing::enums::FieldingErrorType::Throwing => Self::Throwing,
         }
     }
 }
@@ -426,6 +462,7 @@ pub struct Taxa {
     fair_ball_type_mapping: EnumMap<TaxaFairBallType, i64>,
     base_mapping: EnumMap<TaxaBase, i64>,
     base_description_format_mapping: EnumMap<TaxaBaseDescriptionFormat, i64>,
+    fielding_error_type_mapping: EnumMap<TaxaFieldingErrorType, i64>,
 }
 
 macro_rules! make_mapping {
@@ -525,6 +562,14 @@ impl Taxa {
                 crate::taxa_schema::taxa::base_description_format::dsl::id,
                 conn,
             },
+            fielding_error_type_mapping: make_mapping! {
+                TaxaFieldingErrorType,
+                crate::taxa_schema::taxa::fielding_error_type::dsl::fielding_error_type,
+                crate::taxa_schema::taxa::fielding_error_type::dsl::name,
+                crate::taxa_schema::taxa::fielding_error_type::dsl::display_name,
+                crate::taxa_schema::taxa::fielding_error_type::dsl::id,
+                conn,
+            },
         })
     }
 
@@ -550,6 +595,10 @@ impl Taxa {
 
     pub fn base_description_format_id(&self, ty: TaxaBaseDescriptionFormat) -> i64 {
         self.base_description_format_mapping[ty]
+    }
+
+    pub fn fielding_error_type_id(&self, ty: TaxaFieldingErrorType) -> i64 {
+        self.fielding_error_type_mapping[ty]
     }
 
     pub fn event_type_from_id(&self, id: i64) -> TaxaEventType {
@@ -596,7 +645,15 @@ impl Taxa {
         self.base_description_format_mapping
             .iter()
             .find(|(_, ty_id)| id == **ty_id)
-            .expect("TODO Handle unknown base_description_format type")
+            .expect("TODO Handle unknown base description format")
+            .0
+    }
+
+    pub fn fielding_error_type_from_id(&self, id: i64) -> TaxaFieldingErrorType {
+        self.fielding_error_type_mapping
+            .iter()
+            .find(|(_, ty_id)| id == **ty_id)
+            .expect("TODO Handle unknown base description format")
             .0
     }
 }

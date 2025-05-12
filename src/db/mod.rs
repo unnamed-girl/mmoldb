@@ -7,7 +7,7 @@ mod to_db_format;
 
 pub use crate::db::taxa::{
     Taxa, TaxaBase, TaxaBaseDescriptionFormat, TaxaBaseWithDescriptionFormat, TaxaEventType,
-    TaxaFairBallType, TaxaHitType, TaxaPosition,
+    TaxaFairBallType, TaxaFieldingErrorType, TaxaHitType, TaxaPosition,
 };
 
 use crate::ingest::EventDetail;

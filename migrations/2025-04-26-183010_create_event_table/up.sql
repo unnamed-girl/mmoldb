@@ -45,6 +45,13 @@ create table taxa.base_description_format (
     unique (name)
 );
 
+create table taxa.fielding_error_type (
+    id bigserial primary key not null,
+    name text not null,
+    display_name text not null,
+    unique (name)
+);
+
 create table data.events (
     -- bookkeeping
     id bigserial primary key not null,
@@ -64,6 +71,8 @@ create table data.events (
     -- should be populated for every event type where there's a fair ball
     fair_ball_type bigint references taxa.fair_ball_type,
     fair_ball_direction bigint references taxa.position,
+    -- populated when there's a fielding error
+    fielding_error_type bigint references taxa.fielding_error_type,
     count_balls int not null,
     count_strikes int not null,
     outs_before int not null,

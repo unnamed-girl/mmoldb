@@ -37,6 +37,7 @@ pub mod data {
             hit_type -> Nullable<Int8>,
             fair_ball_type -> Nullable<Int8>,
             fair_ball_direction -> Nullable<Int8>,
+            fielding_error_type -> Nullable<Int8>,
             count_balls -> Int4,
             count_strikes -> Int4,
             outs_before -> Int4,

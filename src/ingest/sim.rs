@@ -1,13 +1,13 @@
 use crate::db::{
     TaxaBase, TaxaBaseDescriptionFormat, TaxaBaseWithDescriptionFormat, TaxaEventType,
-    TaxaFairBallType, TaxaHitType, TaxaPosition,
+    TaxaFairBallType, TaxaFieldingErrorType, TaxaHitType, TaxaPosition,
 };
 use itertools::{EitherOrBoth, Itertools, PeekingNext};
 use log::{info, warn};
 use mmolb_parsing::ParsedEventMessage;
 use mmolb_parsing::enums::{
-    Base, BaseNameVariant, BatterStat, Distance, FairBallDestination, FairBallType,
-    FieldingErrorType, FoulType, HomeAway, NowBattingStats, StrikeType, TopBottom,
+    Base, BaseNameVariant, BatterStat, Distance, FairBallDestination, FairBallType, FoulType,
+    HomeAway, NowBattingStats, StrikeType, TopBottom,
 };
 use mmolb_parsing::parsed_event::{
     BaseSteal, ParsedEventMessageDiscriminants, PositionedPlayer, RunnerAdvance, RunnerOut,
@@ -73,6 +73,7 @@ pub struct EventDetail<StrT> {
     pub hit_type: Option<TaxaHitType>,
     pub fair_ball_type: Option<TaxaFairBallType>,
     pub fair_ball_direction: Option<TaxaPosition>,
+    pub fielding_error_type: Option<TaxaFieldingErrorType>,
 
     pub baserunners: Vec<EventDetailRunner<StrT>>,
 }
@@ -325,6 +326,7 @@ struct EventDetailBuilder<'g> {
     fair_ball_type: Option<TaxaFairBallType>,
     fair_ball_direction: Option<TaxaPosition>,
     hit_type: Option<TaxaHitType>,
+    fielding_error_type: Option<TaxaFieldingErrorType>,
     fielders: Vec<PositionedPlayer<&'g str>>,
     advances: Vec<RunnerAdvance<&'g str>>,
     scores: Vec<&'g str>,
@@ -343,6 +345,11 @@ impl<'g> EventDetailBuilder<'g> {
 
     fn hit_type(mut self, hit_type: TaxaHitType) -> Self {
         self.hit_type = Some(hit_type);
+        self
+    }
+
+    fn fielding_error_type(mut self, fielding_error_type: TaxaFieldingErrorType) -> Self {
+        self.fielding_error_type = Some(fielding_error_type);
         self
     }
 
@@ -630,6 +637,7 @@ impl<'g> EventDetailBuilder<'g> {
             hit_type: self.hit_type,
             fair_ball_type: self.fair_ball_type,
             fair_ball_direction: self.fair_ball_direction,
+            fielding_error_type: self.fielding_error_type,
             baserunners,
         }
     }
@@ -844,6 +852,7 @@ impl<'g> Game<'g> {
             hit_type: None,
             fair_ball_type: None,
             fair_ball_direction: None,
+            fielding_error_type: None,
             scores: Vec::new(),
             steals: Vec::new(),
             runner_added: None,
@@ -1395,10 +1404,9 @@ impl<'g> Game<'g> {
                     self.add_runner(batter, TaxaBase::First);
                     self.finish_pa();
 
-                    assert_eq!(*error, FieldingErrorType::Throwing, "TODO Handle fielding error type");
-
                     detail_builder
                         .fair_ball(fair_ball)
+                        .fielding_error_type((*error).into())
                         .fielder(*fielder)
                         .runner_changes(advances.clone(), scores.clone())
                         .build_some(self, TaxaEventType::FieldingError)
@@ -1879,7 +1887,7 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                     scores,
                     grand_slam,
                 }
-            },
+            }
             TaxaEventType::FieldingError => {
                 let (fielder,) = self.fielders_iter().collect_tuple().expect(
                     "FieldingError must have exactly one fielder. TODO Handle this properly.",
@@ -1888,7 +1896,10 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                 ParsedEventMessage::ReachOnFieldingError {
                     batter: self.batter_name.as_ref(),
                     fielder,
-                    error: FieldingErrorType::Throwing, // TODO
+                    error: self
+                        .fielding_error_type
+                        .expect("FieldingError type must have a fielding_error_type")
+                        .into(),
                     scores: self.scores(),
                     advances: self.advances(),
                 }
