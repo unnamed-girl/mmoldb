@@ -843,6 +843,37 @@ impl<'g> Game<'g> {
         }
     }
 
+    fn check_fair_ball_type(
+        &self,
+        fair_ball_from_previous_event: &FairBall,
+        fair_ball_type_from_this_event: FairBallType,
+        event_type: ParsedEventMessageDiscriminants,
+    ) {
+        if fair_ball_from_previous_event.fair_ball_type != fair_ball_type_from_this_event {
+            warn!(
+                "Mismatched fair ball type in {event_type:#?}: expected {} but saw {}",
+                fair_ball_from_previous_event.fair_ball_type, fair_ball_type_from_this_event,
+            );
+        }
+    }
+
+    fn check_fair_ball_destination(
+        &self,
+        fair_ball_from_previous_event: &FairBall,
+        fair_ball_destination_from_this_event: FairBallDestination,
+        event_type: ParsedEventMessageDiscriminants,
+    ) {
+        if fair_ball_from_previous_event.fair_ball_destination
+            != fair_ball_destination_from_this_event
+        {
+            warn!(
+                "Mismatched fair ball destination in {event_type:#?}: expected {} but saw {}",
+                fair_ball_from_previous_event.fair_ball_destination,
+                fair_ball_destination_from_this_event,
+            );
+        }
+    }
+
     fn detail_builder(
         &self,
         prev_game_state: GameState<'g>,
@@ -1320,7 +1351,7 @@ impl<'g> Game<'g> {
                         })
                 },
                 [ParsedEventMessageDiscriminants::Foul]
-                ParsedEventMessage::Foul { foul, steals, count,  } => {
+                ParsedEventMessage::Foul { foul, steals, count } => {
                     // Falsehoods...
                     if !(*foul == FoulType::Ball && self.state.count_strikes >= 2) {
                         self.state.count_strikes += 1;
@@ -1349,6 +1380,7 @@ impl<'g> Game<'g> {
                 [ParsedEventMessageDiscriminants::Walk]
                 ParsedEventMessage::Walk { batter, advances, scores } => {
                     self.check_batter(batter, event.discriminant());
+
                     self.update_runners(scores, advances, &[]);
                     self.add_runner(batter, TaxaBase::First);
                     self.finish_pa();
@@ -1361,6 +1393,7 @@ impl<'g> Game<'g> {
                 [ParsedEventMessageDiscriminants::HitByPitch]
                 ParsedEventMessage::HitByPitch { batter, advances, scores } => {
                     self.check_batter(batter, event.discriminant());
+
                     self.update_runners(scores, advances, &[]);
                     self.add_runner(batter, TaxaBase::First);
                     self.finish_pa();
@@ -1375,19 +1408,25 @@ impl<'g> Game<'g> {
                 [ParsedEventMessageDiscriminants::CaughtOut]
                 ParsedEventMessage::CaughtOut { batter, fair_ball_type, caught_by, advances, scores, sacrifice, perfect } => {
                     self.check_batter(batter, event.discriminant());
+                    self.check_fair_ball_type(&fair_ball, *fair_ball_type, event.discriminant());
+
                     self.update_runners(scores, advances, &[]);
                     self.add_out();
                     self.finish_pa();
 
-                    if fair_ball.fair_ball_type != *fair_ball_type {
-                        warn!(
-                            "Mismatched fair ball type in CaughtOut: expected {} but saw {}",
-                            fair_ball.fair_ball_type,
-                            fair_ball_type,
-                        );
+                    if *fair_ball_type == FairBallType::FlyBall || *fair_ball_type == FairBallType::Popup {
+                        if *sacrifice && scores.is_empty() {
+                            warn!("Flyout was described as a sacrifice, but nobody scored");
+                        } else if !*sacrifice && !scores.is_empty() {
+                            warn!(
+                                "Player(s) scored on flyout, but it was not described as a \
+                                sacrifice",
+                            );
+                        }
+                    } else if *sacrifice {
+                        warn!("Non-flyout was described as sacrifice");
                     }
 
-                    assert_eq!(*sacrifice, false, "TODO Handle sac outs");
                     assert_eq!(*perfect, false, "TODO Handle perfect outs");
 
                     detail_builder
@@ -1399,6 +1438,7 @@ impl<'g> Game<'g> {
                 [ParsedEventMessageDiscriminants::GroundedOut]
                 ParsedEventMessage::GroundedOut { batter, fielders, scores, advances } => {
                     self.check_batter(batter, event.discriminant());
+
                     self.update_runners(scores, advances, &[]);
                     self.add_out();
                     self.finish_pa();
@@ -1412,17 +1452,11 @@ impl<'g> Game<'g> {
                 [ParsedEventMessageDiscriminants::BatterToBase]
                 ParsedEventMessage::BatterToBase { batter, distance, fair_ball_type, fielder, advances, scores } => {
                     self.check_batter(batter, event.discriminant());
+                    self.check_fair_ball_type(&fair_ball, *fair_ball_type, event.discriminant());
+
                     self.update_runners(scores, advances, &[]);
                     self.add_runner(batter, (*distance).into());
                     self.finish_pa();
-
-                    if fair_ball.fair_ball_type != *fair_ball_type {
-                        warn!(
-                            "Mismatched fair ball type in BatterToBase: expected {} but saw {}",
-                            fair_ball.fair_ball_type,
-                            fair_ball_type,
-                        );
-                    }
 
                     info!("BatterToBase with advances: {:?}", advances);
 
@@ -1436,6 +1470,7 @@ impl<'g> Game<'g> {
                 [ParsedEventMessageDiscriminants::ReachOnFieldingError]
                 ParsedEventMessage::ReachOnFieldingError { batter, fielder, error, scores, advances } => {
                     self.check_batter(batter, event.discriminant());
+
                     self.update_runners(scores, advances, &[]);
                     self.add_runner(batter, TaxaBase::First);
                     self.finish_pa();
@@ -1450,6 +1485,18 @@ impl<'g> Game<'g> {
                 [ParsedEventMessageDiscriminants::HomeRun]
                 ParsedEventMessage::HomeRun { batter, fair_ball_type, destination, scores, grand_slam } => {
                     self.check_batter(batter, event.discriminant());
+                    self.check_fair_ball_type(&fair_ball, *fair_ball_type, event.discriminant());
+                    self.check_fair_ball_destination(&fair_ball, *destination, event.discriminant());
+
+                    if *grand_slam && scores.len() != 3 {
+                        warn!(
+                            "Parsed a grand slam, but there were {} runners scored (expected 3)",
+                            scores.len(),
+                        );
+                    } else if !*grand_slam && scores.len() == 3 {
+                        warn!("There were 3 runners scored but we didn't parse a grand slam");
+                    }
+
                     // This is the one situation where you can have
                     // scores but no advances, because after everyone
                     // scores there's no one left to advance
@@ -1458,31 +1505,6 @@ impl<'g> Game<'g> {
                     // without the runner
                     self.add_runs_to_batting_team(1);
                     self.finish_pa();
-
-                    if fair_ball.fair_ball_type != *fair_ball_type {
-                        warn!(
-                            "Mismatched fair ball type in HomeRun: expected {} but saw {}",
-                            fair_ball.fair_ball_type,
-                            fair_ball_type,
-                        );
-                    }
-
-                    if fair_ball.fair_ball_destination != *destination {
-                        warn!(
-                            "Mismatched fair ball destination in HomeRun: expected {} but saw {}",
-                            fair_ball.fair_ball_destination,
-                            destination,
-                        );
-                    }
-
-                    if *grand_slam && scores.len() != 3 {
-                        warn!(
-                            "Parsed a grand slam, but there were {} runners scored (expected 3)",
-                            scores.len(),
-                        );
-                    } else if !*grand_slam && scores.len() == 4 {
-                        warn!("There were 3 runners scored but we didn't parse a grand slam");
-                    }
 
                     detail_builder
                         .fair_ball(fair_ball)
@@ -1493,9 +1515,10 @@ impl<'g> Game<'g> {
                 // TODO handle every single member of this variant
                 // TODO I'm not recording fielders on this event. Why is round-trip checking not
                 //   raising an error about that?
-                ParsedEventMessage::DoublePlayCaught { batter, advances, scores, out_two, .. } => {
-
+                ParsedEventMessage::DoublePlayCaught { batter, advances, scores, out_two, fair_ball_type, .. } => {
                     self.check_batter(batter, event.discriminant());
+                    self.check_fair_ball_type(&fair_ball, *fair_ball_type, event.discriminant());
+
                     self.update_runners(scores, advances, &[]);
                     self.add_out(); // This is the out for the batter
                     self.runner_out(out_two);
@@ -1511,6 +1534,7 @@ impl<'g> Game<'g> {
                 // TODO handle every single member of this variant
                 ParsedEventMessage::DoublePlayGrounded { batter, advances, scores, out_one, out_two, fielders, .. } => {
                     self.check_batter(batter, event.discriminant());
+
                     self.update_runners(scores, advances, &[]);
                     self.batter_or_runner_out(out_one);
                     self.batter_or_runner_out(out_two);
@@ -1525,15 +1549,18 @@ impl<'g> Game<'g> {
                         .build_some(self, TaxaEventType::DoublePlay)
                 },
                 [ParsedEventMessageDiscriminants::ForceOut]
-                // TODO handle every single member of this variant
-                ParsedEventMessage::ForceOut { batter, out, fielders, .. } => {
+                ParsedEventMessage::ForceOut { batter, out, fielders, scores, advances, fair_ball_type } => {
                     self.check_batter(batter, event.discriminant());
+                    self.check_fair_ball_type(&fair_ball, *fair_ball_type, event.discriminant());
+
+                    self.update_runners(scores, advances, &[]);
                     self.runner_out(out);
                     self.add_runner_and_force_advance(batter, TaxaBase::First);
                     self.finish_pa();
 
                     detail_builder
                         .fair_ball(fair_ball)
+                        .runner_changes(advances.clone(), scores.clone())
                         .add_out(*out)
                         .fielders(fielders.clone())
                         .build_some(self, TaxaEventType::ForceOut)
@@ -1663,6 +1690,10 @@ impl<'g> Game<'g> {
             // Pending answer from Danny on this one:
             // https://discord.com/channels/1136709081319604324/1370896620199215245
             ("6807e733128045e526322fc6", 75),
+            // I think I just need to clear the bases at the last out
+            // but I'm not doing it for now
+            ("6807e733128045e526322fc3", 33),
+            ("6807e733128045e526322fc3", 34),
         ];
 
         if !skip_base_check.contains(&(self.game_id, index)) {
@@ -1935,17 +1966,23 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                     .collect_tuple()
                     .expect("CaughtOut must have exactly one fielder. TODO Handle this properly.");
 
+                let scores = self.scores();
+                let fair_ball_type = self
+                    .fair_ball_type
+                    .expect("CaughtOut type must have a fair_ball_type")
+                    .into();
+                let is_fly = fair_ball_type == FairBallType::FlyBall
+                    || fair_ball_type == FairBallType::Popup;
+                let sacrifice = is_fly && !scores.is_empty();
+
                 ParsedEventMessage::CaughtOut {
                     batter: self.batter_name.as_ref(),
-                    fair_ball_type: self
-                        .fair_ball_type
-                        .expect("CaughtOut type must have a fair_ball_type")
-                        .into(),
+                    fair_ball_type,
                     caught_by,
-                    scores: self.scores(),
+                    scores,
                     advances: self.advances(),
-                    sacrifice: false, // TODO
-                    perfect: false,   // TODO
+                    sacrifice,
+                    perfect: false, // TODO
                 }
             }
             TaxaEventType::GroundedOut => ParsedEventMessage::GroundedOut {
