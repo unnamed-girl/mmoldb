@@ -48,6 +48,10 @@ pub enum TaxaEventType {
     HitByPitch,
     #[strum(message = "double play")]
     DoublePlay,
+    #[strum(message = "fielder's choice")]
+    FieldersChoice,
+    #[strum(message = "error on fielder's choice")]
+    ErrorOnFieldersChoice,
 }
 
 impl<'a> AsInsertable<'a> for TaxaEventType {

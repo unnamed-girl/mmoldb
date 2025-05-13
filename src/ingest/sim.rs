@@ -5,13 +5,8 @@ use crate::db::{
 use itertools::{EitherOrBoth, Itertools, PeekingNext};
 use log::{info, warn};
 use mmolb_parsing::ParsedEventMessage;
-use mmolb_parsing::enums::{
-    Base, BaseNameVariant, BatterStat, Distance, FairBallDestination, FairBallType, FoulType,
-    HomeAway, NowBattingStats, StrikeType, TopBottom,
-};
-use mmolb_parsing::parsed_event::{
-    BaseSteal, ParsedEventMessageDiscriminants, PositionedPlayer, RunnerAdvance, RunnerOut,
-};
+use mmolb_parsing::enums::{Base, BaseNameVariant, BatterStat, Distance, FairBallDestination, FairBallType, FieldingErrorType, FoulType, HomeAway, NowBattingStats, StrikeType, TopBottom};
+use mmolb_parsing::parsed_event::{BaseSteal, FieldingAttempt, ParsedEventMessageDiscriminants, PositionedPlayer, RunnerAdvance, RunnerOut};
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::fmt::Write;
@@ -1513,10 +1508,7 @@ impl<'g> Game<'g> {
                         .build_some(self, TaxaEventType::HomeRun)
                 },
                 [ParsedEventMessageDiscriminants::DoublePlayCaught]
-                // TODO handle every single member of this variant
-                // TODO I'm not recording fielders on this event. Why is round-trip checking not
-                //   raising an error about that?
-                ParsedEventMessage::DoublePlayCaught { batter, advances, scores, out_two, fair_ball_type, .. } => {
+                ParsedEventMessage::DoublePlayCaught { batter, advances, scores, out_two, fair_ball_type, fielders } => {
                     self.check_batter(batter, event.discriminant());
                     self.check_fair_ball_type(&fair_ball, *fair_ball_type, event.discriminant());
 
@@ -1529,6 +1521,7 @@ impl<'g> Game<'g> {
                         .fair_ball(fair_ball)
                         .runner_changes(advances.clone(), scores.clone())
                         .add_out(*out_two)
+                        .fielders(fielders.clone())
                         .build_some(self, TaxaEventType::DoublePlay)
                 },
                 [ParsedEventMessageDiscriminants::DoublePlayGrounded]
@@ -1565,6 +1558,52 @@ impl<'g> Game<'g> {
                         .add_out(*out)
                         .fielders(fielders.clone())
                         .build_some(self, TaxaEventType::ForceOut)
+                },
+                [ParsedEventMessageDiscriminants::ReachOnFieldersChoice]
+                ParsedEventMessage::ReachOnFieldersChoice { batter, fielders, result, scores, advances } => {
+                    self.check_batter(batter, event.discriminant());
+
+                    self.update_runners(scores, advances, &[]);
+                    if let FieldingAttempt::Out { out } = result {
+                        self.runner_out(out);
+                    }
+                    self.add_runner_and_force_advance(batter, TaxaBase::First);
+                    self.finish_pa();
+
+                    match result {
+                        FieldingAttempt::Out { out } => {
+                            warn!("I've been wondering if this combination actually happens.");
+                            detail_builder
+                                .fair_ball(fair_ball)
+                                .runner_changes(advances.clone(), scores.clone())
+                                .add_out(*out)
+                                .fielders(fielders.clone())
+                                .build_some(self, TaxaEventType::FieldersChoice)
+                        }
+                        FieldingAttempt::Error { fielder, error } => {
+                            match error {
+                                FieldingErrorType::Throwing => {
+                                    if let Some((listed_fielder,)) = fielders.iter().collect_tuple() {
+                                        if listed_fielder.name != *fielder {
+                                            warn!("Fielder who made the error ({}) is not the one listed as fielding the ball ({})", fielder, listed_fielder.name);
+                                        }
+                                    } else {
+                                        warn!("Expected exactly one listed fielder in a fielder's choice with a throwing error");
+                                    }
+                                }
+                                FieldingErrorType::Fielding => {
+                                    todo!("What relationship does fielder and fielders have here?");
+                                }
+                            }
+
+                            detail_builder
+                                .fair_ball(fair_ball)
+                                .runner_changes(advances.clone(), scores.clone())
+                                .fielders(fielders.clone())
+                                .fielding_error_type((*error).into())
+                                .build_some(self, TaxaEventType::ErrorOnFieldersChoice)
+                        }
+                    }
                 },
             ),
             GamePhase::ExpectInningEnd => game_event!(
@@ -2057,7 +2096,10 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                     [(name, at_base)] => {
                         ParsedEventMessage::DoublePlayCaught {
                             batter: self.batter_name.as_ref(),
-                            fair_ball_type: FairBallType::Popup, // TODO
+                            fair_ball_type: self
+                                .fair_ball_type
+                                .expect("DoublePlay type must have a fair_ball_type")
+                                .into(),
                             fielders: self.fielders(),
                             out_two: RunnerOut {
                                 runner: name,
@@ -2087,6 +2129,46 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                     other => {
                         panic!("Too many runners out in double play ({})", other.len());
                     }
+                }
+            }
+            TaxaEventType::FieldersChoice => {
+                let ((runner_out_name, runner_out_at_base),) =
+                    self.runners_out_iter().collect_tuple().expect(
+                        "FieldersChoice must have exactly one runner out. TODO Handle this properly.",
+                    );
+
+                ParsedEventMessage::ReachOnFieldersChoice {
+                    batter: self.batter_name.as_ref(),
+                    fielders: self.fielders(),
+                    result: FieldingAttempt::Out {
+                        out: RunnerOut {
+                            runner: runner_out_name,
+                            base: runner_out_at_base,
+                        }
+                    },
+                    scores: self.scores(),
+                    advances: self.advances(),
+                }
+            }
+            TaxaEventType::ErrorOnFieldersChoice => {
+                let fielders = self.fielders();
+                let fielder = fielders
+                    .iter()
+                    .exactly_one()
+                    .expect(
+                        "ErrorOnFieldersChoice must have exactly one fielder (note: this might not be true after supporting FieldingErrorType::Fielding). TODO Handle this properly.",
+                    )
+                    .name;
+
+                ParsedEventMessage::ReachOnFieldersChoice {
+                    batter: self.batter_name.as_ref(),
+                    fielders,
+                    result: FieldingAttempt::Error {
+                        fielder,
+                        error: FieldingErrorType::Throwing,
+                    },
+                    scores: self.scores(),
+                    advances: self.advances(),
                 }
             }
         }
