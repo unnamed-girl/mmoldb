@@ -1337,17 +1337,18 @@ impl<'g> Game<'g> {
                         );
                     }
 
-                    assert!(foul.is_none(), "TODO Handle strikeout foul");
-
                     self.update_runners(&[], &[], steals);
                     self.add_out();
                     self.finish_pa();
 
                     detail_builder
                         .steals(steals.clone())
-                        .build_some(self, match strike {
-                            StrikeType::Looking => { TaxaEventType::CalledStrike }
-                            StrikeType::Swinging => { TaxaEventType::SwingingStrike }
+                        .build_some(self, match (foul, strike) {
+                            (None, StrikeType::Looking) => { TaxaEventType::CalledStrike }
+                            (None, StrikeType::Swinging) => { TaxaEventType::SwingingStrike }
+                            (Some(FoulType::Ball), _) => { panic!("Can't strike out on a foul ball") }
+                            (Some(FoulType::Tip), StrikeType::Looking) => { panic!("Foul tip can't be a called strike") }
+                            (Some(FoulType::Tip), StrikeType::Swinging) => { TaxaEventType::FoulTip }
                         })
                 },
                 [ParsedEventMessageDiscriminants::Foul]
@@ -1414,7 +1415,7 @@ impl<'g> Game<'g> {
                     self.add_out();
                     self.finish_pa();
 
-                    if *fair_ball_type == FairBallType::FlyBall || *fair_ball_type == FairBallType::Popup {
+                    if *fair_ball_type != FairBallType::GroundBall {
                         if *sacrifice && scores.is_empty() {
                             warn!("Flyout was described as a sacrifice, but nobody scored");
                         } else if !*sacrifice && !scores.is_empty() {
@@ -1872,7 +1873,9 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                 count: self.count(),
             },
             TaxaEventType::CalledStrike => {
-                if self.outs_after > self.outs_before {
+                let steals = self.steals();
+                let caught_steals = steals.iter().filter(|s| s.caught).count();
+                if self.outs_after > self.outs_before + (caught_steals as i32) {
                     ParsedEventMessage::StrikeOut {
                         foul: None,
                         batter: self.batter_name.as_ref(),
@@ -1889,7 +1892,8 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
             }
             TaxaEventType::SwingingStrike => {
                 let steals = self.steals();
-                if self.outs_after > self.outs_before + (steals.len() as i32) {
+                let caught_steals = steals.iter().filter(|s| s.caught).count();
+                if self.outs_after > self.outs_before + (caught_steals as i32) {
                     ParsedEventMessage::StrikeOut {
                         foul: None,
                         batter: self.batter_name.as_ref(),
@@ -1904,10 +1908,23 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                     }
                 }
             }
-            TaxaEventType::FoulTip => ParsedEventMessage::Foul {
-                foul: FoulType::Tip,
-                steals: self.steals(),
-                count: self.count(),
+            TaxaEventType::FoulTip => {
+                let steals = self.steals();
+                let caught_steals = steals.iter().filter(|s| s.caught).count();
+                if self.outs_after > self.outs_before + (caught_steals as i32) {
+                    ParsedEventMessage::StrikeOut {
+                        foul: Some(FoulType::Tip),
+                        batter: self.batter_name.as_ref(),
+                        strike: StrikeType::Swinging,
+                        steals,
+                    }
+                } else {
+                    ParsedEventMessage::Foul {
+                        foul: FoulType::Tip,
+                        steals: self.steals(),
+                        count: self.count(),
+                    }
+                }
             },
             TaxaEventType::FoulBall => ParsedEventMessage::Foul {
                 foul: FoulType::Ball,
@@ -1971,8 +1988,7 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                     .fair_ball_type
                     .expect("CaughtOut type must have a fair_ball_type")
                     .into();
-                let is_fly = fair_ball_type == FairBallType::FlyBall
-                    || fair_ball_type == FairBallType::Popup;
+                let is_fly = fair_ball_type != FairBallType::GroundBall;
                 let sacrifice = is_fly && !scores.is_empty();
 
                 ParsedEventMessage::CaughtOut {
