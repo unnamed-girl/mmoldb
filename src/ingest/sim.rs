@@ -915,11 +915,11 @@ impl<'g> Game<'g> {
         self.state.count_balls = 0;
 
         if self.state.inning_number >= 9 && self.state.inning_half == TopBottom::Bottom && self.state.home_score > self.state.away_score {
-            // If it's the bottom of a 9th or later, and the score is 
+            // If it's the bottom of a 9th or later, and the score is
             // now in favor of the home team, it's a walk-off
-            self.state.phase = GamePhase::ExpectGameEnd;  
+            self.state.phase = GamePhase::ExpectGameEnd;
         } else if self.state.outs >= 3 {
-            // Otherwise, if there's 3 outs, the inning ends 
+            // Otherwise, if there's 3 outs, the inning ends
             self.state.phase = GamePhase::ExpectInningEnd;
         } else {
             // Otherwise just go to the next batter
@@ -2158,7 +2158,8 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                     destination: self
                         .fair_ball_direction
                         .expect("HomeRun type must have a fair_ball_direction")
-                        .into(),
+                        .try_into()
+                        .expect("HomeRun type must have a valid fair_ball_direction"),
                     scores,
                     grand_slam,
                 }
@@ -2260,7 +2261,10 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                     fielders,
                     result: FieldingAttempt::Error {
                         fielder,
-                        error: FieldingErrorType::Throwing,
+                        error: self
+                            .fielding_error_type
+                            .expect("ErrorOnFieldersChoice type must have a fielding_error_type")
+                            .into(),
                     },
                     scores: self.scores(),
                     advances: self.advances(),
@@ -2281,7 +2285,8 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
             destination: self
                 .fair_ball_direction
                 .expect("Event with a fair_ball_index must have a fair_ball_direction")
-                .into(),
+                .try_into()
+                .expect("Event with a fair_ball_index must have a valid fair_ball_direction"),
         }
     }
 }

@@ -122,6 +122,10 @@ pub enum TaxaPosition {
     LeftField,
     CenterField,
     RightField,
+    StartingPitcher,
+    ReliefPitcher,
+    Closer,
+    DesignatedHitter,
 }
 
 impl<'a> AsInsertable<'a> for TaxaPosition {
@@ -149,6 +153,10 @@ impl Into<mmolb_parsing::enums::Position> for TaxaPosition {
             TaxaPosition::LeftField => mmolb_parsing::enums::Position::LeftField,
             TaxaPosition::CenterField => mmolb_parsing::enums::Position::CenterField,
             TaxaPosition::RightField => mmolb_parsing::enums::Position::RightField,
+            TaxaPosition::StartingPitcher => mmolb_parsing::enums::Position::StartingPitcher,
+            TaxaPosition::ReliefPitcher => mmolb_parsing::enums::Position::ReliefPitcher,
+            TaxaPosition::Closer => mmolb_parsing::enums::Position::Closer,
+            TaxaPosition::DesignatedHitter => mmolb_parsing::enums::Position::DesignatedHitter,
         }
     }
 }
@@ -165,23 +173,33 @@ impl From<mmolb_parsing::enums::Position> for TaxaPosition {
             mmolb_parsing::enums::Position::LeftField => TaxaPosition::LeftField,
             mmolb_parsing::enums::Position::CenterField => TaxaPosition::CenterField,
             mmolb_parsing::enums::Position::RightField => TaxaPosition::RightField,
-            _ => panic!("TaxaPosition currently only represents defense positions"),
+            mmolb_parsing::enums::Position::StartingPitcher => TaxaPosition::StartingPitcher,
+            mmolb_parsing::enums::Position::ReliefPitcher => TaxaPosition::ReliefPitcher,
+            mmolb_parsing::enums::Position::Closer => TaxaPosition::Closer,
+            mmolb_parsing::enums::Position::DesignatedHitter => TaxaPosition::DesignatedHitter,
         }
     }
 }
 
-impl Into<mmolb_parsing::enums::FairBallDestination> for TaxaPosition {
-    fn into(self) -> mmolb_parsing::enums::FairBallDestination {
+impl TryInto<mmolb_parsing::enums::FairBallDestination> for TaxaPosition {
+    type Error = ();
+
+    fn try_into(self) -> Result<mmolb_parsing::enums::FairBallDestination, ()> {
+        // TODO Can/should I split this into two enums to avoid a try
         match self {
-            TaxaPosition::Pitcher => mmolb_parsing::enums::FairBallDestination::Pitcher,
-            TaxaPosition::Catcher => mmolb_parsing::enums::FairBallDestination::Catcher,
-            TaxaPosition::FirstBase => mmolb_parsing::enums::FairBallDestination::FirstBase,
-            TaxaPosition::SecondBase => mmolb_parsing::enums::FairBallDestination::SecondBase,
-            TaxaPosition::ThirdBase => mmolb_parsing::enums::FairBallDestination::ThirdBase,
-            TaxaPosition::Shortstop => mmolb_parsing::enums::FairBallDestination::ShortStop,
-            TaxaPosition::LeftField => mmolb_parsing::enums::FairBallDestination::LeftField,
-            TaxaPosition::CenterField => mmolb_parsing::enums::FairBallDestination::CenterField,
-            TaxaPosition::RightField => mmolb_parsing::enums::FairBallDestination::RightField,
+            TaxaPosition::Pitcher => Ok(mmolb_parsing::enums::FairBallDestination::Pitcher),
+            TaxaPosition::Catcher => Ok(mmolb_parsing::enums::FairBallDestination::Catcher),
+            TaxaPosition::FirstBase => Ok(mmolb_parsing::enums::FairBallDestination::FirstBase),
+            TaxaPosition::SecondBase => Ok(mmolb_parsing::enums::FairBallDestination::SecondBase),
+            TaxaPosition::ThirdBase => Ok(mmolb_parsing::enums::FairBallDestination::ThirdBase),
+            TaxaPosition::Shortstop => Ok(mmolb_parsing::enums::FairBallDestination::ShortStop),
+            TaxaPosition::LeftField => Ok(mmolb_parsing::enums::FairBallDestination::LeftField),
+            TaxaPosition::CenterField => Ok(mmolb_parsing::enums::FairBallDestination::CenterField),
+            TaxaPosition::RightField => Ok(mmolb_parsing::enums::FairBallDestination::RightField),
+            TaxaPosition::StartingPitcher => Err(()),
+            TaxaPosition::ReliefPitcher => Err(()),
+            TaxaPosition::Closer => Err(()),
+            TaxaPosition::DesignatedHitter => Err(()),
         }
     }
 }
