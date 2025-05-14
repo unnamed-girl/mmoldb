@@ -1673,19 +1673,12 @@ impl<'g> Game<'g> {
                                 .build_some(self, TaxaEventType::FieldersChoice)
                         }
                         FieldingAttempt::Error { fielder, error } => {
-                            match error {
-                                FieldingErrorType::Throwing => {
-                                    if let Some((listed_fielder,)) = fielders.iter().collect_tuple() {
-                                        if listed_fielder.name != *fielder {
-                                            warn!("Fielder who made the error ({}) is not the one listed as fielding the ball ({})", fielder, listed_fielder.name);
-                                        }
-                                    } else {
-                                        warn!("Expected exactly one listed fielder in a fielder's choice with a throwing error");
-                                    }
+                            if let Some((listed_fielder,)) = fielders.iter().collect_tuple() {
+                                if listed_fielder.name != *fielder {
+                                    warn!("Fielder who made the error ({}) is not the one listed as fielding the ball ({})", fielder, listed_fielder.name);
                                 }
-                                FieldingErrorType::Fielding => {
-                                    todo!("What relationship does fielder and fielders have here?");
-                                }
+                            } else {
+                                warn!("Expected exactly one listed fielder in a fielder's choice with an error");
                             }
 
                             detail_builder
