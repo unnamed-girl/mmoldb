@@ -914,9 +914,15 @@ impl<'g> Game<'g> {
         self.state.count_strikes = 0;
         self.state.count_balls = 0;
 
-        if self.state.outs >= 3 {
+        if self.state.inning_number >= 9 && self.state.inning_half == TopBottom::Bottom && self.state.home_score > self.state.away_score {
+            // If it's the bottom of a 9th or later, and the score is 
+            // now in favor of the home team, it's a walk-off
+            self.state.phase = GamePhase::ExpectGameEnd;  
+        } else if self.state.outs >= 3 {
+            // Otherwise, if there's 3 outs, the inning ends 
             self.state.phase = GamePhase::ExpectInningEnd;
         } else {
+            // Otherwise just go to the next batter
             self.state.phase = GamePhase::ExpectNowBatting;
         }
 
@@ -1720,17 +1726,21 @@ impl<'g> Game<'g> {
 
                     if *number < 9 {
                         // Game never ends if inning number is less than 9
+                        info!("Game didn't end at the {side:#?} of the {number} because it was before the 9th");
                         self.state.phase = GamePhase::ExpectInningStart;
                     } else if *side == TopBottom::Top && self.state.home_score > self.state.away_score {
                         // Game ends after the top of the inning if it's 9 or later and the home
                         // team is winning
+                        info!("Game ended at the top of the {number} because the home team was winning");
                         self.state.phase = GamePhase::ExpectGameEnd;
                     } else if *side == TopBottom::Bottom && self.state.home_score != self.state.away_score {
                         // Game ends after the bottom of the inning if it's 9 or later and it's not
                         // a tie
+                        info!("Game ended at the bottom of the {number} because the score was not tied");
                         self.state.phase = GamePhase::ExpectGameEnd;
                     } else {
                         // Otherwise the game does not end
+                        info!("Game didn't end at the {side:#?} of the {number} because the score was tied");
                         self.state.phase = GamePhase::ExpectInningStart;
                     }
                     None
