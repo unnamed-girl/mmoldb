@@ -1,0 +1,8 @@
+.game {
+    margin: 5px 0;
+}
+
+.game :link {
+    font-weight: normal;
+    text-decoration: none;
+}

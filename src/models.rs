@@ -56,7 +56,7 @@ pub struct NewIngest {
     pub date_started: NaiveDateTime,
 }
 
-#[derive(Queryable, Selectable)]
+#[derive(Identifiable, Queryable, Selectable)]
 #[diesel(table_name = crate::data_schema::data::ingests)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct Ingest {
@@ -66,10 +66,38 @@ pub struct Ingest {
 }
 
 #[derive(Insertable)]
+#[diesel(table_name = crate::data_schema::data::games)]
+pub struct NewGame<'a> {
+    pub ingest: i64,
+    pub mmolb_game_id: &'a str,
+    pub season: i32,
+    pub day: i32,
+    pub away_team_emoji: &'a str,
+    pub away_team_name: &'a str,
+    pub home_team_emoji: &'a str,
+    pub home_team_name: &'a str,
+}
+
+#[derive(Identifiable, Queryable, Selectable, Associations)]
+#[diesel(belongs_to(Ingest, foreign_key = ingest))]
+#[diesel(table_name = crate::data_schema::data::games)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct DbGame {
+    pub id: i64,
+    pub ingest: i64,
+    pub mmolb_game_id: String,
+    pub season: i32,
+    pub day: i32,
+    pub away_team_emoji: String,
+    pub away_team_name: String,
+    pub home_team_emoji: String,
+    pub home_team_name: String,
+}
+
+#[derive(Insertable)]
 #[diesel(table_name = crate::data_schema::data::events)]
 pub struct NewEvent<'a> {
-    pub ingest: i64,
-    pub game_id: &'a str,
+    pub game_id: i64,
     pub game_event_index: i32,
     pub fair_ball_event_index: Option<i32>,
     pub inning: i32,
@@ -92,8 +120,7 @@ pub struct NewEvent<'a> {
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct DbEvent {
     pub id: i64,
-    pub ingest: i64,
-    pub game_id: String,
+    pub game_id: i64,
     pub game_event_index: i32,
     pub fair_ball_event_index: Option<i32>,
     pub inning: i32,
@@ -124,7 +151,7 @@ pub struct NewBaserunner<'a> {
     pub steal: bool,
 }
 
-#[derive(Queryable, Selectable, Identifiable, Associations)]
+#[derive(Identifiable, Queryable, Selectable, Associations)]
 #[diesel(belongs_to(DbEvent, foreign_key = event_id))]
 #[diesel(table_name = crate::data_schema::data::event_baserunners)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
@@ -148,7 +175,7 @@ pub struct NewFielder<'a> {
     pub play_order: i32,
 }
 
-#[derive(Queryable, Selectable, Identifiable, Associations)]
+#[derive(Identifiable, Queryable, Selectable, Associations)]
 #[diesel(belongs_to(DbEvent, foreign_key = event_id))]
 #[diesel(table_name = crate::data_schema::data::event_fielders)]
 #[diesel(check_for_backend(diesel::pg::Pg))]

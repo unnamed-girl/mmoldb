@@ -4,12 +4,11 @@ use crate::models::{DbEvent, DbFielder, DbRunner, NewBaserunner, NewEvent, NewFi
 
 pub fn event_to_row<'e>(
     taxa: &Taxa,
-    ingest_id: i64,
+    game_id: i64,
     event: &'e EventDetail<&'e str>,
 ) -> NewEvent<'e> {
     NewEvent {
-        ingest: ingest_id,
-        game_id: event.game_id,
+        game_id,
         game_event_index: event.game_event_index as i32,
         fair_ball_event_index: event.fair_ball_event_index.map(|i| i as i32),
         inning: event.inning as i32,
@@ -73,7 +72,8 @@ pub fn event_to_fielders<'e>(
 
 pub fn row_to_event<'e>(
     taxa: &Taxa,
-    row: DbEvent,
+    game_id: String,
+    event: DbEvent,
     runners: Vec<DbRunner>,
     fielders: Vec<DbFielder>,
 ) -> EventDetail<String> {
@@ -98,24 +98,24 @@ pub fn row_to_event<'e>(
             position: taxa.position_from_id(f.fielder_position).into(),
         })
         .collect();
+    
     EventDetail {
-        game_id: row.game_id,
-        game_event_index: row.game_event_index as usize,
-        fair_ball_event_index: row.fair_ball_event_index.map(|i| i as usize),
-        inning: row.inning as u8,
-        top_of_inning: row.top_of_inning,
-        count_balls: row.count_balls as u8,
-        count_strikes: row.count_strikes as u8,
-        outs_before: row.outs_before,
-        outs_after: row.outs_after,
-        batter_count: row.batter_count as usize,
-        batter_name: row.batter_name,
-        pitcher_name: row.pitcher_name,
-        detail_type: taxa.event_type_from_id(row.event_type),
-        hit_type: row.hit_type.map(|id| taxa.hit_type_from_id(id)),
-        fair_ball_type: row.fair_ball_type.map(|id| taxa.fair_ball_type_from_id(id)),
-        fair_ball_direction: row.fair_ball_direction.map(|id| taxa.position_from_id(id)),
-        fielding_error_type: row
+        game_event_index: event.game_event_index as usize,
+        fair_ball_event_index: event.fair_ball_event_index.map(|i| i as usize),
+        inning: event.inning as u8,
+        top_of_inning: event.top_of_inning,
+        count_balls: event.count_balls as u8,
+        count_strikes: event.count_strikes as u8,
+        outs_before: event.outs_before,
+        outs_after: event.outs_after,
+        batter_count: event.batter_count as usize,
+        batter_name: event.batter_name,
+        pitcher_name: event.pitcher_name,
+        detail_type: taxa.event_type_from_id(event.event_type),
+        hit_type: event.hit_type.map(|id| taxa.hit_type_from_id(id)),
+        fair_ball_type: event.fair_ball_type.map(|id| taxa.fair_ball_type_from_id(id)),
+        fair_ball_direction: event.fair_ball_direction.map(|id| taxa.position_from_id(id)),
+        fielding_error_type: event
             .fielding_error_type
             .map(|id| taxa.fielding_error_type_from_id(id)),
         fielders,

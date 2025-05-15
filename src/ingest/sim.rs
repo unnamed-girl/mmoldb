@@ -53,7 +53,6 @@ pub struct EventDetailFielder<StrT> {
 
 #[derive(Debug)]
 pub struct EventDetail<StrT> {
-    pub game_id: StrT,
     pub game_event_index: usize,
     pub fair_ball_event_index: Option<usize>,
     pub inning: u8,
@@ -656,7 +655,6 @@ impl<'g> EventDetailBuilder<'g> {
             .collect();
 
         EventDetail {
-            game_id: game.game_id,
             game_event_index: self.game_event_index,
             fair_ball_event_index: self.fair_ball_event_index,
             inning: game.state.inning_number,

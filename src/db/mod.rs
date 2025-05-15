@@ -11,18 +11,44 @@ pub use crate::db::taxa::{
 };
 
 use crate::ingest::EventDetail;
-use crate::models::{DbEvent, DbFielder, DbRunner, Ingest, NewIngest};
-use chrono::{DateTime, Utc};
+use crate::models::{DbEvent, DbFielder, DbRunner, Ingest, NewIngest, DbGame, NewGame};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use rocket_db_pools::{diesel::AsyncPgConnection, diesel::prelude::*};
 
-pub async fn latest_ingests(conn: &mut AsyncPgConnection) -> QueryResult<Vec<Ingest>> {
+pub async fn ingest_count(conn: &mut AsyncPgConnection) -> QueryResult<i64> {
     use crate::data_schema::data::ingests::dsl::*;
 
     ingests
-        .limit(10)
-        .order(date_started.desc())
-        .load::<Ingest>(conn)
+        .count()
+        .get_result(conn)
         .await
+}
+
+pub async fn latest_ingests(conn: &mut AsyncPgConnection) -> QueryResult<Vec<(Ingest, i64)>> {
+    use diesel::sql_types::*;
+    #[derive(QueryableByName)]
+    struct IngestWithGameCount {
+        #[diesel(sql_type = Int8)]
+        pub id: i64,
+        #[diesel(sql_type = Timestamp)]
+        pub date_started: NaiveDateTime,
+        #[diesel(sql_type = Nullable<Timestamp>)]
+        pub date_finished: Option<NaiveDateTime>,
+        #[diesel(sql_type = Int8)]
+        pub num_games: i64,
+    }
+
+    diesel::sql_query("
+        select i.*, count(g.mmolb_game_id) as num_games
+        from data.ingests i
+             left join data.games g on g.ingest = i.id
+        group by i.id, i.date_started
+        order by i.date_started desc
+        limit 10
+    ").load::<IngestWithGameCount>(conn).await
+        .map(|ok| ok.into_iter().map(|IngestWithGameCount{ id, date_started, date_finished, num_games }| {
+            (Ingest { id, date_started, date_finished }, num_games)
+        }).collect())
 }
 
 pub async fn start_ingest(conn: &mut AsyncPgConnection, start: DateTime<Utc>) -> QueryResult<i64> {
@@ -51,23 +77,36 @@ pub async fn mark_ingest_finished(
         .map(|_| ())
 }
 
+pub async fn ingest_with_games(conn: &mut AsyncPgConnection, for_ingest_id: i64) -> QueryResult<(Ingest, Vec<DbGame>)> {
+    use crate::data_schema::data::ingests::dsl as ingest_dsl;
+    use crate::data_schema::data::games::dsl as game_dsl;
+
+    let ingest = ingest_dsl::ingests.filter(ingest_dsl::id.eq(for_ingest_id)).get_result::<Ingest>(conn).await?;
+    let games = DbGame::belonging_to(&ingest)
+        .order_by((game_dsl::season.asc(), game_dsl::day.asc()))
+        .get_results::<DbGame>(conn)
+        .await?;
+
+    Ok((ingest, games))
+}
+
 pub async fn has_game(conn: &mut AsyncPgConnection, with_id: &str) -> QueryResult<bool> {
-    use crate::data_schema::data::events::dsl::*;
+    use crate::data_schema::data::games::dsl::*;
     use diesel::dsl::*;
 
-    select(exists(events.filter(game_id.eq(with_id))))
+    select(exists(games.filter(mmolb_game_id.eq(with_id))))
         .get_result(conn)
         .await
 }
 
-pub async fn delete_events_for_game(
+pub async fn delete_game(
     conn: &mut AsyncPgConnection,
     with_id: &str,
 ) -> QueryResult<usize> {
-    use crate::data_schema::data::events::dsl::*;
+    use crate::data_schema::data::games::dsl::*;
     use diesel::dsl::*;
 
-    delete(events.filter(game_id.eq(with_id)))
+    delete(games.filter(mmolb_game_id.eq(with_id)))
         .execute(conn)
         .await
 }
@@ -77,26 +116,33 @@ pub async fn events_for_game<'e>(
     taxa: &Taxa,
     for_game_id: &str,
 ) -> QueryResult<Vec<EventDetail<String>>> {
-    use crate::data_schema::data::event_baserunners::dsl as runner;
-    use crate::data_schema::data::event_fielders::dsl as fielder;
-    use crate::data_schema::data::events::dsl::*;
+    use crate::data_schema::data::event_baserunners::dsl as runner_dsl;
+    use crate::data_schema::data::event_fielders::dsl as fielder_dsl;
+    use crate::data_schema::data::events::dsl as events_dsl;
+    use crate::data_schema::data::games::dsl as games_dsl;
 
-    let db_events = events
-        .filter(game_id.eq(for_game_id))
-        .order(game_event_index.asc())
+    let game_id = games_dsl::games
+        .filter(games_dsl::mmolb_game_id.eq(for_game_id))
+        .select(games_dsl::id)
+        .get_result::<i64>(conn)
+        .await?;
+
+    let db_events = events_dsl::events
+        .filter(events_dsl::game_id.eq(game_id))
+        .order(events_dsl::game_event_index.asc())
         .select(DbEvent::as_select())
         .load(conn)
         .await?;
 
     let db_runners = DbRunner::belonging_to(&db_events)
-        .order((runner::event_id, runner::base_before.desc().nulls_last()))
+        .order((runner_dsl::event_id, runner_dsl::base_before.desc().nulls_last()))
         .select(DbRunner::as_select())
         .load(conn)
         .await?
         .grouped_by(&db_events);
 
     let db_fielders = DbFielder::belonging_to(&db_events)
-        .order((fielder::event_id, fielder::play_order))
+        .order((fielder_dsl::event_id, fielder_dsl::play_order))
         .select(DbFielder::as_select())
         .load(conn)
         .await?
@@ -109,24 +155,43 @@ pub async fn events_for_game<'e>(
         .zip(db_runners)
         .zip(db_fielders)
         .map(|((db_event, db_runners), db_fielders)| {
-            to_db_format::row_to_event(taxa, db_event, db_runners, db_fielders)
+            // TODO Does EventDetail need to have a game_id?
+            to_db_format::row_to_event(taxa, for_game_id.to_string(), db_event, db_runners, db_fielders)
         })
         .collect())
 }
 
-pub async fn insert_events<'e>(
+pub async fn insert_game<'e>(
     conn: &mut AsyncPgConnection,
     taxa: &Taxa,
     ingest_id: i64,
+    mmolb_game_id: &str,
+    game_data: &mmolb_parsing::game::Game,
     event_details: &'e [EventDetail<&'e str>],
 ) -> QueryResult<()> {
     use crate::data_schema::data::event_baserunners::dsl as baserunners_dsl;
     use crate::data_schema::data::event_fielders::dsl as fielders_dsl;
     use crate::data_schema::data::events::dsl as events_dsl;
-
+    use crate::data_schema::data::games::dsl as games_dsl;
+    
+    let game_id = diesel::insert_into(games_dsl::games)
+        .values(&NewGame {
+            ingest: ingest_id,
+            mmolb_game_id,
+            season: game_data.season as i32,
+            day: game_data.day as i32,
+            away_team_emoji: &game_data.away_team_emoji,
+            away_team_name: &game_data.away_team_name,
+            home_team_emoji: &game_data.home_team_emoji,
+            home_team_name: &game_data.home_team_name,
+        })
+        .returning(games_dsl::id)
+        .get_result::<i64>(conn)
+        .await?;
+    
     let new_events: Vec<_> = event_details
         .iter()
-        .map(|event| to_db_format::event_to_row(taxa, ingest_id, event))
+        .map(|event| to_db_format::event_to_row(taxa, game_id, event))
         .collect();
 
     let event_ids: Vec<i64> = diesel::insert_into(events_dsl::events)

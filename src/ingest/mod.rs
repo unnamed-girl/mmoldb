@@ -11,6 +11,7 @@ use chrono::{DateTime, Utc};
 use chrono_humanize::HumanTime;
 use log::info;
 use mmolb_parsing::ParsedEventMessage;
+use rocket::futures::FutureExt;
 use rocket::tokio;
 use rocket::tokio::task::JoinHandle;
 use serde::Deserialize;
@@ -78,6 +79,8 @@ pub async fn launch_ingest_task(
 }
 
 pub async fn ingest_task(pool: Db, is_debug: bool) {
+    let is_debug = false; // TEMPORARY
+    
     let client = http::get_caching_http_client();
 
     let taxa = {
@@ -141,15 +144,12 @@ pub async fn ingest_task(pool: Db, is_debug: bool) {
                 .expect("TODO Error handling")
         } else {
             let mut conn = pool.get().await.expect("TODO Error handling");
-            let num_deleted = db::delete_events_for_game(&mut conn, &game_info.game_id)
+            let num_deleted = db::delete_game(&mut conn, &game_info.game_id)
                 .await
                 .expect("TODO Error handling");
 
             if num_deleted > 0 {
-                info!(
-                    "In debug mode, deleted {num_deleted} events for game {}",
-                    game_info.game_id
-                );
+                info!("In debug mode, deleted game {} and all its events", game_info.game_id);
             }
             false
         };
@@ -181,9 +181,13 @@ pub async fn ingest_task(pool: Db, is_debug: bool) {
         );
 
         // I think cloning pool is the intended behavior
-        ingest_game(pool.clone(), &taxa, ingest_id, &game_info, game_data).await;
-
-        // break; // TEMP
+        let result = std::panic::AssertUnwindSafe(ingest_game(pool.clone(), &taxa, ingest_id, &game_info, game_data))
+            .catch_unwind()
+            .await;
+        
+        if result.is_err() {
+            break;
+        }
     }
 
     info!("{num_incomplete_games_skipped} incomplete games skipped");
@@ -253,7 +257,7 @@ async fn ingest_game(
     let inserted_events = {
         let mut conn = pool.get().await.expect("TODO Error handling");
 
-        db::insert_events(&mut conn, &taxa, ingest_id, &detail_events)
+        db::insert_game(&mut conn, &taxa, ingest_id, &game_info.game_id, &game_data, &detail_events)
             .await
             .expect("TODO Error handling");
 

@@ -1,0 +1,34 @@
+use log::error;
+use rocket::{Request, Response};
+use rocket::http::Status;
+use rocket::response::Responder;
+use rocket_dyn_templates::{context, Template};
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum AppError {
+    #[error(transparent)]
+    DbError(#[from] diesel::result::Error),
+}
+
+impl<'r, 'o: 'r> Responder<'r, 'o> for AppError {
+    fn respond_to(self, req: &'r Request<'_>) -> rocket::response::Result<'o> {
+        error!("{:#?}", self);
+
+        // TODO Figure out how to properly turn a thiserror enum into a Template
+        let rendered = Template::show(
+            req.rocket(),
+            "error",
+            context! {
+                error_text: format!("{:#?}", self),
+            },
+        )
+            .unwrap();
+
+        Response::build()
+            .status(Status::InternalServerError)
+            .header(rocket::http::ContentType::HTML)
+            .sized_body(rendered.len(), std::io::Cursor::new(rendered))
+            .ok()
+    }
+}

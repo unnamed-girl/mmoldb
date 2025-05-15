@@ -1,0 +1,41 @@
+{# All one line to avoid newlines being turned into spaces by HTML whitespace collapse. #}
+{% macro date_format(date) %}<span title="{{ date.absolute }}">{{ date.relative }}</span>{% endmacro date_format %}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>MMOLDB &mdash; Ingest</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <link rel="stylesheet" href="/static/ingest.css" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💽</text></svg>">
+</head>
+<body>
+    <h1 class="main-title card">MMOLDB &mdash; Ingest</h1>
+
+    <section class="card">
+        <h2 class="ingest-heading">Ingest {{ ingest.id }}</h2>
+        <p class="ingest-metadata">
+            Started {{ self::date_format(date=ingest.started_at) }}{% if ingest.finished_at %} and finished {{ self::date_format(date=ingest.finished_at) }}{% endif %}.
+        </p>
+
+        {% if ingest.games %}
+        <ul class="games">
+            {% for game in ingest.games %}
+            <li class="game">
+                <a href="{{ game.uri }}">
+                    s{{ game.season }}d{{ game.day }}:
+                    {{ game.away_team_emoji }} {{ game.away_team_name }}
+                    @
+                    {{ game.home_team_emoji }} {{ game.home_team_name }}
+                    {# TODO Display number of warnings/errors #}
+                </a>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="no-games">No games</p>
+        {% endif %}
+    </section>
+</body>
+</html>

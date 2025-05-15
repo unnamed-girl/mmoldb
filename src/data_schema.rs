@@ -27,8 +27,7 @@ pub mod data {
     diesel::table! {
         data.events (id) {
             id -> Int8,
-            ingest -> Int8,
-            game_id -> Text,
+            game_id -> Int8,
             game_event_index -> Int4,
             fair_ball_event_index -> Nullable<Int4>,
             inning -> Int4,
@@ -49,6 +48,20 @@ pub mod data {
     }
 
     diesel::table! {
+        data.games (id) {
+            id -> Int8,
+            ingest -> Int8,
+            mmolb_game_id -> Text,
+            season -> Int4,
+            day -> Int4,
+            away_team_emoji -> Text,
+            away_team_name -> Text,
+            home_team_emoji -> Text,
+            home_team_name -> Text,
+        }
+    }
+
+    diesel::table! {
         data.ingests (id) {
             id -> Int8,
             date_started -> Timestamp,
@@ -58,12 +71,14 @@ pub mod data {
 
     diesel::joinable!(event_baserunners -> events (event_id));
     diesel::joinable!(event_fielders -> events (event_id));
-    diesel::joinable!(events -> ingests (ingest));
+    diesel::joinable!(events -> games (game_id));
+    diesel::joinable!(games -> ingests (ingest));
 
     diesel::allow_tables_to_appear_in_same_query!(
         event_baserunners,
         event_fielders,
         events,
+        games,
         ingests,
     );
 }

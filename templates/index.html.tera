@@ -7,6 +7,8 @@
     <meta charset="UTF-8">
     <title>MMOLDB Status</title>
     <link rel="stylesheet" href="/static/style.css" />
+    <link rel="stylesheet" href="/static/index.css" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💽</text></svg>">
 </head>
 <body>
     <h1 class="main-title card">MMOLDB Status</h1>
@@ -28,12 +30,15 @@
             {% for ingest in ingests %}
                 <li class="ingest">
                     {# All one line to avoid newlines being turned into spaces by HTML whitespace collapse. #}
-                    Ingest {{ ingest.id }} started {{ self::date_format(date=ingest.started_at) }}{% if ingest.finished_at %} and finished {{ self::date_format(date=ingest.finished_at) }}{% endif %}.
+                    <a href="{{ ingest.uri }}">Ingest of {{ ingest.num_games }} games</a> started {{ self::date_format(date=ingest.started_at) }}{% if ingest.finished_at %} and finished {{ self::date_format(date=ingest.finished_at) }}{% endif %}.
                 </li>
             {% endfor %}
         </ul>
         {% else %}
         <p class="no-ingests">No ingests so far</p>
+        {% endif %}
+        {% if number_of_ingests_not_shown > 0 %}
+        <p class="more-ingests">...and {{ number_of_ingests_not_shown }} more.</p>
         {% endif %}
     </section>
 </body>

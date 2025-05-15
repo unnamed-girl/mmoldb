@@ -52,11 +52,25 @@ create table taxa.fielding_error_type (
     unique (name)
 );
 
-create table data.events (
+create table data.games (
     -- bookkeeping
     id bigserial primary key not null,
     ingest bigserial references data.ingests not null,
-    game_id text not null,
+    mmolb_game_id text not null unique,
+
+    -- game metadata
+    season int not null,
+    day int not null,
+    away_team_emoji text not null,
+    away_team_name text not null,
+    home_team_emoji text not null,
+    home_team_name text not null
+);
+
+create table data.events (
+    -- bookkeeping
+    id bigserial primary key not null,
+    game_id bigserial references data.games on delete cascade not null,
     game_event_index int not null,
     -- the event index for the "<player> hit a <distance> to <destination>"
     -- event, if there is one
