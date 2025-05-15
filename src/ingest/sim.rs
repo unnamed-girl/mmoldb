@@ -5,10 +5,7 @@ use crate::db::{
 use itertools::{EitherOrBoth, Itertools, PeekingNext};
 use log::{info, warn};
 use mmolb_parsing::ParsedEventMessage;
-use mmolb_parsing::enums::{
-    Base, BaseNameVariant, BatterStat, Distance, FairBallDestination, FairBallType, FoulType,
-    HomeAway, NowBattingStats, StrikeType, TopBottom,
-};
+use mmolb_parsing::enums::{Base, BaseNameVariant, BatterStat, Distance, FairBallDestination, FairBallType, FoulType, HomeAway, NowBattingStats, Position, StrikeType, TopBottom};
 use mmolb_parsing::parsed_event::{
     BaseSteal, FieldingAttempt, ParsedEventMessageDiscriminants, PositionedPlayer, RunnerAdvance,
     RunnerOut,
@@ -135,7 +132,7 @@ impl<'g> BatterInGame<&'g str> {
 pub struct TeamInGame<'g> {
     team_name: &'g str,
     team_emoji: &'g str,
-    pitcher_name: &'g str,
+    pitcher: PositionedPlayer<&'g str>,
     lineup: Vec<BatterInGame<&'g str>>,
     // This is incremented when a PA finishes, so in between PAs (and before the first PA) it
     // represents the next batter
@@ -670,7 +667,7 @@ impl<'g> EventDetailBuilder<'g> {
             outs_after: game.state.outs,
             batter_count: self.batter_count_at_event_start,
             batter_name,
-            pitcher_name: game.defending_team().pitcher_name,
+            pitcher_name: game.active_pitcher().name,
             fielders,
             detail_type: type_detail,
             hit_type: self.hit_type,
@@ -793,7 +790,10 @@ impl<'g> Game<'g> {
             away: TeamInGame {
                 team_name: away_team_name,
                 team_emoji: away_team_emoji,
-                pitcher_name: away_pitcher_name,
+                pitcher: PositionedPlayer {
+                    name: away_pitcher_name,
+                    position: Position::StartingPitcher,
+                },
                 lineup: away_lineup
                     .into_iter()
                     .map(BatterInGame::from_position_player)
@@ -803,7 +803,10 @@ impl<'g> Game<'g> {
             home: TeamInGame {
                 team_name: home_team_name,
                 team_emoji: home_team_emoji,
-                pitcher_name: home_pitcher_name,
+                pitcher: PositionedPlayer {
+                    name: home_pitcher_name,
+                    position: Position::StartingPitcher,
+                },
                 lineup: home_lineup
                     .iter()
                     .map(BatterInGame::from_position_player)
@@ -861,6 +864,20 @@ impl<'g> Game<'g> {
             );
         }
     }
+    
+    fn active_pitcher(&self) -> &PositionedPlayer<&'g str> {
+        match self.state.inning_half {
+            TopBottom::Top => { &self.home.pitcher }
+            TopBottom::Bottom => { &self.away.pitcher }
+        }
+    }
+    
+    fn active_pitcher_mut(&mut self) -> &mut PositionedPlayer<&'g str> {
+        match self.state.inning_half {
+            TopBottom::Top => { &mut self.home.pitcher }
+            TopBottom::Bottom => { &mut self.away.pitcher }
+        }
+    }
 
     fn active_batter(&self) -> &BatterInGame<&'g str> {
         let batting_team = self.batting_team();
@@ -868,18 +885,18 @@ impl<'g> Game<'g> {
         &lineup[batting_team.batter_count % lineup.len()]
     }
 
-    fn active_automatic_runner(&self) -> &BatterInGame<&'g str> {
-        let batting_team = self.batting_team();
-        let lineup = &batting_team.lineup;
-        // Add lineup.len to avoid underflow when batter_count is 0
-        &lineup[(batting_team.batter_count + lineup.len() - 1) % lineup.len()]
-    }
-
     fn active_batter_mut(&mut self) -> &mut BatterInGame<&'g str> {
         let batting_team = self.batting_team_mut();
         let lineup = &mut batting_team.lineup;
         let lineup_len = lineup.len();
         &mut lineup[batting_team.batter_count % lineup_len]
+    }
+
+    fn active_automatic_runner(&self) -> &BatterInGame<&'g str> {
+        let batting_team = self.batting_team();
+        let lineup = &batting_team.lineup;
+        // Add lineup.len to avoid underflow when batter_count is 0
+        &lineup[(batting_team.batter_count + lineup.len() - 1) % lineup.len()]
     }
 
     fn batter_for_active_team(&self, batter_count: usize) -> &BatterInGame<&'g str> {
@@ -1754,7 +1771,6 @@ impl<'g> Game<'g> {
                         .build_some(self, TaxaEventType::DoublePlay)
                 },
                 [ParsedEventMessageDiscriminants::DoublePlayGrounded]
-                // TODO handle every single member of this variant
                 ParsedEventMessage::DoublePlayGrounded { batter, advances, scores, out_one, out_two, fielders, sacrifice } => {
                     self.check_batter(batter, event.discriminant());
 
@@ -1922,20 +1938,49 @@ impl<'g> Game<'g> {
             GamePhase::ExpectMoundVisitOutcome => game_event!(
                 (previous_event, event),
                 [ParsedEventMessageDiscriminants::PitcherRemains]
-                // TODO handle every single member of this variant
-                ParsedEventMessage::PitcherRemains { .. } => {
-                    // I think this is not always ExpectNowBatting. I may have
-                    // to store the state-to-return-to as a data member of
-                    // GamePhase::ExpectMoundVisitOutcome
+                ParsedEventMessage::PitcherRemains { remaining_pitcher } => {
+                    if remaining_pitcher.name != self.active_pitcher().name {
+                        warn!(
+                            "In a PitcherRemains event, the pitcher who remained ({}) did not \
+                            match the active pitcher ({})",
+                            remaining_pitcher.name, self.active_pitcher().name,
+                        );
+                    }
+                    
+                    if remaining_pitcher.position != self.active_pitcher().position {
+                        warn!(
+                            "In a PitcherRemains event, the position of the pitcher who remained \
+                            ({}) did not match the active pitcher's position ({})",
+                            remaining_pitcher.position, self.active_pitcher().position,
+                        );
+                    }
+                    
                     self.state.phase = GamePhase::ExpectNowBatting;
                     None
                 },
                 [ParsedEventMessageDiscriminants::PitcherSwap]
-                // TODO handle every single member of this variant
-                ParsedEventMessage::PitcherSwap { .. } => {
-                    // I think this is not always ExpectNowBatting. I may have
-                    // to store the state-to-return-to as a data member of
-                    // GamePhase::ExpectMoundVisitOutcome
+                ParsedEventMessage::PitcherSwap { arriving_pitcher, arriving_position, leaving_pitcher, leaving_position } => {
+                    if *leaving_pitcher != self.active_pitcher().name {
+                        warn!(
+                            "In a PitcherSwap event, the pitcher who left ({}) did not match the \
+                            previously active pitcher ({})",
+                            leaving_pitcher, self.active_pitcher().name,
+                        );
+                    }
+                    
+                    if *leaving_position != self.active_pitcher().position {
+                        warn!(
+                            "In a PitcherSwap event, the position of the pitcher who left ({}) \
+                            did not match the previously active pitcher's position ({})",
+                            leaving_position, self.active_pitcher().position,
+                        );
+                    }
+                    
+                    *self.active_pitcher_mut() = PositionedPlayer {
+                        name: arriving_pitcher,
+                        position: *arriving_position,
+                    };
+                    
                     self.state.phase = GamePhase::ExpectNowBatting;
                     None
                 },
@@ -1956,38 +2001,38 @@ impl<'g> Game<'g> {
             GamePhase::ExpectFinalScore => game_event!(
                 (previous_event, event),
                 [ParsedEventMessageDiscriminants::Recordkeeping]
-                // TODO handle every single member of this variant
-                ParsedEventMessage::Recordkeeping { winning_score, losing_score, .. } => {
+                ParsedEventMessage::Recordkeeping { winning_score, winning_team_emoji, winning_team_name, losing_score, losing_team_emoji, losing_team_name } => {
+                    macro_rules! warn_if_mismatch {
+                        ($winning_or_losing:expr, $comparison_description:expr, $home_or_away:expr, $actual:expr, $expected:expr $(,)?) => {
+                            if $actual != $expected {
+                                warn!(
+                                    "Expected the {} {} to be {} ({} team) but it was {}",
+                                    $winning_or_losing,
+                                    $comparison_description,
+                                    $expected,
+                                    $home_or_away,
+                                    $actual,
+                                );
+                            }
+                        };
+                    }
+                    
                     if self.state.away_score < self.state.home_score {
-                        if *winning_score != self.state.home_score {
-                            warn!(
-                                "Expected the winning score to be {} (home team) but it was {}",
-                                self.state.home_score,
-                                winning_score,
-                            );
-                        }
-                        if *losing_score != self.state.away_score {
-                            warn!(
-                                "Expected the losing score to be {} (away team) but it was {}",
-                                self.state.away_score,
-                                losing_score,
-                            );
-                        }
+                        warn_if_mismatch!("winning", "score", "home", *winning_score, self.state.home_score);
+                        warn_if_mismatch!("winning", "team emoji", "home", *winning_team_emoji, self.home.team_emoji);
+                        warn_if_mismatch!("winning", "team name", "home", *winning_team_name, self.home.team_name);
+                        
+                        warn_if_mismatch!("losing", "score", "away", *losing_score, self.state.away_score);
+                        warn_if_mismatch!("losing", "team emoji", "away", *losing_team_emoji, self.away.team_emoji);
+                        warn_if_mismatch!("losing", "team name", "away", *losing_team_name, self.away.team_name);
                     } else {
-                        if *winning_score != self.state.away_score {
-                            warn!(
-                                "Expected the winning score to be {} (away team) but it was {}",
-                                self.state.away_score,
-                                winning_score,
-                            );
-                        }
-                        if *losing_score != self.state.home_score {
-                            warn!(
-                                "Expected the losing score to be {} (home team) but it was {}",
-                                self.state.home_score,
-                                losing_score,
-                            );
-                        }
+                        warn_if_mismatch!("winning", "score", "away", *winning_score, self.state.away_score);
+                        warn_if_mismatch!("winning", "team emoji", "away", *winning_team_emoji, self.away.team_emoji);
+                        warn_if_mismatch!("winning", "team name", "away", *winning_team_name, self.away.team_name);
+                        
+                        warn_if_mismatch!("losing", "score", "home", *losing_score, self.state.home_score);
+                        warn_if_mismatch!("losing", "team emoji", "home", *losing_team_emoji, self.home.team_emoji);
+                        warn_if_mismatch!("losing", "team name", "home", *losing_team_name, self.home.team_name);
                     }
 
                     self.state.phase = GamePhase::Finished;
@@ -2183,11 +2228,7 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
         self.runners_out_iter().collect()
     }
 
-    // TODO Is this debug bound necessary?
-    pub fn to_parsed(&self) -> ParsedEventMessage<&str>
-    where
-        StrT: Debug,
-    {
+    pub fn to_parsed(&self) -> ParsedEventMessage<&str> {
         match self.detail_type {
             TaxaEventType::Ball => ParsedEventMessage::Ball {
                 steals: self.steals(),
@@ -2373,7 +2414,6 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                 advances: self.advances(false),
             },
             TaxaEventType::DoublePlay => {
-                println!("Baserunners: {:#?}", self.baserunners);
                 let scores = self.scores();
                 let sacrifice = !scores.is_empty();
                 match &self.runners_out().as_slice() {

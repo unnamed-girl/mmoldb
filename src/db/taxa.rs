@@ -185,7 +185,6 @@ impl TryInto<mmolb_parsing::enums::FairBallDestination> for TaxaPosition {
     type Error = ();
 
     fn try_into(self) -> Result<mmolb_parsing::enums::FairBallDestination, ()> {
-        // TODO Can/should I split this into two enums to avoid a try
         match self {
             TaxaPosition::Pitcher => Ok(mmolb_parsing::enums::FairBallDestination::Pitcher),
             TaxaPosition::Catcher => Ok(mmolb_parsing::enums::FairBallDestination::Catcher),
