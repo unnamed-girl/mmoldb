@@ -10,8 +10,8 @@ pub use crate::db::taxa::{
     TaxaFairBallType, TaxaFieldingErrorType, TaxaHitType, TaxaPosition,
 };
 
-use crate::ingest::EventDetail;
-use crate::models::{DbEvent, DbFielder, DbGame, DbRawEvent, DbRunner, Ingest, NewGame, NewIngest, NewRawEvent};
+use crate::ingest::{EventDetail, IngestLog};
+use crate::models::{DbEvent, DbEventIngestLog, DbFielder, DbGame, DbRawEvent, DbRunner, Ingest, NewEventIngestLogOwning, NewGame, NewIngest, NewRawEvent};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use rocket_db_pools::{diesel::prelude::*, diesel::AsyncPgConnection};
 
@@ -196,12 +196,14 @@ pub async fn insert_game<'e>(
     ingest_id: i64,
     mmolb_game_id: &str,
     game_data: &mmolb_parsing::game::Game,
+    logs: impl IntoIterator<Item = impl IntoIterator<Item = IngestLog>>,
     event_details: &'e [EventDetail<&'e str>],
 ) -> QueryResult<()> {
     use crate::data_schema::data::event_baserunners::dsl as baserunners_dsl;
     use crate::data_schema::data::event_fielders::dsl as fielders_dsl;
     use crate::data_schema::data::events::dsl as events_dsl;
-    use crate::data_schema::data::raw_events::dsl as raw_events_dsl;
+    use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
+    use crate::info_schema::info::raw_events::dsl as raw_events_dsl;
     use crate::data_schema::data::games::dsl as games_dsl;
 
     let game_id = diesel::insert_into(games_dsl::games)
@@ -218,25 +220,47 @@ pub async fn insert_game<'e>(
         .returning(games_dsl::id)
         .get_result::<i64>(conn)
         .await?;
-    
-    diesel::insert_into(raw_events_dsl::raw_events)
+
+    let raw_event_ids = diesel::insert_into(raw_events_dsl::raw_events)
         .values(game_data.event_log.iter().enumerate().map(|(index, raw_event)| NewRawEvent {
             game_id,
             game_event_index: index as i32,
             event_text: &raw_event.message,
         }).collect::<Vec<_>>())
+        .returning(raw_events_dsl::id)
+        .get_results::<i64>(conn)
+        .await?;
+
+    let new_logs: Vec<_> = logs
+        .into_iter()
+        .zip(raw_event_ids)
+        .flat_map(|(logs_for_event, raw_event_id)| {
+            logs_for_event
+                .into_iter()
+                .enumerate()
+                .map(move |(log_idx, ingest_log)| NewEventIngestLogOwning {
+                    raw_event_id,
+                    log_order: log_idx as i32,
+                    log_level: ingest_log.log_level,
+                    log_text: ingest_log.log_text,
+                })
+        })
+        .collect();
+
+    diesel::insert_into(event_ingest_log_dsl::event_ingest_log)
+        .values(new_logs)
         .execute(conn)
         .await?;
-    
+
     let new_events: Vec<_> = event_details
         .iter()
         .map(|event| to_db_format::event_to_row(taxa, game_id, event))
         .collect();
 
-    let event_ids: Vec<i64> = diesel::insert_into(events_dsl::events)
+    let event_ids = diesel::insert_into(events_dsl::events)
         .values(new_events)
         .returning(events_dsl::id)
-        .get_results(conn)
+        .get_results::<i64>(conn)
         .await?;
 
     assert_eq!(
@@ -286,8 +310,9 @@ pub async fn insert_game<'e>(
 pub async fn game_and_raw_events(
     conn: &mut AsyncPgConnection,
     for_game_id: i64,
-) -> QueryResult<(DbGame, Vec<DbRawEvent>)> {
-    use crate::data_schema::data::raw_events::dsl as raw_events_dsl;
+) -> QueryResult<(DbGame, Vec<(DbRawEvent, Vec<DbEventIngestLog>)>)> {
+    use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
+    use crate::info_schema::info::raw_events::dsl as raw_events_dsl;
     use crate::data_schema::data::games::dsl as games_dsl;
 
     let game = games_dsl::games
@@ -298,8 +323,20 @@ pub async fn game_and_raw_events(
 
     let raw_events = DbRawEvent::belonging_to(&game)
         .order_by(raw_events_dsl::game_event_index.asc())
-        .get_results(conn)
+        .load::<DbRawEvent>(conn)
         .await?;
-    
-    Ok((game, raw_events))
+
+    let raw_logs = DbEventIngestLog::belonging_to(&raw_events)
+        .order_by(event_ingest_log_dsl::log_order.asc())
+        .load::<DbEventIngestLog>(conn)
+        .await?;
+
+    let logs_by_event = raw_logs.grouped_by(&raw_events);
+
+    let events_with_logs = raw_events
+        .into_iter()
+        .zip(logs_by_event)
+        .collect::<Vec<_>>();
+
+    Ok((game, events_with_logs))
 }

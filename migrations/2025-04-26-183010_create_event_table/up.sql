@@ -1,5 +1,6 @@
 create schema data;
 create schema taxa;
+create schema info;
 
 alter table ingests set schema data;
 
@@ -67,7 +68,7 @@ create table data.games (
     home_team_name text not null
 );
 
-create table data.raw_events (
+create table info.raw_events (
     -- bookkeeping
     id bigserial primary key not null,
     game_id bigserial references data.games on delete cascade not null,
@@ -75,7 +76,17 @@ create table data.raw_events (
 
     -- event data
     event_text text not null
+);
 
+create table info.event_ingest_log (
+    -- bookkeeping
+    id bigserial primary key not null,
+    raw_event_id bigserial references info.raw_events on delete cascade not null,
+
+    -- log data
+    log_order int not null,
+    log_level int not null, -- TODO Structure this field
+    log_text text not null
 );
 
 create table data.events (

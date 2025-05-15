@@ -3,6 +3,8 @@ mod db;
 mod data_schema;
 #[rustfmt::skip] // This is a generated file
 mod taxa_schema;
+#[rustfmt::skip] // This is a generated file
+mod info_schema;
 mod ingest;
 mod models;
 mod web;

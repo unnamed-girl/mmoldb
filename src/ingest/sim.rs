@@ -78,6 +78,12 @@ pub struct EventDetail<StrT> {
     pub baserunners: Vec<EventDetailRunner<StrT>>,
 }
 
+#[derive(Debug)]
+pub struct IngestLog {
+    pub log_level: i32,
+    pub log_text: String,
+}
+
 #[derive(Debug, Copy, Clone)]
 struct FairBall {
     index: usize,
@@ -1362,7 +1368,9 @@ impl<'g> Game<'g> {
         index: usize,
         event: &ParsedEventMessage<&'g str>,
         raw_event: &mmolb_parsing::game::Event,
-    ) -> Result<Option<EventDetail<&'g str>>, SimError> {
+    ) -> Result<(Option<EventDetail<&'g str>>, Vec<IngestLog>), SimError> {
+        let mut ingest_logs = Vec::new();
+        
         let previous_event = self.state.prev_event_type;
         let this_event_discriminant = event.discriminant();
 
@@ -2058,7 +2066,7 @@ impl<'g> Game<'g> {
             self.check_baserunner_consistency(raw_event);
         }
 
-        Ok(result)
+        Ok((result, ingest_logs))
     }
 }
 

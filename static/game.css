@@ -3,7 +3,7 @@
     padding: 0;
 }
 .event {
-    padding: 20px 5px;
+    padding: 15px 20px;
 }
 .event:nth-child(even) {
     background: rgba(0, 0, 0, 0.4);

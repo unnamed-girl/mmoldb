@@ -15,8 +15,15 @@ use utility_contexts::FormattedDateContext;
 #[get("/game/<game_id>")]
 async fn game_page(game_id: i64, mut db: Connection<Db>) -> Result<Template, AppError> {
     #[derive(Serialize)]
+    struct LogContext {
+        log_level: i32,
+        text: String,
+    }
+    
+    #[derive(Serialize)]
     struct EventContext {
         text: String,
+        logs: Vec<LogContext>,
     }
     
     #[derive(Serialize)]
@@ -46,8 +53,12 @@ async fn game_page(game_id: i64, mut db: Connection<Db>) -> Result<Template, App
         away_team_name: game.away_team_name,
         home_team_emoji: game.home_team_emoji,
         home_team_name: game.home_team_name,
-        events: events.into_iter().map(|event| EventContext {
+        events: events.into_iter().map(|(event, logs)| EventContext {
             text: event.event_text,
+            logs: logs.into_iter().map(|log| LogContext {
+                log_level: log.log_level,
+                text: log.log_text,
+            }).collect(),
         }).collect(),
     };
 

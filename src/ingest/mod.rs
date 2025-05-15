@@ -1,7 +1,7 @@
 mod http;
 mod sim;
 
-pub use sim::{EventDetail, EventDetailFielder, EventDetailRunner};
+pub use sim::{EventDetail, EventDetailFielder, EventDetailRunner, IngestLog};
 
 use crate::db::Taxa;
 use crate::ingest::sim::Game;
@@ -244,8 +244,8 @@ async fn ingest_game(
         game_data.day,
     );
 
-    let detail_events: Vec<_> = parsed
-        .flat_map(|(index, (parsed, raw))| {
+    let (detail_events, ingest_logs): (Vec<_>, Vec<_>) = parsed
+        .map(|(index, (parsed, raw))| {
             let unparsed = parsed.clone().unparse();
             assert_eq!(unparsed, raw.message);
 
@@ -258,7 +258,13 @@ async fn ingest_game(
             game.next(index, &parsed, &raw)
                 .expect("TODO Error handling")
         })
-        .collect();
+        .unzip();
+    
+    // Take the None values out of detail_events
+    let detail_events = detail_events
+        .into_iter()
+        .flat_map(|event| event)
+        .collect::<Vec<_>>();
 
     // Scope to drop conn as soon as I'm done with it
     let inserted_events = {
@@ -270,6 +276,7 @@ async fn ingest_game(
             ingest_id,
             &game_info.game_id,
             &game_data,
+            ingest_logs,
             &detail_events,
         )
         .await

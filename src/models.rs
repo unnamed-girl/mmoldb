@@ -140,7 +140,7 @@ pub struct DbEvent {
 }
 
 #[derive(Insertable)]
-#[diesel(table_name = crate::data_schema::data::raw_events)]
+#[diesel(table_name = crate::info_schema::info::raw_events)]
 pub struct NewRawEvent<'a> {
     pub game_id: i64,
     pub game_event_index: i32,
@@ -149,13 +149,37 @@ pub struct NewRawEvent<'a> {
 
 #[derive(Identifiable, Queryable, Selectable, Associations)]
 #[diesel(belongs_to(DbGame, foreign_key = game_id))]
-#[diesel(table_name = crate::data_schema::data::raw_events)]
+#[diesel(table_name = crate::info_schema::info::raw_events)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct DbRawEvent {
     pub id: i64,
     pub game_id: i64,
     pub game_event_index: i32,
     pub event_text: String,
+}
+
+// This struct happens to be used in a context where it's more natural
+// for it to own its data. A non-owning version is also perfectly 
+// possible.
+#[derive(Insertable)]
+#[diesel(table_name = crate::info_schema::info::event_ingest_log)]
+pub struct NewEventIngestLogOwning {
+    pub raw_event_id: i64,
+    pub log_order: i32,
+    pub log_level: i32,
+    pub log_text: String,
+}
+
+#[derive(Identifiable, Queryable, Selectable, Associations)]
+#[diesel(belongs_to(DbRawEvent, foreign_key = raw_event_id))]
+#[diesel(table_name = crate::info_schema::info::event_ingest_log)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct DbEventIngestLog {
+    pub id: i64,
+    pub raw_event_id: i64,
+    pub log_order: i32,
+    pub log_level: i32,
+    pub log_text: String,
 }
 
 #[derive(Insertable)]

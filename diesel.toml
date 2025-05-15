@@ -11,5 +11,10 @@ file = "src/taxa_schema.rs"
 schema = "taxa"
 custom_type_derives = ["diesel::query_builder::QueryId", "Clone"]
 
+[print_schema.info]
+file = "src/info_schema.rs"
+schema = "info"
+custom_type_derives = ["diesel::query_builder::QueryId", "Clone"]
+
 [migrations_directory]
 dir = "/workspaces/mmoldb/migrations"

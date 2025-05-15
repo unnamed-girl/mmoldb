@@ -1,7 +1,8 @@
 drop table data.event_fielders;
 drop table data.event_baserunners;
 drop table data.events;
-drop table data.raw_events;
+drop table info.event_ingest_log;
+drop table info.raw_events;
 drop table data.games;
 drop table taxa.fielding_error_type;
 drop table taxa.base_description_format;
@@ -11,5 +12,6 @@ drop table taxa.position;
 drop table taxa.hit_type;
 drop table taxa.event_type;
 alter table data.ingests set schema public;
+drop schema info;
 drop schema taxa;
 drop schema data;
