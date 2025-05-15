@@ -5,7 +5,10 @@ use crate::db::{
 use itertools::{EitherOrBoth, Itertools, PeekingNext};
 use log::{info, warn};
 use mmolb_parsing::ParsedEventMessage;
-use mmolb_parsing::enums::{Base, BaseNameVariant, BatterStat, Distance, FairBallDestination, FairBallType, FoulType, HomeAway, NowBattingStats, Position, StrikeType, TopBottom};
+use mmolb_parsing::enums::{
+    Base, BaseNameVariant, BatterStat, Distance, FairBallDestination, FairBallType, FoulType,
+    HomeAway, NowBattingStats, Position, StrikeType, TopBottom,
+};
 use mmolb_parsing::parsed_event::{
     BaseSteal, FieldingAttempt, ParsedEventMessageDiscriminants, PositionedPlayer, RunnerAdvance,
     RunnerOut,
@@ -862,18 +865,18 @@ impl<'g> Game<'g> {
             );
         }
     }
-    
+
     fn active_pitcher(&self) -> &PositionedPlayer<&'g str> {
         match self.state.inning_half {
-            TopBottom::Top => { &self.home.pitcher }
-            TopBottom::Bottom => { &self.away.pitcher }
+            TopBottom::Top => &self.home.pitcher,
+            TopBottom::Bottom => &self.away.pitcher,
         }
     }
-    
+
     fn active_pitcher_mut(&mut self) -> &mut PositionedPlayer<&'g str> {
         match self.state.inning_half {
-            TopBottom::Top => { &mut self.home.pitcher }
-            TopBottom::Bottom => { &mut self.away.pitcher }
+            TopBottom::Top => &mut self.home.pitcher,
+            TopBottom::Bottom => &mut self.away.pitcher,
         }
     }
 
@@ -1944,7 +1947,7 @@ impl<'g> Game<'g> {
                             remaining_pitcher.name, self.active_pitcher().name,
                         );
                     }
-                    
+
                     if remaining_pitcher.position != self.active_pitcher().position {
                         warn!(
                             "In a PitcherRemains event, the position of the pitcher who remained \
@@ -1952,7 +1955,7 @@ impl<'g> Game<'g> {
                             remaining_pitcher.position, self.active_pitcher().position,
                         );
                     }
-                    
+
                     self.state.phase = GamePhase::ExpectNowBatting;
                     None
                 },
@@ -1965,7 +1968,7 @@ impl<'g> Game<'g> {
                             leaving_pitcher, self.active_pitcher().name,
                         );
                     }
-                    
+
                     if *leaving_position != self.active_pitcher().position {
                         warn!(
                             "In a PitcherSwap event, the position of the pitcher who left ({}) \
@@ -1973,12 +1976,12 @@ impl<'g> Game<'g> {
                             leaving_position, self.active_pitcher().position,
                         );
                     }
-                    
+
                     *self.active_pitcher_mut() = PositionedPlayer {
                         name: arriving_pitcher,
                         position: *arriving_position,
                     };
-                    
+
                     self.state.phase = GamePhase::ExpectNowBatting;
                     None
                 },
@@ -2014,12 +2017,12 @@ impl<'g> Game<'g> {
                             }
                         };
                     }
-                    
+
                     if self.state.away_score < self.state.home_score {
                         warn_if_mismatch!("winning", "score", "home", *winning_score, self.state.home_score);
                         warn_if_mismatch!("winning", "team emoji", "home", *winning_team_emoji, self.home.team_emoji);
                         warn_if_mismatch!("winning", "team name", "home", *winning_team_name, self.home.team_name);
-                        
+
                         warn_if_mismatch!("losing", "score", "away", *losing_score, self.state.away_score);
                         warn_if_mismatch!("losing", "team emoji", "away", *losing_team_emoji, self.away.team_emoji);
                         warn_if_mismatch!("losing", "team name", "away", *losing_team_name, self.away.team_name);
@@ -2027,7 +2030,7 @@ impl<'g> Game<'g> {
                         warn_if_mismatch!("winning", "score", "away", *winning_score, self.state.away_score);
                         warn_if_mismatch!("winning", "team emoji", "away", *winning_team_emoji, self.away.team_emoji);
                         warn_if_mismatch!("winning", "team name", "away", *winning_team_name, self.away.team_name);
-                        
+
                         warn_if_mismatch!("losing", "score", "home", *losing_score, self.state.home_score);
                         warn_if_mismatch!("losing", "team emoji", "home", *losing_team_emoji, self.home.team_emoji);
                         warn_if_mismatch!("losing", "team name", "home", *losing_team_name, self.home.team_name);

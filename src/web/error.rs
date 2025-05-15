@@ -1,8 +1,8 @@
 use log::error;
-use rocket::{Request, Response};
 use rocket::http::Status;
 use rocket::response::Responder;
-use rocket_dyn_templates::{context, Template};
+use rocket::{Request, Response};
+use rocket_dyn_templates::{Template, context};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -23,7 +23,7 @@ impl<'r, 'o: 'r> Responder<'r, 'o> for AppError {
                 error_text: format!("{:#?}", self),
             },
         )
-            .unwrap();
+        .unwrap();
 
         Response::build()
             .status(Status::InternalServerError)

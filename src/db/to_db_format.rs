@@ -72,7 +72,6 @@ pub fn event_to_fielders<'e>(
 
 pub fn row_to_event<'e>(
     taxa: &Taxa,
-    game_id: String,
     event: DbEvent,
     runners: Vec<DbRunner>,
     fielders: Vec<DbFielder>,
@@ -98,7 +97,7 @@ pub fn row_to_event<'e>(
             position: taxa.position_from_id(f.fielder_position).into(),
         })
         .collect();
-    
+
     EventDetail {
         game_event_index: event.game_event_index as usize,
         fair_ball_event_index: event.fair_ball_event_index.map(|i| i as usize),
@@ -113,8 +112,12 @@ pub fn row_to_event<'e>(
         pitcher_name: event.pitcher_name,
         detail_type: taxa.event_type_from_id(event.event_type),
         hit_type: event.hit_type.map(|id| taxa.hit_type_from_id(id)),
-        fair_ball_type: event.fair_ball_type.map(|id| taxa.fair_ball_type_from_id(id)),
-        fair_ball_direction: event.fair_ball_direction.map(|id| taxa.position_from_id(id)),
+        fair_ball_type: event
+            .fair_ball_type
+            .map(|id| taxa.fair_ball_type_from_id(id)),
+        fair_ball_direction: event
+            .fair_ball_direction
+            .map(|id| taxa.position_from_id(id)),
         fielding_error_type: event
             .fielding_error_type
             .map(|id| taxa.fielding_error_type_from_id(id)),

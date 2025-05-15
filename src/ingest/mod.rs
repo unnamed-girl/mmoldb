@@ -80,7 +80,7 @@ pub async fn launch_ingest_task(
 
 pub async fn ingest_task(pool: Db, is_debug: bool) {
     let is_debug = false; // TEMPORARY
-    
+
     let client = http::get_caching_http_client();
 
     let taxa = {
@@ -149,7 +149,10 @@ pub async fn ingest_task(pool: Db, is_debug: bool) {
                 .expect("TODO Error handling");
 
             if num_deleted > 0 {
-                info!("In debug mode, deleted game {} and all its events", game_info.game_id);
+                info!(
+                    "In debug mode, deleted game {} and all its events",
+                    game_info.game_id
+                );
             }
             false
         };
@@ -180,11 +183,17 @@ pub async fn ingest_task(pool: Db, is_debug: bool) {
             game_data.day,
         );
 
-        // I think cloning pool is the intended behavior
-        let result = std::panic::AssertUnwindSafe(ingest_game(pool.clone(), &taxa, ingest_id, &game_info, game_data))
-            .catch_unwind()
-            .await;
-        
+        // TODO Handle catch_unwind result better
+        let result = std::panic::AssertUnwindSafe(ingest_game(
+            pool.clone(),
+            &taxa,
+            ingest_id,
+            &game_info,
+            game_data,
+        ))
+        .catch_unwind()
+        .await;
+
         if result.is_err() {
             break;
         }
@@ -257,9 +266,16 @@ async fn ingest_game(
     let inserted_events = {
         let mut conn = pool.get().await.expect("TODO Error handling");
 
-        db::insert_game(&mut conn, &taxa, ingest_id, &game_info.game_id, &game_data, &detail_events)
-            .await
-            .expect("TODO Error handling");
+        db::insert_game(
+            &mut conn,
+            &taxa,
+            ingest_id,
+            &game_info.game_id,
+            &game_data,
+            &detail_events,
+        )
+        .await
+        .expect("TODO Error handling");
 
         // We can rebuild them
         db::events_for_game(&mut conn, &taxa, &game_info.game_id)
