@@ -69,10 +69,20 @@ pub mod data {
         }
     }
 
+    diesel::table! {
+        data.raw_events (id) {
+            id -> Int8,
+            game_id -> Int8,
+            game_event_index -> Int4,
+            event_text -> Text,
+        }
+    }
+
     diesel::joinable!(event_baserunners -> events (event_id));
     diesel::joinable!(event_fielders -> events (event_id));
     diesel::joinable!(events -> games (game_id));
     diesel::joinable!(games -> ingests (ingest));
+    diesel::joinable!(raw_events -> games (game_id));
 
     diesel::allow_tables_to_appear_in_same_query!(
         event_baserunners,
@@ -80,5 +90,6 @@ pub mod data {
         events,
         games,
         ingests,
+        raw_events,
     );
 }

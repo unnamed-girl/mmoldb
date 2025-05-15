@@ -26,6 +26,11 @@ body {
     padding: 20px;
     border-radius: 14px;
     margin: 20px auto;
+    overflow: hidden; /* To properly cut off border-radius corners */
+}
+
+.card.seamless {
+    padding: 0;
 }
 
 .card :first-child {

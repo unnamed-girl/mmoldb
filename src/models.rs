@@ -140,6 +140,25 @@ pub struct DbEvent {
 }
 
 #[derive(Insertable)]
+#[diesel(table_name = crate::data_schema::data::raw_events)]
+pub struct NewRawEvent<'a> {
+    pub game_id: i64,
+    pub game_event_index: i32,
+    pub event_text: &'a str,
+}
+
+#[derive(Identifiable, Queryable, Selectable, Associations)]
+#[diesel(belongs_to(DbGame, foreign_key = game_id))]
+#[diesel(table_name = crate::data_schema::data::raw_events)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct DbRawEvent {
+    pub id: i64,
+    pub game_id: i64,
+    pub game_event_index: i32,
+    pub event_text: String,
+}
+
+#[derive(Insertable)]
 #[diesel(table_name = crate::data_schema::data::event_baserunners)]
 pub struct NewBaserunner<'a> {
     pub event_id: i64,

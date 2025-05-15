@@ -11,7 +11,7 @@ pub use crate::db::taxa::{
 };
 
 use crate::ingest::EventDetail;
-use crate::models::{DbEvent, DbFielder, DbGame, DbRunner, Ingest, NewGame, NewIngest};
+use crate::models::{DbEvent, DbFielder, DbGame, DbRawEvent, DbRunner, Ingest, NewGame, NewIngest, NewRawEvent};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use rocket_db_pools::{diesel::prelude::*, diesel::AsyncPgConnection};
 
@@ -201,6 +201,7 @@ pub async fn insert_game<'e>(
     use crate::data_schema::data::event_baserunners::dsl as baserunners_dsl;
     use crate::data_schema::data::event_fielders::dsl as fielders_dsl;
     use crate::data_schema::data::events::dsl as events_dsl;
+    use crate::data_schema::data::raw_events::dsl as raw_events_dsl;
     use crate::data_schema::data::games::dsl as games_dsl;
 
     let game_id = diesel::insert_into(games_dsl::games)
@@ -217,7 +218,16 @@ pub async fn insert_game<'e>(
         .returning(games_dsl::id)
         .get_result::<i64>(conn)
         .await?;
-
+    
+    diesel::insert_into(raw_events_dsl::raw_events)
+        .values(game_data.event_log.iter().enumerate().map(|(index, raw_event)| NewRawEvent {
+            game_id,
+            game_event_index: index as i32,
+            event_text: &raw_event.message,
+        }).collect::<Vec<_>>())
+        .execute(conn)
+        .await?;
+    
     let new_events: Vec<_> = event_details
         .iter()
         .map(|event| to_db_format::event_to_row(taxa, game_id, event))
@@ -271,4 +281,25 @@ pub async fn insert_game<'e>(
     );
 
     Ok(())
+}
+
+pub async fn game_and_raw_events(
+    conn: &mut AsyncPgConnection,
+    for_game_id: i64,
+) -> QueryResult<(DbGame, Vec<DbRawEvent>)> {
+    use crate::data_schema::data::raw_events::dsl as raw_events_dsl;
+    use crate::data_schema::data::games::dsl as games_dsl;
+
+    let game = games_dsl::games
+        .filter(games_dsl::id.eq(for_game_id))
+        .select(DbGame::as_select())
+        .get_result::<DbGame>(conn)
+        .await?;
+
+    let raw_events = DbRawEvent::belonging_to(&game)
+        .order_by(raw_events_dsl::game_event_index.asc())
+        .get_results(conn)
+        .await?;
+    
+    Ok((game, raw_events))
 }

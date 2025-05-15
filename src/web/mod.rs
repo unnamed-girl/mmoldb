@@ -15,17 +15,41 @@ use utility_contexts::FormattedDateContext;
 #[get("/game/<game_id>")]
 async fn game_page(game_id: i64, mut db: Connection<Db>) -> Result<Template, AppError> {
     #[derive(Serialize)]
+    struct EventContext {
+        text: String,
+    }
+    
+    #[derive(Serialize)]
     struct GameContext {
-        uri: String,
+        id: String,
+        watch_uri: String,
+        api_uri: String,
         season: i32,
         day: i32,
         away_team_emoji: String,
         away_team_name: String,
         home_team_emoji: String,
         home_team_name: String,
+        events: Vec<EventContext>
     }
 
-    let game: GameContext = todo!();
+    let (game, events) = db::game_and_raw_events(&mut db, game_id).await?;
+    let watch_uri = format!("https://mmolb.com/watch/{}", game.mmolb_game_id);
+    let api_uri = format!("https://mmolb.com/api/game/{}", game.mmolb_game_id);
+    let game = GameContext {
+        id: game.mmolb_game_id,
+        watch_uri,
+        api_uri,
+        season: game.season,
+        day: game.day,
+        away_team_emoji: game.away_team_emoji,
+        away_team_name: game.away_team_name,
+        home_team_emoji: game.home_team_emoji,
+        home_team_name: game.home_team_name,
+        events: events.into_iter().map(|event| EventContext {
+            text: event.event_text,
+        }).collect(),
+    };
 
     Ok(Template::render("game", context! { game: game }))
 }

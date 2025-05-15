@@ -67,6 +67,17 @@ create table data.games (
     home_team_name text not null
 );
 
+create table data.raw_events (
+    -- bookkeeping
+    id bigserial primary key not null,
+    game_id bigserial references data.games on delete cascade not null,
+    game_event_index int not null,
+
+    -- event data
+    event_text text not null
+
+);
+
 create table data.events (
     -- bookkeeping
     id bigserial primary key not null,
@@ -78,7 +89,7 @@ create table data.events (
     inning int not null,
     top_of_inning boolean not null,
 
-    -- game data
+    -- event data
     event_type bigint references taxa.event_type not null,
     -- should be populated for every event_type==Hit
     hit_type bigint references taxa.hit_type,

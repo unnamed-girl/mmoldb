@@ -1,0 +1,47 @@
+{# All one line to avoid newlines being turned into spaces by HTML whitespace collapse. #}
+{% macro date_format(date) %}<span title="{{ date.absolute }}">{{ date.relative }}</span>{% endmacro date_format %}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>MMOLDB &mdash; Game</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <link rel="stylesheet" href="/static/game.css" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💽</text></svg>">
+</head>
+<body>
+    <h1 class="main-title card">MMOLDB &mdash; Game</h1>
+
+    <section class="card game-info">
+        <h2 class="game-heading">Game {{ game.id }}</h2>
+        <p class="game-metadata">
+            s{{ game.season }}d{{ game.day }}:
+            {{ game.away_team_emoji }} {{ game.away_team_name }}
+            @
+            {{ game.home_team_emoji }} {{ game.home_team_name }}
+        </p>
+        <p class="game-watch-link">
+            <a href="{{ game.watch_uri }}">Watch</a>
+        </p>
+        <p class="game-api-link">
+            <a href="{{ game.api_uri }}">API Response</a>
+        </p>
+    </section>
+
+    <section class="card seamless game-events">
+        {% if game.events %}
+        <ul class="events">
+            {% for event in game.events %}
+            <li class="event">
+                <p class="event-text">{{ event.text | safe }}</p>
+            </li>
+        {% endfor %}
+        </ul>
+        {% else %}
+        {# TODO Style this however I end up styling import errors #}
+        <p class="no-events">No events</p>
+        {% endif %}
+    </section>
+</body>
+</html>
