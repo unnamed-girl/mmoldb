@@ -79,8 +79,6 @@ pub async fn launch_ingest_task(
 }
 
 pub async fn ingest_task(pool: Db, is_debug: bool) {
-    let is_debug = false; // TEMPORARY
-
     let client = http::get_caching_http_client();
 
     let taxa = {

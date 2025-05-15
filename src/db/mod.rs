@@ -12,8 +12,8 @@ pub use crate::db::taxa::{
 
 use crate::ingest::EventDetail;
 use crate::models::{DbEvent, DbFielder, DbGame, DbRunner, Ingest, NewGame, NewIngest};
-use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
-use rocket_db_pools::{diesel::AsyncPgConnection, diesel::prelude::*};
+use chrono::{DateTime, NaiveDateTime, Utc};
+use rocket_db_pools::{diesel::prelude::*, diesel::AsyncPgConnection};
 
 pub async fn ingest_count(conn: &mut AsyncPgConnection) -> QueryResult<i64> {
     use crate::data_schema::data::ingests::dsl::*;
