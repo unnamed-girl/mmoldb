@@ -270,7 +270,7 @@ async fn ingest_game(
 
     assert_eq!(inserted_events.len(), detail_events.len());
     for (reconstructed_detail, original_detail) in inserted_events.iter().zip(detail_events) {
-        println!(
+        info!(
             "Original Baserunners:      {:?}\nReconstructed baserunners: {:?}",
             original_detail.baserunners, reconstructed_detail.baserunners,
         );
