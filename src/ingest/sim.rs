@@ -486,6 +486,10 @@ impl<'g> EventDetailBuilder<'g> {
             .batter_for_active_team(self.batter_count_at_event_start)
             .name;
 
+        // Note: game.state.runners_on gets cleared if this event is an
+        // inning-ending out. As of writing this comment the code below
+        // doesn't use game.state.runners_on at all, but if it is used
+        // in the future keep that in mind.
         let mut scores = self.scores.into_iter();
         let mut advances = self.advances.into_iter().peekable();
         let mut runners_out = self.runners_out.into_iter().peekable();
@@ -862,6 +866,13 @@ impl<'g> Game<'g> {
         &lineup[batting_team.batter_count % lineup.len()]
     }
 
+    fn active_automatic_runner(&self) -> &BatterInGame<&'g str> {
+        let batting_team = self.batting_team();
+        let lineup = &batting_team.lineup;
+        // Add lineup.len to avoid underflow when batter_count is 0
+        &lineup[(batting_team.batter_count + lineup.len() - 1) % lineup.len()]
+    }
+
     fn active_batter_mut(&mut self) -> &mut BatterInGame<&'g str> {
         let batting_team = self.batting_team_mut();
         let lineup = &mut batting_team.lineup;
@@ -974,6 +985,7 @@ impl<'g> Game<'g> {
         // caught stealing
         if self.state.outs >= 3 {
             self.state.phase = GamePhase::ExpectInningEnd;
+            self.state.runners_on.clear();
         }
     }
 
@@ -1397,8 +1409,23 @@ impl<'g> Game<'g> {
                     // This way they will just show up on base without having an event that put
                     // them there, which I think is the correct interpretation.
                     if let Some(runner_name) = automatic_runner {
+                        if *runner_name != self.active_automatic_runner().name {
+                            warn!(
+                                "Unexpected automatic runner: expected {}, but saw {}", 
+                                self.active_automatic_runner().name, runner_name,
+                            );
+                        }
+                        
                         self.state.runners_on.push_back(RunnerOn {
                             runner_name,
+                            base: TaxaBase::Second, // Automatic runners are always placed on second
+                        })
+                    } else if *number > 9 {
+                        // Before a certain point the automatic runner 
+                        // wasn't announced in the event. You just had
+                        // to figure out who it was based on the lineup
+                        self.state.runners_on.push_back(RunnerOn {
+                            runner_name: self.active_automatic_runner().name,
                             base: TaxaBase::Second, // Automatic runners are always placed on second
                         })
                     }
@@ -1945,17 +1972,16 @@ impl<'g> Game<'g> {
 
         self.state.prev_event_type = this_event_discriminant;
 
-        let skip_base_check = &[
-            // Pending answer from Danny on this one:
-            // https://discord.com/channels/1136709081319604324/1370896620199215245
-            ("6807e733128045e526322fc6", 75),
-            // I think I just need to clear the bases at the last out
-            // but I'm not doing it for now
-            ("6807e733128045e526322fc3", 33),
-            ("6807e733128045e526322fc3", 34),
-        ];
-
-        if !skip_base_check.contains(&(self.game_id, index)) {
+        // In season 0 the game didn't clear the bases immediately 
+        // when the third inning is recorded, but Danny has said it
+        // will. That means that for now, baserunner consistency
+        // may be wrong after the 3rd out. 
+        if self.state.outs >= 3 {
+            assert!(
+                self.state.runners_on.is_empty(), 
+                "runners_on must be empty when there are 3 (or more) outs",
+            );
+        } else {
             self.check_baserunner_consistency(raw_event);
         }
 
