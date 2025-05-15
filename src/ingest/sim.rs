@@ -159,6 +159,7 @@ struct GameState<'g> {
     count_balls: u8,
     count_strikes: u8,
     outs: i32,
+    game_finished: bool,
     runners_on: VecDeque<RunnerOn<'g>>,
 }
 
@@ -819,6 +820,7 @@ impl<'g> Game<'g> {
                 count_balls: 0,
                 count_strikes: 0,
                 outs: 0,
+                game_finished: false,
                 runners_on: Default::default(),
             },
         })
@@ -966,6 +968,8 @@ impl<'g> Game<'g> {
         {
             // If it's the bottom of a 9th or later, and the score is
             // now in favor of the home team, it's a walk-off
+            self.state.runners_on.clear();
+            self.state.game_finished = true;
             self.state.phase = GamePhase::ExpectGameEnd;
         } else if self.state.outs >= 3 {
             // Otherwise, if there's 3 outs, the inning ends
@@ -1411,17 +1415,17 @@ impl<'g> Game<'g> {
                     if let Some(runner_name) = automatic_runner {
                         if *runner_name != self.active_automatic_runner().name {
                             warn!(
-                                "Unexpected automatic runner: expected {}, but saw {}", 
+                                "Unexpected automatic runner: expected {}, but saw {}",
                                 self.active_automatic_runner().name, runner_name,
                             );
                         }
-                        
+
                         self.state.runners_on.push_back(RunnerOn {
                             runner_name,
                             base: TaxaBase::Second, // Automatic runners are always placed on second
                         })
                     } else if *number > 9 {
-                        // Before a certain point the automatic runner 
+                        // Before a certain point the automatic runner
                         // wasn't announced in the event. You just had
                         // to figure out who it was based on the lineup
                         self.state.runners_on.push_back(RunnerOn {
@@ -1751,8 +1755,19 @@ impl<'g> Game<'g> {
                 },
                 [ParsedEventMessageDiscriminants::DoublePlayGrounded]
                 // TODO handle every single member of this variant
-                ParsedEventMessage::DoublePlayGrounded { batter, advances, scores, out_one, out_two, fielders, .. } => {
+                ParsedEventMessage::DoublePlayGrounded { batter, advances, scores, out_one, out_two, fielders, sacrifice } => {
                     self.check_batter(batter, event.discriminant());
+
+                    // Assuming for now that sacrifice is any time
+                    // there are scores
+                    if *sacrifice && scores.is_empty() {
+                        warn!("DoublePlayGrounded was described as a sacrifice, but nobody scored");
+                    } else if !*sacrifice && !scores.is_empty() {
+                        warn!(
+                            "DoublePlayGrounded wasn't described as a sacrifice even though there \
+                            were scores",
+                        );
+                    }
 
                     self.update_runners(RunnerUpdate {
                         scores,
@@ -1875,23 +1890,30 @@ impl<'g> Game<'g> {
 
                     self.state.runners_on.clear();
 
-                    if *number < 9 {
+                    let game_finished = if *number < 9 {
                         // Game never ends if inning number is less than 9
                         info!("Game didn't end at the {side:#?} of the {number} because it was before the 9th");
-                        self.state.phase = GamePhase::ExpectInningStart;
+                        false
                     } else if *side == TopBottom::Top && self.state.home_score > self.state.away_score {
                         // Game ends after the top of the inning if it's 9 or later and the home
                         // team is winning
                         info!("Game ended at the top of the {number} because the home team was winning");
-                        self.state.phase = GamePhase::ExpectGameEnd;
+                        true
                     } else if *side == TopBottom::Bottom && self.state.home_score != self.state.away_score {
                         // Game ends after the bottom of the inning if it's 9 or later and it's not
                         // a tie
                         info!("Game ended at the bottom of the {number} because the score was not tied");
-                        self.state.phase = GamePhase::ExpectGameEnd;
+                        true
                     } else {
                         // Otherwise the game does not end
                         info!("Game didn't end at the {side:#?} of the {number} because the score was tied");
+                        false
+                    };
+
+                    if game_finished {
+                        self.state.game_finished = true;
+                        self.state.phase = GamePhase::ExpectGameEnd;
+                    } else {
                         self.state.phase = GamePhase::ExpectInningStart;
                     }
                     None
@@ -1922,6 +1944,11 @@ impl<'g> Game<'g> {
                 (previous_event, event),
                 [ParsedEventMessageDiscriminants::GameOver]
                 ParsedEventMessage::GameOver => {
+                    // Note: Not setting self.state.game_finished here,
+                    // because proper baserunner accounting requires it
+                    // be marked as finished before we finish
+                    // processing the event that set the phase to
+                    // ExpectGameEnd
                     self.state.phase = GamePhase::ExpectFinalScore;
                     None
                 },
@@ -1972,14 +1999,14 @@ impl<'g> Game<'g> {
 
         self.state.prev_event_type = this_event_discriminant;
 
-        // In season 0 the game didn't clear the bases immediately 
+        // In season 0 the game didn't clear the bases immediately
         // when the third inning is recorded, but Danny has said it
         // will. That means that for now, baserunner consistency
-        // may be wrong after the 3rd out. 
-        if self.state.outs >= 3 {
+        // may be wrong after the 3rd out.
+        if self.state.outs >= 3 || self.state.game_finished {
             assert!(
-                self.state.runners_on.is_empty(), 
-                "runners_on must be empty when there are 3 (or more) outs",
+                self.state.runners_on.is_empty(),
+                "runners_on must be empty when there are 3 (or more) outs or the game is over",
             );
         } else {
             self.check_baserunner_consistency(raw_event);
@@ -2347,6 +2374,8 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
             },
             TaxaEventType::DoublePlay => {
                 println!("Baserunners: {:#?}", self.baserunners);
+                let scores = self.scores();
+                let sacrifice = !scores.is_empty();
                 match &self.runners_out().as_slice() {
                     [] => panic!("At least one existing runner must get out in a DoublePlay"),
                     [(name, at_base)] => ParsedEventMessage::DoublePlayCaught {
@@ -2360,7 +2389,7 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                             runner: name,
                             base: *at_base,
                         },
-                        scores: self.scores(),
+                        scores,
                         advances: self.advances(false),
                     },
                     [(name_one, base_one), (name_two, base_two)] => {
@@ -2375,9 +2404,9 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                                 runner: name_two,
                                 base: *base_two,
                             },
-                            scores: self.scores(),
+                            scores,
                             advances: self.advances(false),
-                            sacrifice: false, // TODO
+                            sacrifice,
                         }
                     }
                     other => {
