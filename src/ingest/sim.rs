@@ -1687,7 +1687,9 @@ impl<'g> Game<'g> {
                         ingest_logs.warn("Non-flyout was described as sacrifice");
                     }
 
-                    assert_eq!(*perfect, false, "TODO Handle perfect outs");
+                    if *perfect {
+                        ingest_logs.warn("No support for perfect catches yet");
+                    }
 
                     detail_builder
                         .fair_ball(fair_ball)
@@ -1887,7 +1889,6 @@ impl<'g> Game<'g> {
 
                     match result {
                         FieldingAttempt::Out { out } => {
-                            ingest_logs.warn("I've been wondering if this combination actually happens.");
                             detail_builder
                                 .fair_ball(fair_ball)
                                 .runner_changes(advances.clone(), scores.clone())

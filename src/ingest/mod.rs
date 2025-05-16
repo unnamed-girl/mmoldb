@@ -628,11 +628,6 @@ async fn ingest_game(
             );
         }
 
-        extra_ingest_logs.debug(index, format!(
-            "Original Baserunners:      {:?}\nReconstructed baserunners: {:?}",
-            original_detail.baserunners, reconstructed_detail.baserunners,
-        ));
-
         check_round_trip(
             index,
             &mut extra_ingest_logs,
@@ -663,7 +658,7 @@ fn check_round_trip(
     if parsed != original_detail {
         ingest_logs.error(index, format!(
             "Round-trip of {} through EventDetail produced a mismatch:\n\
-             Original: <pre>{:?}</pre>\n\
+             Original: <pre>{:?}</pre>\
              Through EventDetail: <pre>{:?}</pre>",
             label,
             parsed,

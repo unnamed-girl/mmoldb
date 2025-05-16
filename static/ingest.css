@@ -1,8 +1,54 @@
-.game {
-    margin: 5px 0;
+.ingest-heading {
+    padding: 20px 20px 0 20px;
 }
 
-.game :link {
+.ingest-metadata {
+    padding: 0 20px;
+}
+
+.games {
+    list-style: none;
+    padding: 0;
+}
+
+.game > a {
+    display: block;
     font-weight: normal;
     text-decoration: none;
+    background-color: rgba(0, 0, 0, 0.5);
+    padding: 10px 20px;
+    color: white;
+}
+
+.game:active > a {
+    color: gray;
+}
+
+.game:nth-child(even) > a {
+    background-color: rgba(0, 0, 0, 0.7);
+}
+
+.num-issues-container {
+    margin: 10px 0 0;
+}
+
+.num-warnings, .num-errors, .num-critical {
+    padding: 3px 10px;
+    display: inline-block;
+    border-radius: 12px;
+}
+
+.num-warnings {
+    /* TODO Use CSS variables for the colors */
+    background: #603805;
+}
+
+.num-errors {
+    /* TODO Use CSS variables for the colors */
+    background: #5e0b0b;
+}
+
+.num-critical {
+    /* TODO Use CSS variables for the colors */
+    background: red;
 }

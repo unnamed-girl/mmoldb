@@ -20,13 +20,13 @@ async fn game_page(game_id: i64, mut db: Connection<Db>) -> Result<Template, App
         level: &'static str,
         text: String,
     }
-    
+
     #[derive(Serialize)]
     struct EventContext {
         text: String,
         logs: Vec<LogContext>,
     }
-    
+
     #[derive(Serialize)]
     struct GameContext {
         id: String,
@@ -57,7 +57,7 @@ async fn game_page(game_id: i64, mut db: Connection<Db>) -> Result<Template, App
         events: events.into_iter().map(|(event, logs)| EventContext {
             text: event.event_text,
             logs: logs.into_iter().map(|log| LogContext {
-                level: match log.log_level { 
+                level: match log.log_level {
                     0 => "critical",
                     1 => "error",
                     2 => "warning",
@@ -85,6 +85,9 @@ async fn ingest_page(ingest_id: i64, mut db: Connection<Db>) -> Result<Template,
         away_team_name: String,
         home_team_emoji: String,
         home_team_name: String,
+        num_warnings: i64,
+        num_errors: i64,
+        num_critical: i64,
     }
 
     #[derive(Serialize)]
@@ -102,7 +105,7 @@ async fn ingest_page(ingest_id: i64, mut db: Connection<Db>) -> Result<Template,
         finished_at: ingest.date_finished.as_ref().map(Into::into),
         games: games
             .into_iter()
-            .map(|game| GameContext {
+            .map(|(game, num_warnings, num_errors, num_critical)| GameContext {
                 uri: uri!(game_page(game.id)).to_string(),
                 season: game.season,
                 day: game.day,
@@ -110,6 +113,9 @@ async fn ingest_page(ingest_id: i64, mut db: Connection<Db>) -> Result<Template,
                 away_team_name: game.away_team_name,
                 home_team_emoji: game.home_team_emoji,
                 home_team_name: game.home_team_name,
+                num_warnings,
+                num_errors, 
+                num_critical
             })
             .collect(),
     };
@@ -127,7 +133,7 @@ async fn index(mut db: Connection<Db>, ingest_task: &State<IngestTask>) -> Resul
         is_running: bool,
         error: Option<String>,
     }
-    
+
     let ingest_task_status = match ingest_task.state().await {
         IngestStatus::Starting => IngestTaskContext {
             is_starting: true,
@@ -151,7 +157,7 @@ async fn index(mut db: Connection<Db>, ingest_task: &State<IngestTask>) -> Resul
             ..Default::default()
         },
     };
-    
+
     #[derive(Serialize)]
     struct IngestContext {
         uri: String,

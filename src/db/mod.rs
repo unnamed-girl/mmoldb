@@ -14,6 +14,8 @@ pub use crate::db::taxa::{
 use crate::ingest::{EventDetail, IngestLog};
 use crate::models::{DbEvent, DbEventIngestLog, DbFielder, DbGame, DbRawEvent, DbRunner, Ingest, NewEventIngestLogOwning, NewGame, NewIngest, NewRawEvent};
 use chrono::{DateTime, NaiveDateTime, Utc};
+use itertools::PeekingNext;
+use log::Level;
 use rocket_db_pools::{diesel::prelude::*, diesel::AsyncPgConnection};
 
 pub async fn ingest_count(conn: &mut AsyncPgConnection) -> QueryResult<i64> {
@@ -100,18 +102,52 @@ pub async fn mark_ingest_finished(
 pub async fn ingest_with_games(
     conn: &mut AsyncPgConnection,
     for_ingest_id: i64,
-) -> QueryResult<(Ingest, Vec<DbGame>)> {
+) -> QueryResult<(Ingest, Vec<(DbGame, i64, i64, i64)>)> {
     use crate::data_schema::data::games::dsl as game_dsl;
     use crate::data_schema::data::ingests::dsl as ingest_dsl;
+    use crate::info_schema::info::raw_events::dsl as raw_event_dsl;
+    use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
 
     let ingest = ingest_dsl::ingests
         .filter(ingest_dsl::id.eq(for_ingest_id))
         .get_result::<Ingest>(conn)
         .await?;
     let games = DbGame::belonging_to(&ingest)
-        .order_by((game_dsl::season.asc(), game_dsl::day.asc()))
+        .order_by(game_dsl::id)
         .get_results::<DbGame>(conn)
         .await?;
+
+    let game_ids = games.iter().map(|g| g.id).collect::<Vec<i64>>();
+    
+    async fn count_log_level(conn: &mut AsyncPgConnection, game_ids: &Vec<i64>, level: i32) -> QueryResult<Vec<(i64, i64)>> {
+        raw_event_dsl::raw_events
+            .filter(raw_event_dsl::game_id.eq_any(game_ids))
+            .left_join(event_ingest_log_dsl::event_ingest_log)
+            .filter(event_ingest_log_dsl::log_level.eq(level))
+            .group_by(raw_event_dsl::game_id)
+            .select((raw_event_dsl::game_id, diesel::dsl::count_star()))
+            .order_by(raw_event_dsl::game_id)
+            .get_results::<(i64, i64)>(conn)
+            .await
+    };
+
+    let mut num_warnings = count_log_level(conn, &game_ids, 2).await?.into_iter().peekable();
+    let mut num_errors = count_log_level(conn, &game_ids, 1).await?.into_iter().peekable();
+    let mut num_critical = count_log_level(conn, &game_ids, 0).await?.into_iter().peekable();
+
+    let games = games
+        .into_iter()
+        .map(|game| {
+            let warnings = num_warnings.peeking_next(|(id, _)| *id == game.id).map_or(0, |(_, n)| n);
+            let errors = num_errors.peeking_next(|(id, _)| *id == game.id).map_or(0, |(_, n)| n);
+            let critical = num_critical.peeking_next(|(id, _)| *id == game.id).map_or(0, |(_, n)| n);
+            (game, warnings, errors, critical)
+        })
+        .collect();
+
+    assert!(num_warnings.next().is_none());
+    assert!(num_errors.next().is_none());
+    assert!(num_critical.next().is_none());
 
     Ok((ingest, games))
 }
@@ -323,7 +359,7 @@ pub async fn insert_additional_ingest_logs(
         .order_by(raw_events_dsl::game_event_index.asc())
         .get_results(conn)
         .await?;
-    
+
     // Maps raw_event_id to its highest log_order
     let mut highest_log_order_for_event: HashMap<_, _> = event_ingest_log_dsl::event_ingest_log
         .group_by(event_ingest_log_dsl::raw_event_id)
