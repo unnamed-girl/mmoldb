@@ -15,7 +15,6 @@ use crate::ingest::{EventDetail, IngestLog};
 use crate::models::{DbEvent, DbEventIngestLog, DbFielder, DbGame, DbRawEvent, DbRunner, Ingest, NewEventIngestLogOwning, NewGame, NewIngest, NewRawEvent};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use itertools::PeekingNext;
-use log::Level;
 use rocket_db_pools::{diesel::prelude::*, diesel::AsyncPgConnection};
 
 pub async fn ingest_count(conn: &mut AsyncPgConnection) -> QueryResult<i64> {
@@ -129,7 +128,7 @@ pub async fn ingest_with_games(
             .order_by(raw_event_dsl::game_id)
             .get_results::<(i64, i64)>(conn)
             .await
-    };
+    }
 
     let mut num_warnings = count_log_level(conn, &game_ids, 2).await?.into_iter().peekable();
     let mut num_errors = count_log_level(conn, &game_ids, 1).await?.into_iter().peekable();

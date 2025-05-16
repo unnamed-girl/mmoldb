@@ -7,7 +7,7 @@ use std::sync::Arc;
 pub use sim::{EventDetail, EventDetailFielder, EventDetailRunner, IngestLog};
 
 use crate::db::Taxa;
-use crate::ingest::sim::Game;
+use crate::ingest::sim::{Game, SimError};
 use crate::{Db, db};
 use chrono::serde::ts_milliseconds;
 use chrono::{DateTime, Utc};
@@ -358,8 +358,9 @@ pub async fn ingest_task_runner(pool: Db, taxa: Taxa, client: ClientWithMiddlewa
 }
 
 pub async fn do_ingest(pool: &Db, taxa: &Taxa, client: &ClientWithMiddleware, is_debug: bool) {
-    // ------------ This is where the loop will start -------------
-
+    // Temp override
+    let is_debug = false;
+    
     let ingest_start = Utc::now();
     info!("Ingest at {ingest_start} started");
 
@@ -388,7 +389,7 @@ pub async fn do_ingest(pool: &Db, taxa: &Taxa, client: &ClientWithMiddleware, is
 
     let games: GamesResponse = games_response.json().await.expect("TODO Error handling");
 
-    info!("Running ingest on {} games", games.len());
+    info!("Ingesting {} total games", games.len());
 
     let mut num_incomplete_games_skipped = 0;
     let mut num_already_ingested_games_skipped = 0;
@@ -425,7 +426,6 @@ pub async fn do_ingest(pool: &Db, taxa: &Taxa, client: &ClientWithMiddleware, is
         }
 
         let url = format!("https://mmolb.com/api/game/{}", game_info.game_id);
-        info!("Fetching {url}");
         let game_data = client
             .get(url)
             .send()
@@ -436,13 +436,14 @@ pub async fn do_ingest(pool: &Db, taxa: &Taxa, client: &ClientWithMiddleware, is
             .expect("TODO Error handling");
 
         info!(
-            "Got data for {} {} @ {} {} s{}d{}",
+            "Fetched {} {} @ {} {} s{}d{}: {}",
             game_data.away_team_emoji,
             game_data.away_team_name,
             game_data.home_team_emoji,
             game_data.home_team_name,
             game_data.season,
             game_data.day,
+            format!("https://mmolb.com/watch/{}", game_info.game_id),
         );
 
         // TODO Handle catch_unwind result better
@@ -472,7 +473,7 @@ pub async fn do_ingest(pool: &Db, taxa: &Taxa, client: &ClientWithMiddleware, is
             .expect("TODO Error handling")
     }
     info!(
-        "Marked ingest {ingest_id} finished {:#}.",
+        "Marked ingest {ingest_id} finished. Time taken: {:#}.",
         HumanTime::from(ingest_end - ingest_start)
     );
 }
@@ -555,23 +556,22 @@ async fn ingest_game(
         Game::new(&game_info.game_id, &mut parsed_for_game).expect("TODO Error handling")
     };
 
-    info!(
-        "Constructed game for {} {} @ {} {} s{}d{}",
-        game_data.away_team_emoji,
-        game_data.away_team_name,
-        game_data.home_team_emoji,
-        game_data.home_team_name,
-        game_data.season,
-        game_data.day,
-    );
-
     let (detail_events, ingest_logs): (Vec<_>, Vec<_>) = parsed
         .map(|(index, (parsed, raw))| {
             let unparsed = parsed.clone().unparse();
             assert_eq!(unparsed, raw.message);
-
-            game.next(index, &parsed, &raw)
-                .expect("TODO Error handling")
+            // Sim has a different IngestLogs... this made sense at the time
+            let mut ingest_logs = sim::IngestLogs::new();
+            
+            let event = match game.next(index, &parsed, &raw, &mut ingest_logs) {
+                Ok(result) => { result }
+                Err(e) => {
+                    ingest_logs.critical(e.to_string());
+                    None
+                }
+            };
+            
+            (event, ingest_logs.into_vec())
         })
         .unzip();
 
@@ -604,11 +604,6 @@ async fn ingest_game(
 
         (game_id, inserted_events)
     };
-
-    info!(
-        "Checking round-trip for https://mmolb.com/watch/{}",
-        game_info.game_id
-    );
 
     let mut extra_ingest_logs = IngestLogs::new();
     assert_eq!(inserted_events.len(), detail_events.len());
@@ -645,6 +640,16 @@ async fn ingest_game(
             .await
             .expect("TODO Error handling");
     }
+
+    info!(
+        "Finished importing {} {} @ {} {} s{}d{}",
+        game_data.away_team_emoji,
+        game_data.away_team_name,
+        game_data.home_team_emoji,
+        game_data.home_team_name,
+        game_data.season,
+        game_data.day,
+    );
 }
 
 fn check_round_trip(
