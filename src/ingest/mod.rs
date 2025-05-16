@@ -477,6 +477,63 @@ pub async fn do_ingest(pool: &Db, taxa: &Taxa, client: &ClientWithMiddleware, is
     );
 }
 
+// A utility to more conveniently build a Vec<IngestLog>
+pub struct IngestLogs {
+    logs: Vec<(usize, IngestLog)>,
+}
+
+impl IngestLogs {
+    pub fn new() -> Self {
+        Self { logs: Vec::new() }
+    }
+
+    pub fn critical(&mut self, game_event_index: usize, s: impl Into<String>) {
+        self.logs.push((game_event_index, IngestLog {
+            log_level: 0,
+            log_text: s.into(),
+        }));
+    }
+
+    pub fn error(&mut self, game_event_index: usize, s: impl Into<String>) {
+        self.logs.push((game_event_index, IngestLog {
+            log_level: 1,
+            log_text: s.into(),
+        }));
+    }
+
+    pub fn warn(&mut self, game_event_index: usize, s: impl Into<String>) {
+        self.logs.push((game_event_index, IngestLog {
+            log_level: 2,
+            log_text: s.into(),
+        }));
+    }
+
+    pub fn info(&mut self, game_event_index: usize, s: impl Into<String>) {
+        self.logs.push((game_event_index, IngestLog {
+            log_level: 3,
+            log_text: s.into(),
+        }));
+    }
+
+    pub fn debug(&mut self, game_event_index: usize, s: impl Into<String>) {
+        self.logs.push((game_event_index, IngestLog {
+            log_level: 4,
+            log_text: s.into(),
+        }));
+    }
+
+    pub fn trace(&mut self, game_event_index: usize, s: impl Into<String>) {
+        self.logs.push((game_event_index, IngestLog {
+            log_level: 5,
+            log_text: s.into(),
+        }));
+    }
+
+    pub fn into_vec(self) -> Vec<(usize, IngestLog)> {
+        self.logs
+    }
+}
+
 async fn ingest_game(
     pool: Db,
     taxa: &Taxa,
@@ -492,7 +549,7 @@ async fn ingest_game(
     // inside Game::new.
     let mut parsed = parsed_copy.iter().zip(&game_data.event_log).enumerate();
 
-    let mut game = {
+    let (mut game, game_creation_ingest_logs) = {
         let mut parsed_for_game = (&mut parsed).map(|(_, (parsed, _))| parsed);
 
         Game::new(&game_info.game_id, &mut parsed_for_game).expect("TODO Error handling")
@@ -531,25 +588,27 @@ async fn ingest_game(
         .collect::<Vec<_>>();
 
     // Scope to drop conn as soon as I'm done with it
-    let inserted_events = {
+    let (game_id, inserted_events) = {
         let mut conn = pool.get().await.expect("TODO Error handling");
 
-        db::insert_game(
+        let game_id = db::insert_game(
             &mut conn,
             &taxa,
             ingest_id,
             &game_info.game_id,
             &game_data,
-            ingest_logs,
+            game_creation_ingest_logs.into_iter().chain(ingest_logs),
             &detail_events,
         )
         .await
         .expect("TODO Error handling");
 
         // We can rebuild them
-        db::events_for_game(&mut conn, &taxa, &game_info.game_id)
+        let inserted_events = db::events_for_game(&mut conn, &taxa, &game_info.game_id)
             .await
-            .expect("TODO Error handling")
+            .expect("TODO Error handling");
+
+        (game_id, inserted_events)
     };
 
     info!(
@@ -557,64 +616,75 @@ async fn ingest_game(
         game_info.game_id
     );
 
+    let mut extra_ingest_logs = IngestLogs::new();
     assert_eq!(inserted_events.len(), detail_events.len());
     for (reconstructed_detail, original_detail) in inserted_events.iter().zip(detail_events) {
-        info!(
-            "Original Baserunners:      {:?}\nReconstructed baserunners: {:?}",
-            original_detail.baserunners, reconstructed_detail.baserunners,
-        );
 
         let index = reconstructed_detail.game_event_index;
         let fair_ball_index = reconstructed_detail.fair_ball_event_index;
 
         if let Some(index) = fair_ball_index {
             check_round_trip(
-                "Contact event",
+                index,
+                &mut extra_ingest_logs,
+                "contact event",
                 &parsed_copy[index],
                 &original_detail.to_parsed_contact(),
                 &reconstructed_detail.to_parsed_contact(),
             );
         }
 
+        extra_ingest_logs.debug(index, format!(
+            "Original Baserunners:      {:?}\nReconstructed baserunners: {:?}",
+            original_detail.baserunners, reconstructed_detail.baserunners,
+        ));
+
         check_round_trip(
-            "Event",
+            index,
+            &mut extra_ingest_logs,
+            "event",
             &parsed_copy[index],
             &original_detail.to_parsed(),
             &reconstructed_detail.to_parsed(),
         );
     }
+
+    let extra_ingest_logs = extra_ingest_logs.into_vec();
+    if !extra_ingest_logs.is_empty() {
+        let mut conn = pool.get().await.expect("TODO Error handling");
+        db::insert_additional_ingest_logs(&mut conn, game_id, extra_ingest_logs)
+            .await
+            .expect("TODO Error handling");
+    }
 }
 
 fn check_round_trip(
+    index: usize,
+    ingest_logs: &mut IngestLogs,
     label: &str,
     parsed: &ParsedEventMessage<&str>,
     original_detail: &ParsedEventMessage<&str>,
     reconstructed_detail: &ParsedEventMessage<&str>,
 ) {
-    info!(
-        "{}\n           Original: {:?}\
-           \nThrough EventDetail: {:?}\
-           \n         Through db: {:?}",
-        parsed.clone().unparse(),
-        parsed,
-        original_detail,
-        reconstructed_detail,
-    );
+    if parsed != original_detail {
+        ingest_logs.error(index, format!(
+            "Round-trip of {} through EventDetail produced a mismatch:\n\
+             Original: <pre>{:?}</pre>\n\
+             Through EventDetail: <pre>{:?}</pre>",
+            label,
+            parsed,
+            original_detail,
+        ));
+    }
 
-    // The linter incorrectly marks `label` as dead code even though
-    // it's used in the assert statements. This lets me silence only
-    // that warning without having to silence dead_code in the whole
-    // function.
-    #[allow(path_statements)]
-    label;
-
-    assert_eq!(
-        parsed, original_detail,
-        "{label} round-trip through EventDetail failed (left is original, right is reconstructed)"
-    );
-
-    assert_eq!(
-        parsed, reconstructed_detail,
-        "{label} round-trip through db failed (left is original, right is reconstructed)"
-    );
+    if parsed != reconstructed_detail {
+        ingest_logs.error(index, format!(
+            "Round-trip of {} through database produced a mismatch:\n\
+             Original: <pre>{:?}</pre>\n\
+             Through EventDetail: <pre>{:?}</pre>",
+            label,
+            parsed,
+            reconstructed_detail,
+        ));
+    }
 }

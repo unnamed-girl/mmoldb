@@ -5,6 +5,7 @@
 mod taxa;
 mod to_db_format;
 
+use std::collections::HashMap;
 pub use crate::db::taxa::{
     Taxa, TaxaBase, TaxaBaseDescriptionFormat, TaxaBaseWithDescriptionFormat, TaxaEventType,
     TaxaFairBallType, TaxaFieldingErrorType, TaxaHitType, TaxaPosition,
@@ -198,7 +199,7 @@ pub async fn insert_game<'e>(
     game_data: &mmolb_parsing::game::Game,
     logs: impl IntoIterator<Item = impl IntoIterator<Item = IngestLog>>,
     event_details: &'e [EventDetail<&'e str>],
-) -> QueryResult<()> {
+) -> QueryResult<i64> {
     use crate::data_schema::data::event_baserunners::dsl as baserunners_dsl;
     use crate::data_schema::data::event_fielders::dsl as fielders_dsl;
     use crate::data_schema::data::events::dsl as events_dsl;
@@ -303,6 +304,58 @@ pub async fn insert_game<'e>(
         n_fielders_inserted, n_fielders_to_insert,
         "Fielders insert should insert {n_fielders_to_insert} rows",
     );
+
+    Ok(game_id)
+}
+
+pub async fn insert_additional_ingest_logs(
+    conn: &mut AsyncPgConnection,
+    game_id: i64,
+    extra_ingest_logs: impl IntoIterator<Item = (usize, IngestLog)>,
+) -> QueryResult<()> {
+    use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
+    use crate::info_schema::info::raw_events::dsl as raw_events_dsl;
+
+    // index is game_event_index, value is raw_event id
+    let raw_event_ids: Vec<i64> = raw_events_dsl::raw_events
+        .select(raw_events_dsl::id)
+        .filter(raw_events_dsl::game_id.eq(game_id))
+        .order_by(raw_events_dsl::game_event_index.asc())
+        .get_results(conn)
+        .await?;
+    
+    // Maps raw_event_id to its highest log_order
+    let mut highest_log_order_for_event: HashMap<_, _> = event_ingest_log_dsl::event_ingest_log
+        .group_by(event_ingest_log_dsl::raw_event_id)
+        .select((event_ingest_log_dsl::raw_event_id, diesel::dsl::max(event_ingest_log_dsl::log_order)))
+        .filter(event_ingest_log_dsl::raw_event_id.eq_any(&raw_event_ids))
+        .order_by(event_ingest_log_dsl::raw_event_id.asc())
+        .get_results::<(i64, Option<i32>)>(conn)
+        .await?
+        .into_iter()
+        .filter_map(|(id, num)| num.map(|n| (id, n)))
+        .collect();
+
+    let new_logs: Vec<_> = extra_ingest_logs
+        .into_iter()
+        .map(|(game_event_index, ingest_log)| {
+            let raw_event_id = raw_event_ids[game_event_index];
+            let n = highest_log_order_for_event.entry(raw_event_id).or_default();
+            *n += 1;
+
+            NewEventIngestLogOwning {
+                raw_event_id,
+                log_order: *n,
+                log_level: ingest_log.log_level,
+                log_text: ingest_log.log_text,
+            }
+        })
+        .collect();
+
+    diesel::insert_into(event_ingest_log_dsl::event_ingest_log)
+        .values(new_logs)
+        .execute(conn)
+        .await?;
 
     Ok(())
 }

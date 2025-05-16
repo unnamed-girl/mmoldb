@@ -11,3 +11,52 @@
 .event:nth-child(odd) {
     background: rgba(0, 0, 0, 0);
 }
+
+.no-logs {
+    background: rgba(255, 255, 255, 0.2);
+    padding: 6px 11px;
+    border-radius: 10px;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.logs {
+    list-style: none;
+    padding: 0;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.log {
+    padding: 6px 11px;
+}
+
+.log.critical {
+    /* Critical gets the glaring red and error gets the nice red */
+    background-color: red;
+}
+
+.log.error {
+    background-color: #5e0b0b;
+}
+
+.log.warn {
+    background-color: #603805;
+}
+
+.log.info {
+    background-color: #1d4436;
+}
+
+.log.debug {
+    background-color: #162d51;
+    color: #ccc;
+}
+
+.log.debug:nth-child(even) {
+    background-color: #132746;
+}
+
+.log.trace {
+    background-color: #343f40;
+    color: #ccc;
+}

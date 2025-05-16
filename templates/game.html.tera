@@ -35,6 +35,15 @@
             {% for event in game.events %}
             <li class="event">
                 <p class="event-text">{{ event.text | safe }}</p>
+                {% if event.logs %}
+                <ul class="logs">
+                    {% for log in event.logs %}
+                    <li class="log {{ log.level }}">{{ log.text | linebreaksbr | safe }}</li>
+                    {% endfor %}
+                </ul>
+{#                {% else %}#}
+{#                <p class="no-logs">No logs</p>#}
+                {% endif %}
             </li>
         {% endfor %}
         </ul>

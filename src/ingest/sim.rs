@@ -9,10 +9,7 @@ use mmolb_parsing::enums::{
     Base, BaseNameVariant, BatterStat, Distance, FairBallDestination, FairBallType, FoulType,
     HomeAway, NowBattingStats, Position, StrikeType, TopBottom,
 };
-use mmolb_parsing::parsed_event::{
-    BaseSteal, FieldingAttempt, ParsedEventMessageDiscriminants, PositionedPlayer, RunnerAdvance,
-    RunnerOut,
-};
+use mmolb_parsing::parsed_event::{BaseSteal, FieldingAttempt, ParsedEventMessageDiscriminants, PositionedPlayer, RunnerAdvance, RunnerOut, StartOfInningPitcher};
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::fmt::Write;
@@ -82,6 +79,63 @@ pub struct EventDetail<StrT> {
 pub struct IngestLog {
     pub log_level: i32,
     pub log_text: String,
+}
+
+// A utility to more conveniently build a Vec<IngestLog>
+struct IngestLogs {
+    logs: Vec<IngestLog>,
+}
+
+impl IngestLogs {
+    pub fn new() -> Self {
+        Self { logs: Vec::new() }
+    }
+
+    pub fn critical(&mut self, s: impl Into<String>) {
+        self.logs.push(IngestLog {
+            log_level: 0,
+            log_text: s.into(),
+        });
+    }
+
+    pub fn error(&mut self, s: impl Into<String>) {
+        self.logs.push(IngestLog {
+            log_level: 1,
+            log_text: s.into(),
+        });
+    }
+
+    pub fn warn(&mut self, s: impl Into<String>) {
+        self.logs.push(IngestLog {
+            log_level: 2,
+            log_text: s.into(),
+        });
+    }
+
+    pub fn info(&mut self, s: impl Into<String>) {
+        self.logs.push(IngestLog {
+            log_level: 3,
+            log_text: s.into(),
+        });
+    }
+
+    pub fn debug(&mut self, s: impl Into<String>) {
+        self.logs.push(IngestLog {
+            log_level: 4,
+            log_text: s.into(),
+        });
+    }
+
+    pub fn trace(&mut self, s: impl Into<String>) {
+        self.logs.push(IngestLog {
+            log_level: 5,
+            log_text: s.into(),
+        });
+    }
+    
+    pub fn into_vec(self) -> Vec<IngestLog> {
+        self.logs
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -700,12 +754,13 @@ struct RunnerUpdate<'g, 'a> {
 }
 
 impl<'g> Game<'g> {
-    pub fn new<'a, IterT>(game_id: &'g str, events: &'a mut IterT) -> Result<Game<'g>, SimError>
+    pub fn new<'a, IterT>(game_id: &'g str, events: &'a mut IterT) -> Result<(Game<'g>, Vec<Vec<IngestLog>>), SimError>
     where
         'g: 'a,
         IterT: Iterator<Item = &'a ParsedEventMessage<&'g str>>,
     {
         let mut events = ParsedEventMessageIter::new(events);
+        let mut ingest_logs = Vec::new();
 
         let (away_team_name, away_team_emoji, home_team_name, home_team_emoji) = extract_next_game_event!(
             events,
@@ -722,6 +777,13 @@ impl<'g> Game<'g> {
                 home_team_emoji,
             )
         )?;
+        
+        ingest_logs.push({
+            let mut logs = IngestLogs::new();
+            logs.debug(format!("Set home team to name: \"{home_team_name}\", emoji: \"{home_team_emoji}\""));
+            logs.debug(format!("Set away team to name: \"{away_team_name}\", emoji: \"{away_team_emoji}\""));
+            logs.into_vec()
+        });
 
         let (
             home_pitcher_name,
@@ -749,50 +811,65 @@ impl<'g> Game<'g> {
                 home_team_emoji,
             )
         )?;
+        let mut event_ingest_logs = IngestLogs::new();
         if away_team_name_2 != away_team_name {
-            warn!(
+            event_ingest_logs.warn(format!(
                 "Away team name from PitchingMatchup ({away_team_name_2}) did \
                 not match the one from LiveNow ({away_team_name})"
-            );
+            ));
         }
         if away_team_emoji_2 != away_team_emoji {
-            warn!(
+            event_ingest_logs.warn(format!(
                 "Away team emoji from PitchingMatchup ({away_team_emoji_2}) did \
                 not match the one from LiveNow ({away_team_emoji})"
-            );
+            ));
         }
         if home_team_name_2 != home_team_name {
-            warn!(
+            event_ingest_logs.warn(format!(
                 "Home team name from PitchingMatchup ({home_team_name_2}) did \
                 not match the one from LiveNow ({home_team_name})"
-            );
+            ));
         }
         if home_team_emoji_2 != home_team_emoji {
-            warn!(
+            event_ingest_logs.warn(format!(
                 "Home team emoji from PitchingMatchup ({home_team_emoji_2}) did \
                 not match the one from LiveNow ({home_team_emoji})"
-            );
+            ));
         }
+        event_ingest_logs.debug(format!("Set home team pitcher to name: \"{home_pitcher_name}\""));
+        event_ingest_logs.debug(format!("Set away team pitcher to name: \"{away_pitcher_name}\""));
+        ingest_logs.push(event_ingest_logs.into_vec());
 
         let away_lineup = extract_next_game_event!(
             events,
             [ParsedEventMessageDiscriminants::Lineup]
             ParsedEventMessage::Lineup { side: HomeAway::Away, players } => players
         )?;
+        ingest_logs.push({
+            let mut logs = IngestLogs::new();
+            logs.debug(format!("Set away lineup to: {}", format_lineup(&away_lineup)));
+            logs.into_vec()
+        });
 
         let home_lineup = extract_next_game_event!(
             events,
             [ParsedEventMessageDiscriminants::Lineup]
             ParsedEventMessage::Lineup { side: HomeAway::Home, players } => players
         )?;
+        ingest_logs.push({
+            let mut logs = IngestLogs::new();
+            logs.debug(format!("Set home lineup to: {}", format_lineup(&home_lineup)));
+            logs.into_vec()
+        });
 
         extract_next_game_event!(
             events,
             [ParsedEventMessageDiscriminants::PlayBall]
             ParsedEventMessage::PlayBall => ()
         )?;
+        ingest_logs.push(Vec::new());
 
-        Ok(Self {
+        let game = Self {
             game_id,
             away: TeamInGame {
                 team_name: away_team_name,
@@ -833,7 +910,8 @@ impl<'g> Game<'g> {
                 game_finished: false,
                 runners_on: Default::default(),
             },
-        })
+        };
+        Ok((game, ingest_logs))
     }
 
     fn batting_team(&self) -> &TeamInGame<'g> {
@@ -1369,8 +1447,8 @@ impl<'g> Game<'g> {
         event: &ParsedEventMessage<&'g str>,
         raw_event: &mmolb_parsing::game::Event,
     ) -> Result<(Option<EventDetail<&'g str>>, Vec<IngestLog>), SimError> {
-        let mut ingest_logs = Vec::new();
-        
+        let mut ingest_logs = IngestLogs::new();
+
         let previous_event = self.state.prev_event_type;
         let this_event_discriminant = event.discriminant();
 
@@ -1390,11 +1468,11 @@ impl<'g> Game<'g> {
                     automatic_runner,
                 } => {
                     if *side != self.state.inning_half.flip() {
-                        warn!(
+                        ingest_logs.warn(format!(
                             "Unexpected inning side in {}: expected {:?}, but saw {side:?}",
                             self.game_id,
                             self.state.inning_half.flip(),
-                        );
+                        ));
                     }
                     self.state.inning_half = *side;
 
@@ -1405,45 +1483,77 @@ impl<'g> Game<'g> {
                     };
 
                     if *number != expected_number {
-                        warn!(
+                        ingest_logs.warn(format!(
                             "Unexpected inning number in {}: expected {}, but saw {}",
                             self.game_id,
                             expected_number,
                             number,
-                        );
+                        ));
                     }
                     self.state.inning_number = *number;
 
                     if *batting_team_name != self.batting_team().team_name {
-                        warn!(
+                        ingest_logs.warn(format!(
                             "Batting team name from InningStart ({batting_team_name}) did \
                             not match the one from LiveNow ({})",
                             self.batting_team().team_name,
-                        );
+                        ));
                     }
                     if *batting_team_emoji != self.batting_team().team_emoji {
-                        warn!(
+                        ingest_logs.warn(format!(
                             "Batting team emoji from InningStart ({batting_team_emoji}) did \
                             not match the one from LiveNow ({})",
                             self.batting_team().team_emoji,
-                        );
+                        ));
                     }
+                    
+                    match pitcher_status {
+                        StartOfInningPitcher::Same { name, emoji } => {
+                            ingest_logs.info(format!(
+                                "Started {} of {} with same pitcher {emoji} {name}",
+                                self.state.inning_half,
+                                self.state.inning_number,
+                            ));
+                        }
+                        StartOfInningPitcher::Different { arriving_pitcher, arriving_position, leaving_pitcher, leaving_position } => {
+                            if *leaving_pitcher != self.active_pitcher().name {
+                                ingest_logs.warn(format!(
+                                    "The pitcher who left ({}) did not match the previously active \
+                                    pitcher ({})",
+                                    leaving_pitcher, self.active_pitcher().name,
+                                ));
+                            }
+        
+                            if *leaving_position != self.active_pitcher().position {
+                                ingest_logs.warn(format!(
+                                    "The position of the pitcher who left ({}) did not match the \
+                                    previously active pitcher's position ({})",
+                                    leaving_position, self.active_pitcher().position,
+                                ));
+                            }
+        
+                            ingest_logs.info(format!(
+                                "Started {} of {} with new pitcher {arriving_position} {arriving_pitcher}",
+                                self.state.inning_half,
+                                self.state.inning_number,
+                            ));
 
-                    info!(
-                        "Started {} of {} with pitcher {pitcher_status:?}",
-                        self.state.inning_half,
-                        self.state.inning_number,
-                    );
+                            *self.active_pitcher_mut() = PositionedPlayer {
+                                name: arriving_pitcher,
+                                position: *arriving_position,
+                            };
+                        }
+                    }
 
                     // Add the automatic runner to our state without emitting a db event for it.
                     // This way they will just show up on base without having an event that put
                     // them there, which I think is the correct interpretation.
                     if let Some(runner_name) = automatic_runner {
                         if *runner_name != self.active_automatic_runner().name {
-                            warn!(
+                            ingest_logs.warn(format!(
                                 "Unexpected automatic runner: expected {}, but saw {}",
                                 self.active_automatic_runner().name, runner_name,
-                            );
+                            ));
                         }
 
                         self.state.runners_on.push_back(RunnerOn {
@@ -1467,18 +1577,18 @@ impl<'g> Game<'g> {
                 [ParsedEventMessageDiscriminants::MoundVisit]
                 ParsedEventMessage::MoundVisit { emoji, team } => {
                     if *team != self.defending_team().team_name {
-                        warn!(
+                        ingest_logs.warn(format!(
                             "Batting team name from MoundVisit ({team}) did \
                             not match the one from LiveNow ({})",
                             self.defending_team().team_name,
-                        );
+                        ));
                     }
                     if *emoji != self.defending_team().team_emoji {
-                        warn!(
+                        ingest_logs.warn(format!(
                             "Batting team emoji from MoundVisit ({emoji}) did \
                             not match the one from LiveNow ({})",
                             self.defending_team().team_emoji,
-                        );
+                        ));
                     }
 
                     self.state.phase = GamePhase::ExpectMoundVisitOutcome;
@@ -1518,12 +1628,12 @@ impl<'g> Game<'g> {
                 ParsedEventMessage::StrikeOut { foul, batter, strike, steals } => {
                     self.check_batter(batter, event.discriminant());
                     if self.state.count_strikes < 2 {
-                        warn!(
+                        ingest_logs.warn(format!(
                             "Unexpected strikeout in {}: expected 2 strikes in the count, but \
                             there were {}",
                             self.game_id,
                             self.state.count_strikes,
-                        );
+                        ));
                     }
 
                     self.update_runners_steals_only(steals);
@@ -1616,17 +1726,17 @@ impl<'g> Game<'g> {
                [ParsedEventMessageDiscriminants::MoundVisit]
                ParsedEventMessage::MoundVisit { emoji, team } => {
                    if self.defending_team().team_name != *team {
-                        warn!(
+                        ingest_logs.warn(format!(
                             "Team name in MoundVisit doesn't match: Expected {}, but saw {team}",
                             self.defending_team().team_name,
-                        );
+                        ));
                    }
 
                    if self.defending_team().team_emoji != *emoji {
-                        warn!(
+                        ingest_logs.warn(format!(
                             "Team emoji in MoundVisit doesn't match: Expected {}, but saw {emoji}",
                             self.defending_team().team_emoji,
-                        );
+                        ));
                    }
 
                    self.state.phase = GamePhase::ExpectMoundVisitOutcome;
@@ -1650,15 +1760,15 @@ impl<'g> Game<'g> {
 
                     if *fair_ball_type != FairBallType::GroundBall {
                         if *sacrifice && scores.is_empty() {
-                            warn!("Flyout was described as a sacrifice, but nobody scored");
+                            ingest_logs.warn("Flyout was described as a sacrifice, but nobody scored");
                         } else if !*sacrifice && !scores.is_empty() {
-                            warn!(
+                            ingest_logs.warn(
                                 "Player(s) scored on flyout, but it was not described as a \
                                 sacrifice",
                             );
                         }
                     } else if *sacrifice {
-                        warn!("Non-flyout was described as sacrifice");
+                        ingest_logs.warn("Non-flyout was described as sacrifice");
                     }
 
                     assert_eq!(*perfect, false, "TODO Handle perfect outs");
@@ -1733,12 +1843,12 @@ impl<'g> Game<'g> {
                     self.check_fair_ball_destination(&fair_ball, *destination, event.discriminant());
 
                     if *grand_slam && scores.len() != 3 {
-                        warn!(
+                        ingest_logs.warn(format!(
                             "Parsed a grand slam, but there were {} runners scored (expected 3)",
                             scores.len(),
-                        );
+                        ));
                     } else if !*grand_slam && scores.len() == 3 {
-                        warn!("There were 3 runners scored but we didn't parse a grand slam");
+                        ingest_logs.warn("There were 3 runners scored but we didn't parse a grand slam");
                     }
 
                     // This is the one situation where you can have
@@ -1786,9 +1896,9 @@ impl<'g> Game<'g> {
                     // Assuming for now that sacrifice is any time
                     // there are scores
                     if *sacrifice && scores.is_empty() {
-                        warn!("DoublePlayGrounded was described as a sacrifice, but nobody scored");
+                        ingest_logs.warn("DoublePlayGrounded was described as a sacrifice, but nobody scored");
                     } else if !*sacrifice && !scores.is_empty() {
-                        warn!(
+                        ingest_logs.warn(
                             "DoublePlayGrounded wasn't described as a sacrifice even though there \
                             were scores",
                         );
@@ -1861,7 +1971,7 @@ impl<'g> Game<'g> {
 
                     match result {
                         FieldingAttempt::Out { out } => {
-                            warn!("I've been wondering if this combination actually happens.");
+                            ingest_logs.warn("I've been wondering if this combination actually happens.");
                             detail_builder
                                 .fair_ball(fair_ball)
                                 .runner_changes(advances.clone(), scores.clone())
@@ -1872,10 +1982,10 @@ impl<'g> Game<'g> {
                         FieldingAttempt::Error { fielder, error } => {
                             if let Some((listed_fielder,)) = fielders.iter().collect_tuple() {
                                 if listed_fielder.name != *fielder {
-                                    warn!("Fielder who made the error ({}) is not the one listed as fielding the ball ({})", fielder, listed_fielder.name);
+                                    ingest_logs.warn(format!("Fielder who made the error ({}) is not the one listed as fielding the ball ({})", fielder, listed_fielder.name));
                                 }
                             } else {
-                                warn!("Expected exactly one listed fielder in a fielder's choice with an error");
+                                ingest_logs.warn("Expected exactly one listed fielder in a fielder's choice with an error");
                             }
 
                             detail_builder
@@ -1893,19 +2003,19 @@ impl<'g> Game<'g> {
                 [ParsedEventMessageDiscriminants::InningEnd]
                 ParsedEventMessage::InningEnd { number, side } => {
                     if *number != self.state.inning_number {
-                        warn!(
+                        ingest_logs.warn(format!(
                             "Unexpected inning number in {}: expected {}, but saw {number}",
                             self.game_id,
                             self.state.inning_number,
-                        );
+                        ));
                     }
 
                     if *side != self.state.inning_half {
-                        warn!(
+                        ingest_logs.warn(format!(
                             "Unexpected inning side in {}: expected {:?}, but saw {side:?}",
                             self.game_id,
                             self.state.inning_half,
-                        );
+                        ));
                     }
 
                     // These get cleared at the end of a PA, but the PA doesn't end for an inning-
@@ -1917,21 +2027,21 @@ impl<'g> Game<'g> {
 
                     let game_finished = if *number < 9 {
                         // Game never ends if inning number is less than 9
-                        info!("Game didn't end at the {side:#?} of the {number} because it was before the 9th");
+                        ingest_logs.info(format!("Game didn't end after the {side:#?} of the {number} because it was before the 9th"));
                         false
                     } else if *side == TopBottom::Top && self.state.home_score > self.state.away_score {
                         // Game ends after the top of the inning if it's 9 or later and the home
                         // team is winning
-                        info!("Game ended at the top of the {number} because the home team was winning");
+                        ingest_logs.info(format!("Game ended after the top of the {number} because the home team was winning"));
                         true
                     } else if *side == TopBottom::Bottom && self.state.home_score != self.state.away_score {
                         // Game ends after the bottom of the inning if it's 9 or later and it's not
                         // a tie
-                        info!("Game ended at the bottom of the {number} because the score was not tied");
+                        ingest_logs.info(format!("Game ended after the bottom of the {number} because the score was not tied"));
                         true
                     } else {
                         // Otherwise the game does not end
-                        info!("Game didn't end at the {side:#?} of the {number} because the score was tied");
+                        ingest_logs.info(format!("Game didn't end after the {side:#?} of the {number} because the score was tied"));
                         false
                     };
 
@@ -1949,19 +2059,19 @@ impl<'g> Game<'g> {
                 [ParsedEventMessageDiscriminants::PitcherRemains]
                 ParsedEventMessage::PitcherRemains { remaining_pitcher } => {
                     if remaining_pitcher.name != self.active_pitcher().name {
-                        warn!(
+                        ingest_logs.warn(format!(
                             "In a PitcherRemains event, the pitcher who remained ({}) did not \
                             match the active pitcher ({})",
                             remaining_pitcher.name, self.active_pitcher().name,
-                        );
+                        ));
                     }
 
                     if remaining_pitcher.position != self.active_pitcher().position {
-                        warn!(
+                        ingest_logs.warn(format!(
                             "In a PitcherRemains event, the position of the pitcher who remained \
                             ({}) did not match the active pitcher's position ({})",
                             remaining_pitcher.position, self.active_pitcher().position,
-                        );
+                        ));
                     }
 
                     self.state.phase = GamePhase::ExpectNowBatting;
@@ -1970,19 +2080,19 @@ impl<'g> Game<'g> {
                 [ParsedEventMessageDiscriminants::PitcherSwap]
                 ParsedEventMessage::PitcherSwap { arriving_pitcher, arriving_position, leaving_pitcher, leaving_position } => {
                     if *leaving_pitcher != self.active_pitcher().name {
-                        warn!(
+                        ingest_logs.warn(format!(
                             "In a PitcherSwap event, the pitcher who left ({}) did not match the \
                             previously active pitcher ({})",
                             leaving_pitcher, self.active_pitcher().name,
-                        );
+                        ));
                     }
 
                     if *leaving_position != self.active_pitcher().position {
-                        warn!(
+                        ingest_logs.warn(format!(
                             "In a PitcherSwap event, the position of the pitcher who left ({}) \
                             did not match the previously active pitcher's position ({})",
                             leaving_position, self.active_pitcher().position,
-                        );
+                        ));
                     }
 
                     *self.active_pitcher_mut() = PositionedPlayer {
@@ -2012,36 +2122,36 @@ impl<'g> Game<'g> {
                 [ParsedEventMessageDiscriminants::Recordkeeping]
                 ParsedEventMessage::Recordkeeping { winning_score, winning_team_emoji, winning_team_name, losing_score, losing_team_emoji, losing_team_name } => {
                     macro_rules! warn_if_mismatch {
-                        ($winning_or_losing:expr, $comparison_description:expr, $home_or_away:expr, $actual:expr, $expected:expr $(,)?) => {
+                        ($ingest_logs: expr, $winning_or_losing:expr, $comparison_description:expr, $home_or_away:expr, $actual:expr, $expected:expr $(,)?) => {
                             if $actual != $expected {
-                                warn!(
+                                $ingest_logs.warn(format!(
                                     "Expected the {} {} to be {} ({} team) but it was {}",
                                     $winning_or_losing,
                                     $comparison_description,
                                     $expected,
                                     $home_or_away,
                                     $actual,
-                                );
+                                ));
                             }
                         };
                     }
 
                     if self.state.away_score < self.state.home_score {
-                        warn_if_mismatch!("winning", "score", "home", *winning_score, self.state.home_score);
-                        warn_if_mismatch!("winning", "team emoji", "home", *winning_team_emoji, self.home.team_emoji);
-                        warn_if_mismatch!("winning", "team name", "home", *winning_team_name, self.home.team_name);
+                        warn_if_mismatch!(ingest_logs, "winning", "score", "home", *winning_score, self.state.home_score);
+                        warn_if_mismatch!(ingest_logs, "winning", "team emoji", "home", *winning_team_emoji, self.home.team_emoji);
+                        warn_if_mismatch!(ingest_logs, "winning", "team name", "home", *winning_team_name, self.home.team_name);
 
-                        warn_if_mismatch!("losing", "score", "away", *losing_score, self.state.away_score);
-                        warn_if_mismatch!("losing", "team emoji", "away", *losing_team_emoji, self.away.team_emoji);
-                        warn_if_mismatch!("losing", "team name", "away", *losing_team_name, self.away.team_name);
+                        warn_if_mismatch!(ingest_logs, "losing", "score", "away", *losing_score, self.state.away_score);
+                        warn_if_mismatch!(ingest_logs, "losing", "team emoji", "away", *losing_team_emoji, self.away.team_emoji);
+                        warn_if_mismatch!(ingest_logs, "losing", "team name", "away", *losing_team_name, self.away.team_name);
                     } else {
-                        warn_if_mismatch!("winning", "score", "away", *winning_score, self.state.away_score);
-                        warn_if_mismatch!("winning", "team emoji", "away", *winning_team_emoji, self.away.team_emoji);
-                        warn_if_mismatch!("winning", "team name", "away", *winning_team_name, self.away.team_name);
+                        warn_if_mismatch!(ingest_logs, "winning", "score", "away", *winning_score, self.state.away_score);
+                        warn_if_mismatch!(ingest_logs, "winning", "team emoji", "away", *winning_team_emoji, self.away.team_emoji);
+                        warn_if_mismatch!(ingest_logs, "winning", "team name", "away", *winning_team_name, self.away.team_name);
 
-                        warn_if_mismatch!("losing", "score", "home", *losing_score, self.state.home_score);
-                        warn_if_mismatch!("losing", "team emoji", "home", *losing_team_emoji, self.home.team_emoji);
-                        warn_if_mismatch!("losing", "team name", "home", *losing_team_name, self.home.team_name);
+                        warn_if_mismatch!(ingest_logs, "losing", "score", "home", *losing_score, self.state.home_score);
+                        warn_if_mismatch!(ingest_logs, "losing", "team emoji", "home", *losing_team_emoji, self.home.team_emoji);
+                        warn_if_mismatch!(ingest_logs, "losing", "team name", "home", *losing_team_name, self.home.team_name);
                     }
 
                     self.state.phase = GamePhase::Finished;
@@ -2066,8 +2176,16 @@ impl<'g> Game<'g> {
             self.check_baserunner_consistency(raw_event);
         }
 
-        Ok((result, ingest_logs))
+        Ok((result, ingest_logs.into_vec()))
     }
+}
+
+fn format_lineup(lineup: &[PositionedPlayer<impl AsRef<str>>]) -> String {
+    let mut s = String::new();
+    for player in lineup {
+        write!(s, "\n    - name: \"{}\", position: \"{}\"", player.name.as_ref(), player.position).unwrap();
+    }
+    s
 }
 
 // This can be disabled once the to-do is addressed

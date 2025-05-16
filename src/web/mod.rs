@@ -17,7 +17,7 @@ use crate::ingest::{IngestStatus, IngestTask};
 async fn game_page(game_id: i64, mut db: Connection<Db>) -> Result<Template, AppError> {
     #[derive(Serialize)]
     struct LogContext {
-        log_level: i32,
+        level: &'static str,
         text: String,
     }
     
@@ -38,7 +38,7 @@ async fn game_page(game_id: i64, mut db: Connection<Db>) -> Result<Template, App
         away_team_name: String,
         home_team_emoji: String,
         home_team_name: String,
-        events: Vec<EventContext>
+        events: Vec<EventContext>,
     }
 
     let (game, events) = db::game_and_raw_events(&mut db, game_id).await?;
@@ -57,7 +57,15 @@ async fn game_page(game_id: i64, mut db: Connection<Db>) -> Result<Template, App
         events: events.into_iter().map(|(event, logs)| EventContext {
             text: event.event_text,
             logs: logs.into_iter().map(|log| LogContext {
-                log_level: log.log_level,
+                level: match log.log_level { 
+                    0 => "critical",
+                    1 => "error",
+                    2 => "warning",
+                    3 => "info",
+                    4 => "debug",
+                    5 => "trace",
+                    _ => "unknown",
+                },
                 text: log.log_text,
             }).collect(),
         }).collect(),
