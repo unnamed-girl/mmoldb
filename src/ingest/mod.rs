@@ -1,7 +1,6 @@
 mod http;
 mod sim;
 
-use std::any::Any;
 use std::mem;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
@@ -35,6 +34,9 @@ pub enum IngestSetupError {
 
     #[error(transparent)]
     TaxaSetupError(#[from] diesel::result::Error),
+
+    #[error("Ingest task transitioned away from NotStarted before liftoff")]
+    LeftNotStartedTooEarly,
 }
 
 #[derive(Debug, Error)]
@@ -42,8 +44,8 @@ pub enum IngestFatalError {
     #[error("The ingest task was interrupted while manipulating the task state")]
     InterruptedManipulatingTaskState,
     
-    #[error("The ingest task got into an ")]
-    ImpossibleState,
+    #[error("Ingest task transitioned to NotStarted state from some other state")]
+    ReenteredNotStarted,
 }
 
 // This is the publicly visible version of IngestTaskState
@@ -134,9 +136,14 @@ impl Fairing for IngestFairing {
             return;
         };
 
-        let Some(task) = rocket.state::<IngestTask>() else {
-            error!("Cannot launch ingest task: Rocket is not managing an IngestTask!");
-            return;
+        let notify = {
+            let mut task_status = task.state.lock().await;
+            if let IngestTaskState::NotStarted(notify) = &*task_status {
+                notify.clone()
+            } else {
+                *task_status = IngestTaskState::FailedToStart(IngestSetupError::LeftNotStartedTooEarly);
+                return;
+            }
         };
 
         let shutdown = rocket.shutdown();
@@ -145,6 +152,7 @@ impl Fairing for IngestFairing {
         match launch_ingest_task(pool, is_debug, task.clone(), shutdown).await {
             Ok(handle) => {
                 *task.state.lock().await = IngestTaskState::Idle(handle);
+                notify.notify_waiters();
             }
             Err(err) => {
                 *task.state.lock().await = IngestTaskState::FailedToStart(err);
@@ -290,7 +298,7 @@ pub async fn ingest_task_runner(pool: Db, taxa: Taxa, client: ClientWithMiddlewa
             }
         }
         
-        let ingest_result = AssertUnwindSafe(do_ingest(&pool, &taxa, &client, is_debug, &task))
+        let ingest_result = AssertUnwindSafe(do_ingest(&pool, &taxa, &client, is_debug))
             .catch_unwind()
             .await;
 
@@ -310,8 +318,7 @@ pub async fn ingest_task_runner(pool: Db, taxa: Taxa, client: ClientWithMiddlewa
             let prev_state = mem::replace(&mut *task_state, IngestTaskState::ExitedWithError(IngestFatalError::InterruptedManipulatingTaskState));
             match prev_state {
                 IngestTaskState::NotStarted(_) => {
-                    error!("Ingest task transitioned to NotStarted state from some other state.");
-                    *task_state = IngestTaskState::ExitedWithError(IngestFatalError::ImpossibleState);
+                    *task_state = IngestTaskState::ExitedWithError(IngestFatalError::ReenteredNotStarted);
                     return;
                 }
                 IngestTaskState::FailedToStart(err) => {
@@ -350,7 +357,7 @@ pub async fn ingest_task_runner(pool: Db, taxa: Taxa, client: ClientWithMiddlewa
     }
 }
 
-pub async fn do_ingest(pool: &Db, taxa: &Taxa, client: &ClientWithMiddleware, is_debug: bool, task: &IngestTask) {
+pub async fn do_ingest(pool: &Db, taxa: &Taxa, client: &ClientWithMiddleware, is_debug: bool) {
     // ------------ This is where the loop will start -------------
 
     let ingest_start = Utc::now();
