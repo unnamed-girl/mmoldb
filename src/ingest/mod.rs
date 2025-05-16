@@ -570,12 +570,6 @@ async fn ingest_game(
             let unparsed = parsed.clone().unparse();
             assert_eq!(unparsed, raw.message);
 
-            info!(
-                "Applying event {:#?} \"{}\"",
-                parsed.discriminant(),
-                raw.message
-            );
-
             game.next(index, &parsed, &raw)
                 .expect("TODO Error handling")
         })

@@ -362,21 +362,12 @@ fn is_matching_runner_out<'g>(prev_runner: &RunnerOn<'g>, out: &RunnerOut<&'g st
 fn is_matching_steal<'g>(prev_runner: &RunnerOn<'g>, steal: &BaseSteal<&'g str>) -> bool {
     if prev_runner.runner_name != steal.runner {
         // If it's not the same runner, no match
-        info!(
-            "SB: {} doesn't match {}",
-            prev_runner.runner_name, steal.runner
-        );
         false
     } else if !(prev_runner.base < steal.base.into()) && steal.base != Base::Home {
         // If the base they advanced to isn't ahead of the base they started on, no match
         // This could be restricted to the very next base but I don't think that's necessary
-        info!("SB: Can't steal {} from {}", steal.base, prev_runner.base);
         false
     } else {
-        info!(
-            "SB: {} stole {} from {}",
-            prev_runner.runner_name, steal.base, prev_runner.base
-        );
         true
     }
 }
@@ -492,56 +483,6 @@ impl<'g> EventDetailBuilder<'g> {
     }
 
     pub fn build(self, game: &Game<'g>, type_detail: TaxaEventType) -> EventDetail<&'g str> {
-        let mut runner_state = "Building event with previous runners:".to_string();
-        for runner in &self.prev_game_state.runners_on {
-            write!(
-                runner_state,
-                "\n    - {} on {}",
-                runner.runner_name, runner.base
-            )
-            .unwrap();
-        }
-        write!(runner_state, "\nsteals:").unwrap();
-        for steal in &self.steals {
-            if steal.caught {
-                write!(
-                    runner_state,
-                    "\n    - {} tried to steal {}",
-                    steal.runner, steal.base
-                )
-                .unwrap();
-            } else {
-                write!(
-                    runner_state,
-                    "\n    - {} stole {}",
-                    steal.runner, steal.base
-                )
-                .unwrap();
-            }
-        }
-        write!(runner_state, "\nscores:").unwrap();
-        for score in &self.scores {
-            write!(runner_state, "\n    - {score}").unwrap();
-        }
-        write!(runner_state, "\nadvances:").unwrap();
-        for advance in &self.advances {
-            write!(
-                runner_state,
-                "\n    - {} to {}",
-                advance.runner, advance.base
-            )
-            .unwrap();
-        }
-        write!(runner_state, "\nrunners out:").unwrap();
-        for out in &self.runners_out {
-            write!(runner_state, "\n    - {} out at {}", out.runner, out.base).unwrap();
-        }
-        write!(runner_state, "\nrunners added:").unwrap();
-        if let Some((name, base)) = self.runner_added {
-            write!(runner_state, "\n    - {} on {}", name, base).unwrap();
-        }
-        info!("{}", runner_state);
-
         let batter_name = game
             .batter_for_active_team(self.batter_count_at_event_start)
             .name;
@@ -935,18 +876,18 @@ impl<'g> Game<'g> {
         }
     }
 
-    fn check_count(&self, (balls, strikes): (u8, u8)) {
+    fn check_count(&self, (balls, strikes): (u8, u8), ingest_logs: &mut IngestLogs) {
         if self.state.count_balls != balls {
-            warn!(
-                "Unexpected number of balls in {}: expected {}, but saw {balls}",
-                self.game_id, self.state.count_balls
-            );
+            ingest_logs.warn(format!(
+                "Unexpected number of balls: expected {}, but saw {balls}",
+                self.state.count_balls
+            ));
         }
         if self.state.count_strikes != strikes {
-            warn!(
-                "Unexpected number of strikes in {}: expected {}, but saw {strikes}",
-                self.game_id, self.state.count_strikes
-            );
+            ingest_logs.warn(format!(
+                "Unexpected number of strikes: expected {}, but saw {strikes}",
+                self.state.count_strikes
+            ));
         }
     }
 
@@ -990,13 +931,13 @@ impl<'g> Game<'g> {
         &lineup[batter_count % lineup.len()]
     }
 
-    fn check_batter(&self, batter_name: &str, event_type: ParsedEventMessageDiscriminants) {
+    fn check_batter(&self, batter_name: &str, ingest_logs: &mut IngestLogs) {
         let active_batter = self.active_batter();
         if active_batter.name != batter_name {
-            warn!(
-                "Unexpected batter name in {:#?}: Expected {}, but saw {}",
-                event_type, active_batter.name, batter_name,
-            );
+            ingest_logs.warn(format!(
+                "Unexpected batter name: Expected {}, but saw {}",
+                active_batter.name, batter_name,
+            ));
         }
     }
 
@@ -1004,13 +945,13 @@ impl<'g> Game<'g> {
         &self,
         fair_ball_from_previous_event: &FairBall,
         fair_ball_type_from_this_event: FairBallType,
-        event_type: ParsedEventMessageDiscriminants,
+        ingest_logs: &mut IngestLogs,
     ) {
         if fair_ball_from_previous_event.fair_ball_type != fair_ball_type_from_this_event {
-            warn!(
-                "Mismatched fair ball type in {event_type:#?}: expected {} but saw {}",
+            ingest_logs.warn(format!(
+                "Mismatched fair ball type: expected {} but saw {}",
                 fair_ball_from_previous_event.fair_ball_type, fair_ball_type_from_this_event,
-            );
+            ));
         }
     }
 
@@ -1018,16 +959,16 @@ impl<'g> Game<'g> {
         &self,
         fair_ball_from_previous_event: &FairBall,
         fair_ball_destination_from_this_event: FairBallDestination,
-        event_type: ParsedEventMessageDiscriminants,
+        ingest_logs: &mut IngestLogs,
     ) {
         if fair_ball_from_previous_event.fair_ball_destination
             != fair_ball_destination_from_this_event
         {
-            warn!(
-                "Mismatched fair ball destination in {event_type:#?}: expected {} but saw {}",
+            ingest_logs.warn(format!(
+                "Mismatched fair ball destination: expected {} but saw {}",
                 fair_ball_from_previous_event.fair_ball_destination,
                 fair_ball_destination_from_this_event,
-            );
+            ));
         }
     }
 
@@ -1147,7 +1088,7 @@ impl<'g> Game<'g> {
         );
     }
 
-    fn update_runners(&mut self, updates: RunnerUpdate<'g, '_>) {
+    fn update_runners(&mut self, updates: RunnerUpdate<'g, '_>, ingest_logs: &mut IngestLogs) {
         // For borrow checker reasons, we can't add runs as we go.
         // Instead, accumulate them here and add them at the end.
         let mut runs_to_add = 0;
@@ -1248,25 +1189,13 @@ impl<'g> Game<'g> {
                 // This translates to a >= condition compared to
                 // the > condition for other tests.
                 if o.runner != runner.runner_name {
-                    info!(
-                        "Ineligible runner out: RunnerOn {} does not match RunnerOut {}",
-                        runner.runner_name, o.runner
-                    );
                     return false;
                 }
 
                 if let Some(occupied_base) = last_occupied_base {
                     if occupied_base >= o.base.into() {
-                        info!(
-                            "Eligible runner {} originally on {:#?} out at {:#?}",
-                            runner.runner_name, runner.base, o.base
-                        );
                         true
                     } else {
-                        info!(
-                            "Eligible runner {} originally on {:#?} can't be out at {:#?}",
-                            runner.runner_name, runner.base, o.base
-                        );
                         false
                     }
                 } else {
@@ -1297,25 +1226,13 @@ impl<'g> Game<'g> {
                 // This translates to a >= condition compared to
                 // the > condition for other tests.
                 if o.runner != batter_name {
-                    info!(
-                        "Ineligible runner out: RunnerOn {} does not match RunnerOut {}",
-                        batter_name, o.runner
-                    );
                     return false;
                 }
 
                 if let Some(occupied_base) = last_occupied_base {
                     if occupied_base >= o.base.into() {
-                        info!(
-                            "Eligible runner {} originally not on base out at {:#?}",
-                            batter_name, o.base
-                        );
                         true
                     } else {
-                        info!(
-                            "Eligible runner {} originally not on base can't be out at {:#?}",
-                            batter_name, o.base
-                        );
                         false
                     }
                 } else {
@@ -1333,21 +1250,16 @@ impl<'g> Game<'g> {
         let mut batter_added = false;
         let mut new_runners = 0;
         if let Some(batter_name) = updates.runner_advances_may_include_batter {
-            info!("Checking if batter {batter_name} \"advanced\" as a runner");
             if let Some(new_runner) = advances_iter.peeking_next(|a| {
                 // TODO Unify with other advances_iter.peeking_next
                 if a.runner != batter_name {
-                    info!("Batter {batter_name} does not match runner {}", a.runner);
                     return false;
                 }
                 if let Some(occupied_base) = last_occupied_base {
                     if occupied_base <= a.base.into() {
-                        info!("Advance does not match batter {batter_name}: Advanced to {:#?} but {:#?} is occupied", a.base, occupied_base);
                         return false;
                     }
                 }
-                // a.runner == batter_name && last_occupied_base.map_or(true, |occupied_base| occupied_base > a.base.into())
-                info!("Checking if batter {batter_name} \"advanced\" as a runner");
                 true
             }) {
                 new_runners += 1;
@@ -1402,9 +1314,7 @@ impl<'g> Game<'g> {
         );
 
         if let Some((runner_name, base)) = updates.runner_added {
-            if batter_added {
-                info!("Skipping runner_added because the batter was added from a RunnerAdvance");
-            } else {
+            if !batter_added {
                 if updates.runner_added_forces_advances {
                     let mut base_to_clear = base;
                     for runner in self.state.runners_on.iter_mut().rev() {
@@ -1418,9 +1328,15 @@ impl<'g> Game<'g> {
                     }
                 } else if let Some(last_runner) = self.state.runners_on.back() {
                     if last_runner.base == base {
-                        warn!("Putting a runner on an occupied base");
+                        ingest_logs.warn(format!(
+                            "Putting batter-runner {} on {:#?} when {} is already on it",
+                            runner_name, base, last_runner.runner_name,
+                        ));
                     } else if last_runner.base < base {
-                        warn!("Putting a runner past an occupied base");
+                        ingest_logs.warn(format!(
+                            "Putting batter-runner {} on {:#?} when {} is on {:#?}",
+                            runner_name, base, last_runner.runner_name, last_runner.base,
+                        ));
                     }
                 }
 
@@ -1434,11 +1350,11 @@ impl<'g> Game<'g> {
         self.add_outs(outs_to_add);
     }
 
-    fn update_runners_steals_only(&mut self, steals: &[BaseSteal<&'g str>]) {
+    fn update_runners_steals_only(&mut self, steals: &[BaseSteal<&'g str>], ingest_logs: &mut IngestLogs) {
         self.update_runners(RunnerUpdate {
             steals,
             ..Default::default()
-        });
+        }, ingest_logs);
     }
 
     pub fn next(
@@ -1600,11 +1516,11 @@ impl<'g> Game<'g> {
                 [ParsedEventMessageDiscriminants::Ball]
                 ParsedEventMessage::Ball { count, steals } => {
                     self.state.count_balls += 1;
-                    self.check_count(*count);
+                    self.check_count(*count, &mut ingest_logs);
                     self.update_runners(RunnerUpdate {
                         steals,
                         ..Default::default()
-                    });
+                    }, &mut ingest_logs);
 
                     detail_builder
                         .steals(steals.clone())
@@ -1613,9 +1529,9 @@ impl<'g> Game<'g> {
                 [ParsedEventMessageDiscriminants::Strike]
                 ParsedEventMessage::Strike { strike, count, steals } => {
                     self.state.count_strikes += 1;
-                    self.check_count(*count);
+                    self.check_count(*count, &mut ingest_logs);
 
-                    self.update_runners_steals_only(steals);
+                    self.update_runners_steals_only(steals, &mut ingest_logs);
 
                     detail_builder
                         .steals(steals.clone())
@@ -1626,7 +1542,7 @@ impl<'g> Game<'g> {
                 },
                 [ParsedEventMessageDiscriminants::StrikeOut]
                 ParsedEventMessage::StrikeOut { foul, batter, strike, steals } => {
-                    self.check_batter(batter, event.discriminant());
+                    self.check_batter(batter, &mut ingest_logs);
                     if self.state.count_strikes < 2 {
                         ingest_logs.warn(format!(
                             "Unexpected strikeout in {}: expected 2 strikes in the count, but \
@@ -1636,7 +1552,7 @@ impl<'g> Game<'g> {
                         ));
                     }
 
-                    self.update_runners_steals_only(steals);
+                    self.update_runners_steals_only(steals, &mut ingest_logs);
                     self.add_out();
                     self.finish_pa();
 
@@ -1656,9 +1572,9 @@ impl<'g> Game<'g> {
                     if !(*foul == FoulType::Ball && self.state.count_strikes >= 2) {
                         self.state.count_strikes += 1;
                     }
-                    self.check_count(*count);
+                    self.check_count(*count, &mut ingest_logs);
 
-                    self.update_runners_steals_only(steals);
+                    self.update_runners_steals_only(steals, &mut ingest_logs);
 
                     detail_builder
                         .steals(steals.clone())
@@ -1669,7 +1585,7 @@ impl<'g> Game<'g> {
                 },
                 [ParsedEventMessageDiscriminants::FairBall]
                 ParsedEventMessage::FairBall { batter, fair_ball_type, destination } => {
-                    self.check_batter(batter, event.discriminant());
+                    self.check_batter(batter, &mut ingest_logs);
 
                     self.state.phase = GamePhase::ExpectFairBallOutcome(FairBall {
                         index,
@@ -1680,14 +1596,14 @@ impl<'g> Game<'g> {
                 },
                 [ParsedEventMessageDiscriminants::Walk]
                 ParsedEventMessage::Walk { batter, advances, scores } => {
-                    self.check_batter(batter, event.discriminant());
+                    self.check_batter(batter, &mut ingest_logs);
 
                     self.update_runners(RunnerUpdate {
                         scores,
                         advances,
                         runner_added: Some((batter, TaxaBase::First)),
                         ..Default::default()
-                    });
+                    }, &mut ingest_logs);
                     self.finish_pa();
 
                     detail_builder
@@ -1697,14 +1613,14 @@ impl<'g> Game<'g> {
                 },
                 [ParsedEventMessageDiscriminants::HitByPitch]
                 ParsedEventMessage::HitByPitch { batter, advances, scores } => {
-                    self.check_batter(batter, event.discriminant());
+                    self.check_batter(batter, &mut ingest_logs);
 
                     self.update_runners(RunnerUpdate {
                         scores,
                         advances,
                         runner_added: Some((batter, TaxaBase::First)),
                         ..Default::default()
-                    });
+                    }, &mut ingest_logs);
                     self.finish_pa();
 
                     detail_builder
@@ -1716,7 +1632,7 @@ impl<'g> Game<'g> {
                (previous_event, event),
                [ParsedEventMessageDiscriminants::NowBatting]
                ParsedEventMessage::NowBatting { batter: batter_name, stats } => {
-                   self.check_batter(batter_name, event.discriminant());
+                   self.check_batter(batter_name, &mut ingest_logs);
                    let batter = self.active_batter();
                    check_now_batting_stats(&stats, &batter.stats);
 
@@ -1747,14 +1663,14 @@ impl<'g> Game<'g> {
                 (previous_event, event),
                 [ParsedEventMessageDiscriminants::CaughtOut]
                 ParsedEventMessage::CaughtOut { batter, fair_ball_type, caught_by, advances, scores, sacrifice, perfect } => {
-                    self.check_batter(batter, event.discriminant());
-                    self.check_fair_ball_type(&fair_ball, *fair_ball_type, event.discriminant());
+                    self.check_batter(batter, &mut ingest_logs);
+                    self.check_fair_ball_type(&fair_ball, *fair_ball_type, &mut ingest_logs);
 
                     self.update_runners(RunnerUpdate {
                         scores,
                         advances,
                         ..Default::default()
-                    });
+                    }, &mut ingest_logs);
                     self.add_out();
                     self.finish_pa();
 
@@ -1781,13 +1697,13 @@ impl<'g> Game<'g> {
                 },
                 [ParsedEventMessageDiscriminants::GroundedOut]
                 ParsedEventMessage::GroundedOut { batter, fielders, scores, advances } => {
-                    self.check_batter(batter, event.discriminant());
+                    self.check_batter(batter, &mut ingest_logs);
 
                     self.update_runners(RunnerUpdate {
                         scores,
                         advances,
                         ..Default::default()
-                    });
+                    }, &mut ingest_logs);
                     self.add_out();
                     self.finish_pa();
 
@@ -1799,15 +1715,15 @@ impl<'g> Game<'g> {
                 },
                 [ParsedEventMessageDiscriminants::BatterToBase]
                 ParsedEventMessage::BatterToBase { batter, distance, fair_ball_type, fielder, advances, scores } => {
-                    self.check_batter(batter, event.discriminant());
-                    self.check_fair_ball_type(&fair_ball, *fair_ball_type, event.discriminant());
+                    self.check_batter(batter, &mut ingest_logs);
+                    self.check_fair_ball_type(&fair_ball, *fair_ball_type, &mut ingest_logs);
 
                     self.update_runners(RunnerUpdate {
                         scores,
                         advances,
                         runner_added: Some((batter, (*distance).into())),
                         ..Default::default()
-                    });
+                    }, &mut ingest_logs);
                     self.finish_pa();
 
                     detail_builder
@@ -1819,14 +1735,14 @@ impl<'g> Game<'g> {
                 },
                 [ParsedEventMessageDiscriminants::ReachOnFieldingError]
                 ParsedEventMessage::ReachOnFieldingError { batter, fielder, error, scores, advances } => {
-                    self.check_batter(batter, event.discriminant());
+                    self.check_batter(batter, &mut ingest_logs);
 
                     self.update_runners(RunnerUpdate {
                         scores,
                         advances,
                         runner_added: Some((batter, TaxaBase::First)),
                         ..Default::default()
-                    });
+                    }, &mut ingest_logs);
                     self.finish_pa();
 
                     detail_builder
@@ -1838,9 +1754,9 @@ impl<'g> Game<'g> {
                 },
                 [ParsedEventMessageDiscriminants::HomeRun]
                 ParsedEventMessage::HomeRun { batter, fair_ball_type, destination, scores, grand_slam } => {
-                    self.check_batter(batter, event.discriminant());
-                    self.check_fair_ball_type(&fair_ball, *fair_ball_type, event.discriminant());
-                    self.check_fair_ball_destination(&fair_ball, *destination, event.discriminant());
+                    self.check_batter(batter, &mut ingest_logs);
+                    self.check_fair_ball_type(&fair_ball, *fair_ball_type, &mut ingest_logs);
+                    self.check_fair_ball_destination(&fair_ball, *destination, &mut ingest_logs);
 
                     if *grand_slam && scores.len() != 3 {
                         ingest_logs.warn(format!(
@@ -1857,7 +1773,7 @@ impl<'g> Game<'g> {
                     self.update_runners(RunnerUpdate {
                         scores,
                         ..Default::default()
-                    });
+                    }, &mut ingest_logs);
                     // Also the only situation where you have a score
                     // without the runner
                     self.add_runs_to_batting_team(1);
@@ -1870,15 +1786,15 @@ impl<'g> Game<'g> {
                 },
                 [ParsedEventMessageDiscriminants::DoublePlayCaught]
                 ParsedEventMessage::DoublePlayCaught { batter, advances, scores, out_two, fair_ball_type, fielders } => {
-                    self.check_batter(batter, event.discriminant());
-                    self.check_fair_ball_type(&fair_ball, *fair_ball_type, event.discriminant());
+                    self.check_batter(batter, &mut ingest_logs);
+                    self.check_fair_ball_type(&fair_ball, *fair_ball_type, &mut ingest_logs);
 
                     self.update_runners(RunnerUpdate {
                         scores,
                         advances,
                         runners_out: &[*out_two],
                         ..Default::default()
-                    });
+                    }, &mut ingest_logs);
                     self.add_out(); // This is the out for the batter
                     self.finish_pa();  // Must be after all outs are added
 
@@ -1891,7 +1807,7 @@ impl<'g> Game<'g> {
                 },
                 [ParsedEventMessageDiscriminants::DoublePlayGrounded]
                 ParsedEventMessage::DoublePlayGrounded { batter, advances, scores, out_one, out_two, fielders, sacrifice } => {
-                    self.check_batter(batter, event.discriminant());
+                    self.check_batter(batter, &mut ingest_logs);
 
                     // Assuming for now that sacrifice is any time
                     // there are scores
@@ -1910,7 +1826,7 @@ impl<'g> Game<'g> {
                         runners_out: &[*out_one, *out_two],
                         runners_out_may_include_batter: Some(batter),
                         ..Default::default()
-                    });
+                    }, &mut ingest_logs);
                     self.finish_pa();
 
                     detail_builder
@@ -1923,8 +1839,8 @@ impl<'g> Game<'g> {
                 },
                 [ParsedEventMessageDiscriminants::ForceOut]
                 ParsedEventMessage::ForceOut { batter, out, fielders, scores, advances, fair_ball_type } => {
-                    self.check_batter(batter, event.discriminant());
-                    self.check_fair_ball_type(&fair_ball, *fair_ball_type, event.discriminant());
+                    self.check_batter(batter, &mut ingest_logs);
+                    self.check_fair_ball_type(&fair_ball, *fair_ball_type, &mut ingest_logs);
 
                     self.update_runners(RunnerUpdate {
                         scores,
@@ -1934,7 +1850,7 @@ impl<'g> Game<'g> {
                         runner_added_forces_advances: true,
                         runner_advances_may_include_batter: Some(batter),
                         ..Default::default()
-                    });
+                    }, &mut ingest_logs);
                     self.finish_pa();
 
                     detail_builder
@@ -1946,7 +1862,7 @@ impl<'g> Game<'g> {
                 },
                 [ParsedEventMessageDiscriminants::ReachOnFieldersChoice]
                 ParsedEventMessage::ReachOnFieldersChoice { batter, fielders, result, scores, advances } => {
-                    self.check_batter(batter, event.discriminant());
+                    self.check_batter(batter, &mut ingest_logs);
 
                     if let FieldingAttempt::Out { out } = result {
                         self.update_runners(RunnerUpdate {
@@ -1956,7 +1872,7 @@ impl<'g> Game<'g> {
                             runner_added: Some((batter, TaxaBase::First)),
                             runner_added_forces_advances: true,
                             ..Default::default()
-                        })
+                        }, &mut ingest_logs)
                     } else {
                         self.update_runners(RunnerUpdate {
                             scores,
@@ -1964,7 +1880,7 @@ impl<'g> Game<'g> {
                             runner_added: Some((batter, TaxaBase::First)),
                             runner_added_forces_advances: true,
                             ..Default::default()
-                        })
+                        }, &mut ingest_logs)
                     };
 
                     self.finish_pa();
