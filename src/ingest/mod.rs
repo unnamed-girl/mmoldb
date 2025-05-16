@@ -1,6 +1,10 @@
 mod http;
 mod sim;
 
+use std::any::Any;
+use std::mem;
+use std::panic::AssertUnwindSafe;
+use std::sync::Arc;
 pub use sim::{EventDetail, EventDetailFielder, EventDetailRunner, IngestLog};
 
 use crate::db::Taxa;
@@ -9,14 +13,141 @@ use crate::{Db, db};
 use chrono::serde::ts_milliseconds;
 use chrono::{DateTime, Utc};
 use chrono_humanize::HumanTime;
-use log::info;
+use log::{error, info, warn};
 use mmolb_parsing::ParsedEventMessage;
+use reqwest_middleware::ClientWithMiddleware;
+use rocket::fairing::{Fairing, Info, Kind};
 use rocket::futures::FutureExt;
-use rocket::tokio;
+use rocket::{tokio, Orbit, Rocket, Shutdown};
+use rocket::tokio::sync::{Mutex, Notify};
 use rocket::tokio::task::JoinHandle;
+use rocket_db_pools::Database;
 use serde::Deserialize;
 use strum::IntoDiscriminant;
 use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum IngestSetupError {
+    #[error(transparent)]
+    SetupConnectionAcquisitionFailed(
+        #[from] rocket_db_pools::diesel::pooled_connection::deadpool::PoolError,
+    ),
+
+    #[error(transparent)]
+    TaxaSetupError(#[from] diesel::result::Error),
+}
+
+#[derive(Debug, Error)]
+pub enum IngestFatalError {
+    #[error("The ingest task was interrupted while manipulating the task state")]
+    InterruptedManipulatingTaskState,
+    
+    #[error("The ingest task got into an ")]
+    ImpossibleState,
+}
+
+#[derive(Debug)]
+pub enum IngestTaskState {
+    // Ingest is not yet started. This state should be short-lived.
+    // Notify is used to notify the task when the state has 
+    // transitioned to Idle.
+    NotStarted(Arc<Notify>),
+    // Ingest failed to start. This is a terminal state.
+    FailedToStart(IngestSetupError),
+    // Ingest task is alive, but not doing anything. The ingest task
+    // runner must still make sure the thread exits shortly after the
+    // state transitions to ShutdownRequested.
+    Idle(JoinHandle<()>),
+    // Ingest task is and doing an ingest. The ingest task runner must
+    // still sure the thread exits shortly after the state transitions
+    // to ShutdownRequested. The exit should be graceful, stopping the
+    // current ingest.
+    Running(JoinHandle<()>),
+    // Rocket has requested a shutdown (e.g. due to ctrl-c). If the
+    // task doesn't stop within a small time window, it will be killed.
+    ShutdownRequested,
+    // The ingest task has exited with a fatal error. This is only for
+    // tasks which make the ingest
+    ExitedWithError(IngestFatalError),
+}
+
+#[derive(Clone)]
+pub struct IngestTask {
+    state: Arc<Mutex<IngestTaskState>>,
+}
+
+impl IngestTask {
+    pub fn new() -> Self {
+        Self {
+            state: Arc::new(Mutex::new(IngestTaskState::NotStarted(Arc::new(Notify::new())))),
+        }
+    }
+}
+
+pub struct IngestFairing;
+
+impl IngestFairing {
+    pub fn new() -> Self { Self }
+}
+
+#[rocket::async_trait]
+impl Fairing for IngestFairing {
+    fn info(&self) -> Info {
+        Info {
+            name: "Ingest",
+            kind: Kind::Liftoff | Kind::Shutdown,
+        }
+    }
+
+    async fn on_liftoff(&self, rocket: &Rocket<Orbit>) {
+        let Some(pool) = Db::fetch(&rocket).cloned() else {
+            error!("Cannot launch ingest task: Rocket is not managing a database pool!");
+            return;
+        };
+
+        let Some(task) = rocket.state::<IngestTask>() else {
+            error!("Cannot launch ingest task: Rocket is not managing an IngestTask!");
+            return;
+        };
+
+        let Some(task) = rocket.state::<IngestTask>() else {
+            error!("Cannot launch ingest task: Rocket is not managing an IngestTask!");
+            return;
+        };
+
+        let shutdown = rocket.shutdown();
+        let is_debug = rocket.config().profile == "debug";
+        
+        match launch_ingest_task(pool, is_debug, task.clone(), shutdown).await {
+            Ok(handle) => {
+                *task.state.lock().await = IngestTaskState::Idle(handle);
+            }
+            Err(err) => {
+                *task.state.lock().await = IngestTaskState::FailedToStart(err);
+            }
+        };
+    }
+
+    async fn on_shutdown(&self, rocket: &Rocket<Orbit>) {
+        if let Some(task) = rocket.state::<IngestTask>() {
+            let mut state = task.state.lock().await;
+            // Signal that we would like to shut down please
+            let prev_state = mem::replace(&mut *state, IngestTaskState::ShutdownRequested);
+            // If we have a join handle, try to shut down gracefully
+            if let IngestTaskState::Idle(handle) | IngestTaskState::Running(handle) = prev_state {
+                info!("Shutting down Ingest task");
+                if let Err(e) = handle.await {
+                    // Not much I can do about a failed join
+                    error!("Failed to shut down Ingest task: {}", e);
+                }
+            } else {
+                error!("Ingest task is in non-Idle or Running state at shutdown: {:?}", *state);
+            }
+        } else {
+            error!("Rocket is not managing an IngestTask!");
+        };
+    }
+}
 
 #[derive(Deserialize, Eq, PartialEq, Debug)]
 pub enum GameState {
@@ -56,17 +187,6 @@ struct CashewsGameResponse {
 
 type GamesResponse = Vec<CashewsGameResponse>;
 
-#[derive(Debug, Error)]
-pub enum IngestSetupError {
-    #[error(transparent)]
-    SetupConnectionAcquisitionFailed(
-        #[from] rocket_db_pools::diesel::pooled_connection::deadpool::PoolError,
-    ),
-
-    #[error(transparent)]
-    TaxaSetupError(#[from] diesel::result::Error),
-}
-
 // This function sets up the ingest task, then returns a (TODO something)
 // representing the execution of the ingest task. The intention is for
 // errors in setup to be propagated to the caller, but errors in the
@@ -74,26 +194,139 @@ pub enum IngestSetupError {
 pub async fn launch_ingest_task(
     pool: Db,
     is_debug: bool,
-) -> Result<JoinHandle<impl Future<Output = ()>>, IngestSetupError> {
-    Ok(tokio::spawn(async move { ingest_task(pool, is_debug) }))
-}
-
-pub async fn ingest_task(pool: Db, is_debug: bool) {
+    task: IngestTask,
+    shutdown: Shutdown,
+) -> Result<JoinHandle<()>, IngestSetupError> {
     let client = http::get_caching_http_client();
 
     let taxa = {
         let mut conn = pool
             .get()
             .await
-            .map_err(|err| IngestSetupError::SetupConnectionAcquisitionFailed(err))
-            .expect("TODO Error handling");
+            .map_err(|err| IngestSetupError::SetupConnectionAcquisitionFailed(err))?;
 
         Taxa::new(&mut conn)
             .await
-            .map_err(|err| IngestSetupError::TaxaSetupError(err))
-            .expect("TODO Error handling")
+            .map_err(|err| IngestSetupError::TaxaSetupError(err))?
     };
 
+    Ok(tokio::spawn(ingest_task_runner(pool, taxa, client, is_debug, task, shutdown)))
+}
+
+pub async fn ingest_task_runner(pool: Db, taxa: Taxa, client: ClientWithMiddleware, is_debug: bool, task: IngestTask, mut shutdown: Shutdown) {
+    loop {
+        // Try to transition from idle to running, with lots of 
+        // recovery behaviors
+        loop {
+            let mut task_state = task.state.lock().await;
+            // We can't atomically move handle from idle to running, 
+            // but we can replace it with the error that should happen
+            // if something were to interrupt us. This should never be
+            // seen by outside code, since we have the state locked.
+            // It's just defensive programming.
+            let prev_state = mem::replace(&mut *task_state, IngestTaskState::ExitedWithError(IngestFatalError::InterruptedManipulatingTaskState));
+            match prev_state {
+                IngestTaskState::NotStarted(notify) => {
+                    // Put the value back how it was, drop the mutex, and wait.
+                    // Once the wait is done we'll go round the loop again and
+                    // this time should be in Idle state
+                    let my_notify = notify.clone();
+                    *task_state = IngestTaskState::NotStarted(notify);
+                    drop(task_state);
+                    my_notify.notified().await;
+                }
+                IngestTaskState::FailedToStart(err) => {
+                    // Being in this state here is an oxymoron. Replacing the
+                    // value and terminating this task is the least surprising
+                    // way to react
+                    *task_state = IngestTaskState::FailedToStart(err);
+                    return;
+                }
+                IngestTaskState::Idle(handle) => {
+                    // This is the one we want!
+                    *task_state = IngestTaskState::Running(handle);
+                    break;
+                }
+                IngestTaskState::Running(handle) => {
+                    // Shouldn't happen, but if it does recovery is easy
+                    warn!("Ingest task state was Running at the top of the loop (expected Idle)");
+                    *task_state = IngestTaskState::Running(handle);
+                    break;
+                }
+                IngestTaskState::ShutdownRequested => {
+                    // Shutdown requested? Sure, we can do that.
+                    *task_state = IngestTaskState::ShutdownRequested;
+                    return;
+                }
+                IngestTaskState::ExitedWithError(err) => {
+                    // This one is also an oxymoron
+                    *task_state = IngestTaskState::ExitedWithError(err);
+                    return;
+                }
+            }
+        }
+        
+        let ingest_result = AssertUnwindSafe(do_ingest(&pool, &taxa, &client, is_debug, &task))
+            .catch_unwind()
+            .await;
+
+        if let Err(err) = ingest_result {
+            warn!("Ingest task panicked! Error: {:?}", err);
+        }
+
+        // Try to transition from running to idle, with lots of 
+        // recovery behaviors
+        {
+            let mut task_state = task.state.lock().await;
+            // We can't atomically move handle from idle to running, 
+            // but we can replace it with the error that should happen
+            // if something were to interrupt us. This should never be
+            // seen by outside code, since we have the state locked.
+            // It's just defensive programming.
+            let prev_state = mem::replace(&mut *task_state, IngestTaskState::ExitedWithError(IngestFatalError::InterruptedManipulatingTaskState));
+            match prev_state {
+                IngestTaskState::NotStarted(_) => {
+                    error!("Ingest task transitioned to NotStarted state from some other state.");
+                    *task_state = IngestTaskState::ExitedWithError(IngestFatalError::ImpossibleState);
+                    return;
+                }
+                IngestTaskState::FailedToStart(err) => {
+                    // Being in this state here is an oxymoron. Replacing the
+                    // value and terminating this task is the least surprising
+                    // way to react
+                    *task_state = IngestTaskState::FailedToStart(err);
+                    return;
+                }
+                IngestTaskState::Running(handle) => {
+                    // This is the one we want!
+                    *task_state = IngestTaskState::Idle(handle);
+                }
+                IngestTaskState::Idle(handle) => {
+                    // Shouldn't happen, but if it does recovery is easy
+                    warn!("Ingest task state was Idle at the bottom of the loop (expected Running)");
+                    *task_state = IngestTaskState::Idle(handle);
+                }
+                IngestTaskState::ShutdownRequested => {
+                    // Shutdown requested? Sure, we can do that.
+                    *task_state = IngestTaskState::ShutdownRequested;
+                    return;
+                }
+                IngestTaskState::ExitedWithError(err) => {
+                    // This one is also an oxymoron
+                    *task_state = IngestTaskState::ExitedWithError(err);
+                    return;
+                }
+            }
+        }
+        
+        tokio::select! {
+            _ = tokio::time::sleep(tokio::time::Duration::from_secs(30 * 60)) => {},
+            _ = &mut shutdown => { break; }
+        }
+    }
+}
+
+pub async fn do_ingest(pool: &Db, taxa: &Taxa, client: &ClientWithMiddleware, is_debug: bool, task: &IngestTask) {
     // ------------ This is where the loop will start -------------
 
     let ingest_start = Utc::now();
@@ -182,7 +415,7 @@ pub async fn ingest_task(pool: Db, is_debug: bool) {
         );
 
         // TODO Handle catch_unwind result better
-        let result = std::panic::AssertUnwindSafe(ingest_game(
+        let result = AssertUnwindSafe(ingest_game(
             pool.clone(),
             &taxa,
             ingest_id,
@@ -259,7 +492,7 @@ async fn ingest_game(
                 .expect("TODO Error handling")
         })
         .unzip();
-    
+
     // Take the None values out of detail_events
     let detail_events = detail_events
         .into_iter()
