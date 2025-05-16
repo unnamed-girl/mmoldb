@@ -1,7 +1,7 @@
 mod error;
 mod utility_contexts;
 
-use rocket::{get, routes, uri};
+use rocket::{get, routes, uri, State};
 use rocket_db_pools::Connection;
 use rocket_db_pools::diesel::AsyncConnection;
 use rocket_db_pools::diesel::scoped_futures::ScopedFutureExt;
@@ -11,6 +11,7 @@ use serde::Serialize;
 use crate::{Db, db};
 use error::AppError;
 use utility_contexts::FormattedDateContext;
+use crate::ingest::{IngestStatus, IngestTask};
 
 #[get("/game/<game_id>")]
 async fn game_page(game_id: i64, mut db: Connection<Db>) -> Result<Template, AppError> {
@@ -109,7 +110,40 @@ async fn ingest_page(ingest_id: i64, mut db: Connection<Db>) -> Result<Template,
 }
 
 #[get("/")]
-async fn index(mut db: Connection<Db>) -> Result<Template, AppError> {
+async fn index(mut db: Connection<Db>, ingest_task: &State<IngestTask>) -> Result<Template, AppError> {
+    #[derive(Serialize, Default)]
+    struct IngestTaskContext {
+        is_starting: bool,
+        is_stopping: bool,
+        // Running means actively ingesting. If it's idle this will be false.
+        is_running: bool,
+        error: Option<String>,
+    }
+    
+    let ingest_task_status = match ingest_task.state().await {
+        IngestStatus::Starting => IngestTaskContext {
+            is_starting: true,
+            ..Default::default()
+        },
+        IngestStatus::FailedToStart(err) => IngestTaskContext {
+            error: Some(err),
+            ..Default::default()
+        },
+        IngestStatus::Idle => IngestTaskContext::default(),
+        IngestStatus::Running => IngestTaskContext {
+            is_running: true,
+            ..Default::default()
+        },
+        IngestStatus::ExitedWithError(err) => IngestTaskContext {
+            error: Some(err),
+            ..Default::default()
+        },
+        IngestStatus::ShuttingDown => IngestTaskContext {
+            is_stopping: true,
+            ..Default::default()
+        },
+    };
+    
     #[derive(Serialize)]
     struct IngestContext {
         uri: String,
@@ -146,6 +180,7 @@ async fn index(mut db: Connection<Db>) -> Result<Template, AppError> {
     Ok(Template::render(
         "index",
         context! {
+            task_status: ingest_task_status,
             ingests: ingests,
             number_of_ingests_not_shown: number_of_ingests_not_shown,
         },

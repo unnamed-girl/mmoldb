@@ -46,8 +46,20 @@ pub enum IngestFatalError {
     ImpossibleState,
 }
 
+// This is the publicly visible version of IngestTaskState
 #[derive(Debug)]
-pub enum IngestTaskState {
+pub enum IngestStatus {
+    Starting,
+    FailedToStart(String),
+    Idle,
+    Running,
+    ExitedWithError(String),
+    ShuttingDown,
+}
+
+
+#[derive(Debug)]
+enum IngestTaskState {
     // Ingest is not yet started. This state should be short-lived.
     // Notify is used to notify the task when the state has 
     // transitioned to Idle.
@@ -80,6 +92,18 @@ impl IngestTask {
     pub fn new() -> Self {
         Self {
             state: Arc::new(Mutex::new(IngestTaskState::NotStarted(Arc::new(Notify::new())))),
+        }
+    }
+    
+    pub async fn state(&self) -> IngestStatus {
+        let task_state = self.state.lock().await;
+        match &*task_state {
+            IngestTaskState::NotStarted(_) => { IngestStatus::Starting }
+            IngestTaskState::FailedToStart(err) => { IngestStatus::FailedToStart(err.to_string()) }
+            IngestTaskState::Idle(_) => { IngestStatus::Idle }
+            IngestTaskState::Running(_) => { IngestStatus::Running }
+            IngestTaskState::ShutdownRequested => { IngestStatus::ShuttingDown }
+            IngestTaskState::ExitedWithError(err) => { IngestStatus::ExitedWithError(err.to_string()) }
         }
     }
 }

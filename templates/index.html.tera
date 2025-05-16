@@ -23,6 +23,26 @@
     </section>
 
     <section class="card">
+        <h2 class="status-heading">
+            Ingest status:
+            {% if task_status.error %}
+            Fatal error!
+            {% elif task_status.is_starting %}
+            Starting...
+            {% elif task_status.is_stopping %}
+            Exiting...
+            {% elif task_status.is_running %}
+            Running
+            {% else %}
+            Idle
+            {% endif %}
+        </h2>
+        {% if task_status.error %}
+        <p class="status-error">{{ task_status.error }}</p>
+        {% endif %}
+    </section>
+
+    <section class="card">
         <h2 class="ingests-heading">Latest ingests:</h2>
 
         {% if ingests %}
