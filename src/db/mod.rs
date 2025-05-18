@@ -120,6 +120,14 @@ pub async fn mark_ingest_aborted(
         .map(|_| ())
 }
 
+macro_rules! log_only_assert {
+    ($e: expr, $($msg:tt)*) => {
+        if !$e {
+            log::error!($($msg)*)
+        }
+    };
+}
+
 pub async fn ingest_with_games(
     conn: &mut AsyncPgConnection,
     for_ingest_id: i64,
@@ -185,9 +193,18 @@ pub async fn ingest_with_games(
         })
         .collect();
 
-    assert!(num_warnings.next().is_none());
-    assert!(num_errors.next().is_none());
-    assert!(num_critical.next().is_none());
+    log_only_assert!(
+        num_warnings.next().is_none(), 
+        "db::ingest_with_games failed to match at least one warnings count with its event",
+    );
+    log_only_assert!(
+        num_errors.next().is_none(), 
+        "db::ingest_with_games failed to match at least one errors count with its event",
+    );
+    log_only_assert!(
+        num_critical.next().is_none(), 
+        "db::ingest_with_games failed to match at least one critical count with its event",
+    );
 
     Ok((ingest, games))
 }
@@ -381,9 +398,8 @@ pub async fn insert_game<'e>(
         .get_results::<i64>(conn)
         .await?;
 
-    assert_eq!(
-        event_ids.len(),
-        event_details.len(),
+    log_only_assert!(
+        event_ids.len() == event_details.len(),
         "Events insert should insert {} rows",
         event_details.len(),
     );
@@ -400,8 +416,8 @@ pub async fn insert_game<'e>(
         .execute(conn)
         .await?;
 
-    assert_eq!(
-        n_advances_inserted, n_advances_to_insert,
+    log_only_assert!(
+        n_advances_inserted == n_advances_to_insert,
         "Advances insert should insert {n_advances_to_insert} rows",
     );
 
@@ -417,8 +433,8 @@ pub async fn insert_game<'e>(
         .execute(conn)
         .await?;
 
-    assert_eq!(
-        n_fielders_inserted, n_fielders_to_insert,
+    log_only_assert!(
+        n_fielders_inserted == n_fielders_to_insert,
         "Fielders insert should insert {n_fielders_to_insert} rows",
     );
 

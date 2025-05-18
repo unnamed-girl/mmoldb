@@ -1640,16 +1640,27 @@ impl<'g> Game<'g> {
                     self.update_runners_steals_only(steals, ingest_logs);
                     self.add_out();
                     self.finish_pa();
+                    
+                    let event_type = match (foul, strike) {
+                        (None, StrikeType::Looking) => { TaxaEventType::CalledStrike }
+                        (None, StrikeType::Swinging) => { TaxaEventType::SwingingStrike }
+                        (Some(FoulType::Ball), _) => { 
+                            ingest_logs.error(
+                                "Can't strike out on a foul ball. \
+                                Recording this as a foul tip instead.",
+                            );
+                            TaxaEventType::FoulTip
+                        }
+                        (Some(FoulType::Tip), StrikeType::Looking) => { 
+                            ingest_logs.warn("Can't have a foul tip on a called strike.");
+                            TaxaEventType::FoulTip
+                        }
+                        (Some(FoulType::Tip), StrikeType::Swinging) => { TaxaEventType::FoulTip }
+                    };
 
                     detail_builder
                         .steals(steals.clone())
-                        .build_some(self, ingest_logs, match (foul, strike) {
-                            (None, StrikeType::Looking) => { TaxaEventType::CalledStrike }
-                            (None, StrikeType::Swinging) => { TaxaEventType::SwingingStrike }
-                            (Some(FoulType::Ball), _) => { panic!("Can't strike out on a foul ball") }
-                            (Some(FoulType::Tip), StrikeType::Looking) => { panic!("Foul tip can't be a called strike") }
-                            (Some(FoulType::Tip), StrikeType::Swinging) => { TaxaEventType::FoulTip }
-                        })
+                        .build_some(self, ingest_logs, event_type)
                 },
                 [ParsedEventMessageDiscriminants::Foul]
                 ParsedEventMessage::Foul { foul, steals, count } => {
@@ -2338,6 +2349,9 @@ pub enum ToParsedError<'g> {
 
     #[error("{event_type} must have a fielding_error_type")]
     MissingFieldingErrorType { event_type: TaxaEventType },
+    
+    #[error("{event_type} must have a hit_type")]
+    MissingHitType { event_type: TaxaEventType },
 
     #[error("{event_type} must have exactly {required} runners out, but there were {actual}")]
     WrongNumberOfRunnersOut {
@@ -2596,7 +2610,9 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                     batter: self.batter_name.as_ref(),
                     distance: match self.hit_type {
                         None => {
-                            panic!("EventDetail with the Hit detail_type must have a hit_type")
+                            return Err(ToParsedError::MissingHitType {
+                                event_type: self.detail_type,
+                            })
                         }
                         Some(TaxaHitType::Single) => Distance::Single,
                         Some(TaxaHitType::Double) => Distance::Double,

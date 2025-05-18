@@ -891,10 +891,19 @@ async fn ingest_game(
 
     let (detail_events, ingest_logs): (Vec<_>, Vec<_>) = parsed
         .map(|(index, (parsed, raw))| {
-            let unparsed = parsed.clone().unparse();
-            assert_eq!(unparsed, raw.message);
             // Sim has a different IngestLogs... this made sense at the time
             let mut ingest_logs = sim::IngestLogs::new();
+
+            let unparsed = parsed.clone().unparse();
+            if unparsed != raw.message {
+                ingest_logs.error(format!(
+                    "Round-trip of raw event through ParsedEvent produced a mismatch:\n\
+                     Original: <pre>{:?}</pre>\n\
+                     Through EventDetail: <pre>{:?}</pre>",
+                    raw.message,
+                    unparsed,
+                ));
+            }
 
             let event = match game.next(index, &parsed, &raw, &mut ingest_logs) {
                 Ok(result) => result,
@@ -956,7 +965,14 @@ async fn ingest_game(
 
     let check_round_trip_start = Utc::now();
     let mut extra_ingest_logs = IngestLogs::new();
-    assert_eq!(inserted_events.len(), detail_events.len());
+    if inserted_events.len() != detail_events.len() {
+        error!(
+            "Number of events read from the db ({}) does not match number of events written to \
+            the db ({})",
+            inserted_events.len(),
+            detail_events.len(),
+        );
+    }
     for (reconstructed_detail, original_detail) in inserted_events.iter().zip(detail_events) {
         let index = original_detail.game_event_index;
         let fair_ball_index = original_detail.fair_ball_event_index;
