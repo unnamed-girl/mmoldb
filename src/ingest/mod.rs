@@ -238,9 +238,11 @@ impl Fairing for IngestFairing {
 
     async fn on_shutdown(&self, rocket: &Rocket<Orbit>) {
         if let Some(task) = rocket.state::<IngestTask>() {
-            let mut state = task.state.lock().await;
             // Signal that we would like to shut down please
-            let prev_state = mem::replace(&mut *state, IngestTaskState::ShutdownRequested);
+            let prev_state = {
+                let mut state = task.state.lock().await;
+                mem::replace(&mut *state, IngestTaskState::ShutdownRequested)
+            };
             // If we have a join handle, try to shut down gracefully
             if let IngestTaskState::Idle(handle) | IngestTaskState::Running(handle) = prev_state {
                 info!("Shutting down Ingest task");
@@ -251,7 +253,7 @@ impl Fairing for IngestFairing {
             } else {
                 error!(
                     "Ingest task is in non-Idle or Running state at shutdown: {:?}",
-                    *state
+                    prev_state
                 );
             }
         } else {
