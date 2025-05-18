@@ -14,7 +14,6 @@ use chrono::{DateTime, Utc};
 use chrono_humanize::HumanTime;
 use log::{error, info, warn};
 use mmolb_parsing::ParsedEventMessage;
-use reqwest::StatusCode;
 use reqwest_middleware::ClientWithMiddleware;
 use rocket::fairing::{Fairing, Info, Kind};
 use rocket::futures::FutureExt;
@@ -23,9 +22,18 @@ use rocket::tokio::task::JoinHandle;
 use rocket::{Orbit, Rocket, Shutdown, tokio};
 use rocket_db_pools::Database;
 use serde::Deserialize;
-use strum::IntoDiscriminant;
 use thiserror::Error;
 
+#[derive(Deserialize)]
+// Not sure if I need this because I also depend on serde, but it
+// probably doesn't hurt
+#[serde(crate = "rocket::serde")]
+struct IngestConfig {
+    #[serde(default)]
+    cache_game_list: bool,
+    #[serde(default)]
+    reimport_all_games: bool,
+}
 #[derive(Debug, Error)]
 pub enum IngestSetupError {
     #[error(transparent)]
@@ -140,6 +148,18 @@ impl Fairing for IngestFairing {
             return;
         };
 
+        // extract the entire config any `Deserialize` value
+        let config = match rocket.figment().extract() {
+            Ok(config) => config,
+            Err(err) => {
+                error!(
+                    "Cannot launch ingest task: Failed to parse ingest configuration: {}",
+                    err
+                );
+                return;
+            }
+        };
+
         let notify = {
             let mut task_status = task.state.lock().await;
             if let IngestTaskState::NotStarted(notify) = &*task_status {
@@ -152,9 +172,8 @@ impl Fairing for IngestFairing {
         };
 
         let shutdown = rocket.shutdown();
-        let is_debug = rocket.config().profile == "debug";
 
-        match launch_ingest_task(pool, is_debug, task.clone(), shutdown).await {
+        match launch_ingest_task(pool, config, task.clone(), shutdown).await {
             Ok(handle) => {
                 *task.state.lock().await = IngestTaskState::Idle(handle);
                 notify.notify_waiters();
@@ -231,9 +250,9 @@ type GamesResponse = Vec<CashewsGameResponse>;
 // representing the execution of the ingest task. The intention is for
 // errors in setup to be propagated to the caller, but errors in the
 // task itself to be handled within the task
-pub async fn launch_ingest_task(
+async fn launch_ingest_task(
     pool: Db,
-    is_debug: bool,
+    config: IngestConfig,
     task: IngestTask,
     shutdown: Shutdown,
 ) -> Result<JoinHandle<()>, IngestSetupError> {
@@ -251,15 +270,15 @@ pub async fn launch_ingest_task(
     };
 
     Ok(tokio::spawn(ingest_task_runner(
-        pool, taxa, client, is_debug, task, shutdown,
+        pool, taxa, client, config, task, shutdown,
     )))
 }
 
-pub async fn ingest_task_runner(
+async fn ingest_task_runner(
     pool: Db,
     taxa: Taxa,
     client: ClientWithMiddleware,
-    is_debug: bool,
+    config: IngestConfig,
     task: IngestTask,
     mut shutdown: Shutdown,
 ) {
@@ -320,7 +339,7 @@ pub async fn ingest_task_runner(
             }
         }
 
-        let ingest_result = AssertUnwindSafe(do_ingest(&pool, &taxa, &client, is_debug))
+        let ingest_result = AssertUnwindSafe(do_ingest(&pool, &taxa, &client, &config))
             .catch_unwind()
             .await;
 
@@ -489,10 +508,12 @@ async fn send_game_request(
         .await
 }
 
-pub async fn do_ingest(pool: &Db, taxa: &Taxa, client: &ClientWithMiddleware, is_debug: bool) {
-    // Temp override
-    let is_debug = false;
-
+async fn do_ingest(
+    pool: &Db,
+    taxa: &Taxa,
+    client: &ClientWithMiddleware,
+    config: &IngestConfig,
+) {
     let ingest_start = Utc::now();
     info!("Ingest at {ingest_start} started");
 
@@ -506,18 +527,21 @@ pub async fn do_ingest(pool: &Db, taxa: &Taxa, client: &ClientWithMiddleware, is
 
     info!("Recorded ingest start in database. Requesting games list...");
 
-    let games_request = if is_debug {
-        // In development we want to always cache this
-        client.get("https://freecashe.ws/api/games")
+    let cache_mode = if config.cache_game_list {
+        // ForceCache means to ignore staleness, but still go to the
+        // network if it's not found in the cache
+        http_cache_reqwest::CacheMode::ForceCache
     } else {
-        // Override the cache policy: This is a live-changing endpoint and should
-        // not be cached
-        client
-            .get("https://freecashe.ws/api/games")
-            .with_extension(http_cache_reqwest::CacheMode::NoStore)
+        // NoStore means don't use the cache at all
+        http_cache_reqwest::CacheMode::NoStore
     };
 
-    let games_response = games_request.send().await.expect("TODO Error handling");
+    let games_response = client
+        .get("https://freecashe.ws/api/games")
+        .with_extension(cache_mode)
+        .send()
+        .await
+        .expect("TODO Error handling");
 
     let games: GamesResponse = games_response.json().await.expect("TODO Error handling");
 
@@ -537,7 +561,7 @@ pub async fn do_ingest(pool: &Db, taxa: &Taxa, client: &ClientWithMiddleware, is
         }
 
         let check_already_ingested_start = Utc::now();
-        let already_ingested = if !is_debug {
+        let already_ingested = if !config.reimport_all_games {
             let mut conn = pool.get().await.expect("TODO Error handling");
             db::has_game(&mut conn, &game_info.game_id)
                 .await
@@ -660,6 +684,7 @@ impl IngestLogs {
         ));
     }
 
+    #[allow(dead_code)]
     pub fn info(&mut self, game_event_index: usize, s: impl Into<String>) {
         self.logs.push((
             game_event_index,
@@ -670,6 +695,7 @@ impl IngestLogs {
         ));
     }
 
+    #[allow(dead_code)]
     pub fn debug(&mut self, game_event_index: usize, s: impl Into<String>) {
         self.logs.push((
             game_event_index,
@@ -680,6 +706,7 @@ impl IngestLogs {
         ));
     }
 
+    #[allow(dead_code)]
     pub fn trace(&mut self, game_event_index: usize, s: impl Into<String>) {
         self.logs.push((
             game_event_index,
