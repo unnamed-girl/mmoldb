@@ -23,6 +23,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 fn default_retries() -> u64 { 3 }
+fn default_fetch_rate_limit() -> u64 { 10 }
 
 #[derive(Deserialize)]
 // Not sure if I need this because I also depend on serde, but it
@@ -39,6 +40,8 @@ struct IngestConfig {
     cache_games_from_api: bool,
     #[serde(default = "default_retries")]
     fetch_games_retries: u64,
+    #[serde(default = "default_fetch_rate_limit")]
+    fetch_games_rate_limit_ms: u64,
 }
 
 #[derive(Debug, Error)]
@@ -393,7 +396,7 @@ async fn ingest_task_runner(
             }
         }
 
-        let ingest_result = do_ingest(&pool, &taxa, &client, &config).await;
+        let ingest_result = do_ingest(&pool, &taxa, &client, &config, &mut shutdown).await;
         if let Err((err, ingest_id)) = ingest_result {
             if let Some(ingest_id) = ingest_id {
                 warn!("Fatal error in game ingest: {}. This ingest is aborted.", err);
@@ -548,6 +551,7 @@ async fn fetch_game(
     game_id: &str,
     client: &ClientWithMiddleware,
     config: &IngestConfig,
+    rate_limiter: &tokio_utils::RateLimiter,
 ) -> Result<mmolb_parsing::Game, FetchGameError> {
     let url = format!("https://mmolb.com/api/game/{}", game_id);
 
@@ -562,17 +566,20 @@ async fn fetch_game(
         Err(err) => err,
     };
 
-    info!("Fetching game from the server because of cache error {cache_err:?}");
+    rate_limiter.throttle(|| async {
+        info!("Fetching game from the server because of cache error: {cache_err}");
 
-    fetch_with_retries(config.cache_games_from_api, config.fetch_games_retries, async |cache_mode| {
-        fetch_game_from_server(client, &url, cache_mode).await
-    })
-        .await
-        .map_err(|e| match e {
-            FetchGamePartialError::RequestError(err) => FetchGameError::RequestError(err, cache_err),
-            FetchGamePartialError::NonSuccessStatusCode(err)  => FetchGameError::NonSuccessStatusCode(err, cache_err),
-            FetchGamePartialError::FailedJsonDecode(err) => FetchGameError::FailedJsonDecode(err, cache_err),
+        fetch_with_retries(config.cache_games_from_api, config.fetch_games_retries, async |cache_mode| {
+            fetch_game_from_server(client, &url, cache_mode).await
         })
+            .await
+            .map_err(|e| match e {
+                FetchGamePartialError::RequestError(err) => FetchGameError::RequestError(err, cache_err),
+                FetchGamePartialError::NonSuccessStatusCode(err)  => FetchGameError::NonSuccessStatusCode(err, cache_err),
+                FetchGamePartialError::FailedJsonDecode(err) => FetchGameError::FailedJsonDecode(err, cache_err),
+            })
+
+    }).await
 }
 
 async fn do_ingest(
@@ -580,6 +587,7 @@ async fn do_ingest(
     taxa: &Taxa,
     client: &ClientWithMiddleware,
     config: &IngestConfig,
+    shutdown: &mut Shutdown,
 ) -> Result<(), (IngestFatalError, Option<i64>)> {
     let ingest_start = Utc::now();
     info!("Ingest at {ingest_start} started");
@@ -592,7 +600,7 @@ async fn do_ingest(
             .map_err(|e| (e.into(), None))?
     };
 
-    do_ingest_internal(pool, taxa, client, config, ingest_id, ingest_start).await
+    do_ingest_internal(pool, taxa, client, config, shutdown, ingest_id, ingest_start).await
         .map_err(|e| (e.into(), Some(ingest_id)))
 }
 async fn do_ingest_internal(
@@ -600,6 +608,7 @@ async fn do_ingest_internal(
     taxa: &Taxa,
     client: &ClientWithMiddleware,
     config: &IngestConfig,
+    shutdown: &mut Shutdown,
     ingest_id: i64,
     ingest_start: DateTime<Utc>,
 ) -> Result<(), IngestFatalError> {
@@ -617,6 +626,9 @@ async fn do_ingest_internal(
         "Got games list. Starting ingest of {} total games.",
         games.len()
     );
+
+    let game_api_hit_period = std::time::Duration::from_millis(config.fetch_games_rate_limit_ms);
+    let rate_limiter = tokio_utils::RateLimiter::new(game_api_hit_period);
 
     let mut num_incomplete_games_skipped = 0;
     let mut num_already_ingested_games_skipped = 0;
@@ -657,8 +669,14 @@ async fn do_ingest_internal(
             (Utc::now() - check_already_ingested_start).as_seconds_f64();
 
         let network_start = Utc::now();
-        let game_data = fetch_game(&game_info.game_id, client, config)
-            .await?;
+        let game_data = tokio::select! {
+            game_data = fetch_game(&game_info.game_id, client, config, &rate_limiter) => {
+                game_data?
+            }
+            _ = &mut *shutdown => {
+                return Ok(());
+            }
+        };
         let network_duration = (Utc::now() - network_start).as_seconds_f64();
 
         info!(
