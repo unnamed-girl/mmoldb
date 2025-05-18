@@ -1,3 +1,4 @@
+use thiserror::Error;
 use crate::db::taxa::Taxa;
 use crate::ingest::{EventDetail, EventDetailFielder, EventDetailRunner};
 use crate::models::{DbEvent, DbFielder, DbRunner, NewBaserunner, NewEvent, NewFielder};
@@ -70,12 +71,18 @@ pub fn event_to_fielders<'e>(
         .collect()
 }
 
+#[derive(Debug, Error)]
+pub enum RowToEventError {
+    #[error("Database returned invalid event type id {0}")]
+    InvalidEventTypeId(i64),
+}
+
 pub fn row_to_event<'e>(
     taxa: &Taxa,
     event: DbEvent,
     runners: Vec<DbRunner>,
     fielders: Vec<DbFielder>,
-) -> EventDetail<String> {
+) -> Result<EventDetail<String>, RowToEventError> {
     let baserunners = runners
         .into_iter()
         .map(|r| EventDetailRunner {
@@ -98,7 +105,7 @@ pub fn row_to_event<'e>(
         })
         .collect();
 
-    EventDetail {
+    Ok(EventDetail {
         game_event_index: event.game_event_index as usize,
         fair_ball_event_index: event.fair_ball_event_index.map(|i| i as usize),
         inning: event.inning as u8,
@@ -110,7 +117,8 @@ pub fn row_to_event<'e>(
         batter_count: event.batter_count as usize,
         batter_name: event.batter_name,
         pitcher_name: event.pitcher_name,
-        detail_type: taxa.event_type_from_id(event.event_type),
+        detail_type: taxa.event_type_from_id(event.event_type)
+            .ok_or_else(|| RowToEventError::InvalidEventTypeId(event.event_type))?,
         hit_type: event.hit_type.map(|id| taxa.hit_type_from_id(id)),
         fair_ball_type: event
             .fair_ball_type
@@ -123,5 +131,5 @@ pub fn row_to_event<'e>(
             .map(|id| taxa.fielding_error_type_from_id(id)),
         fielders,
         baserunners,
-    }
+    })
 }

@@ -64,8 +64,9 @@ pub mod data {
     diesel::table! {
         data.ingests (id) {
             id -> Int8,
-            date_started -> Timestamp,
-            date_finished -> Nullable<Timestamp>,
+            started_at -> Timestamp,
+            finished_at -> Nullable<Timestamp>,
+            aborted_at -> Nullable<Timestamp>,
         }
     }
 

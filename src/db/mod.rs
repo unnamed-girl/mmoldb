@@ -19,6 +19,7 @@ use crate::models::{
 use chrono::{DateTime, NaiveDateTime, Utc};
 use itertools::PeekingNext;
 use rocket_db_pools::{diesel::AsyncPgConnection, diesel::prelude::*};
+pub use to_db_format::RowToEventError;
 
 pub async fn ingest_count(conn: &mut AsyncPgConnection) -> QueryResult<i64> {
     use crate::data_schema::data::ingests::dsl::*;
@@ -33,9 +34,11 @@ pub async fn latest_ingests(conn: &mut AsyncPgConnection) -> QueryResult<Vec<(In
         #[diesel(sql_type = Int8)]
         pub id: i64,
         #[diesel(sql_type = Timestamp)]
-        pub date_started: NaiveDateTime,
+        pub started_at: NaiveDateTime,
         #[diesel(sql_type = Nullable<Timestamp>)]
-        pub date_finished: Option<NaiveDateTime>,
+        pub finished_at: Option<NaiveDateTime>,
+        #[diesel(sql_type = Nullable<Timestamp>)]
+        pub aborted_at: Option<NaiveDateTime>,
         #[diesel(sql_type = Int8)]
         pub num_games: i64,
     }
@@ -45,8 +48,8 @@ pub async fn latest_ingests(conn: &mut AsyncPgConnection) -> QueryResult<Vec<(In
         select i.*, count(g.mmolb_game_id) as num_games
         from data.ingests i
              left join data.games g on g.ingest = i.id
-        group by i.id, i.date_started
-        order by i.date_started desc
+        group by i.id, i.started_at
+        order by i.started_at desc
         limit 10
     ",
     )
@@ -57,15 +60,17 @@ pub async fn latest_ingests(conn: &mut AsyncPgConnection) -> QueryResult<Vec<(In
             .map(
                 |IngestWithGameCount {
                      id,
-                     date_started,
-                     date_finished,
+                     started_at,
+                     finished_at,
+                     aborted_at,
                      num_games,
                  }| {
                     (
                         Ingest {
                             id,
-                            date_started,
-                            date_finished,
+                            started_at,
+                            finished_at,
+                            aborted_at,
                         },
                         num_games,
                     )
@@ -75,11 +80,11 @@ pub async fn latest_ingests(conn: &mut AsyncPgConnection) -> QueryResult<Vec<(In
     })
 }
 
-pub async fn start_ingest(conn: &mut AsyncPgConnection, start: DateTime<Utc>) -> QueryResult<i64> {
+pub async fn start_ingest(conn: &mut AsyncPgConnection, at: DateTime<Utc>) -> QueryResult<i64> {
     use crate::data_schema::data::ingests::dsl::*;
 
     NewIngest {
-        date_started: start.naive_utc(),
+        started_at: at.naive_utc(),
     }
     .insert_into(ingests)
     .returning(id)
@@ -90,12 +95,26 @@ pub async fn start_ingest(conn: &mut AsyncPgConnection, start: DateTime<Utc>) ->
 pub async fn mark_ingest_finished(
     conn: &mut AsyncPgConnection,
     ingest_id: i64,
-    end: DateTime<Utc>,
+    at: DateTime<Utc>,
 ) -> QueryResult<()> {
     use crate::data_schema::data::ingests::dsl::*;
 
     diesel::update(ingests.filter(id.eq(ingest_id)))
-        .set(date_finished.eq(end.naive_utc()))
+        .set(finished_at.eq(at.naive_utc()))
+        .execute(conn)
+        .await
+        .map(|_| ())
+}
+
+pub async fn mark_ingest_aborted(
+    conn: &mut AsyncPgConnection,
+    ingest_id: i64,
+    at: DateTime<Utc>,
+) -> QueryResult<()> {
+    use crate::data_schema::data::ingests::dsl::*;
+
+    diesel::update(ingests.filter(id.eq(ingest_id)))
+        .set(aborted_at.eq(at.naive_utc()))
         .execute(conn)
         .await
         .map(|_| ())
@@ -205,7 +224,7 @@ pub async fn events_for_game<'e>(
     conn: &mut AsyncPgConnection,
     taxa: &Taxa,
     for_game_id: &str,
-) -> QueryResult<(Vec<EventDetail<String>>, EventsForGameTimings)> {
+) -> QueryResult<(Vec<Result<EventDetail<String>, RowToEventError>>, EventsForGameTimings)> {
     use crate::data_schema::data::event_baserunners::dsl as runner_dsl;
     use crate::data_schema::data::event_fielders::dsl as fielder_dsl;
     use crate::data_schema::data::events::dsl as events_dsl;

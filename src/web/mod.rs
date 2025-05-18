@@ -101,14 +101,16 @@ async fn ingest_page(ingest_id: i64, mut db: Connection<Db>) -> Result<Template,
         id: i64,
         started_at: FormattedDateContext,
         finished_at: Option<FormattedDateContext>,
+        aborted_at: Option<FormattedDateContext>,
         games: Vec<GameContext>,
     }
 
     let (ingest, games) = db::ingest_with_games(&mut db, ingest_id).await?;
     let ingest = IngestContext {
         id: ingest.id,
-        started_at: (&ingest.date_started).into(),
-        finished_at: ingest.date_finished.as_ref().map(Into::into),
+        started_at: (&ingest.started_at).into(),
+        finished_at: ingest.finished_at.as_ref().map(Into::into),
+        aborted_at: ingest.aborted_at.as_ref().map(Into::into),
         games: games
             .into_iter()
             .map(
@@ -175,6 +177,7 @@ async fn index(
         num_games: i64,
         started_at: FormattedDateContext,
         finished_at: Option<FormattedDateContext>,
+        aborted_at: Option<FormattedDateContext>,
     }
 
     // A transaction is probably overkill for this, but it's
@@ -197,8 +200,9 @@ async fn index(
         .map(|(ingest, num_games)| IngestContext {
             uri: uri!(ingest_page(ingest.id)).to_string(),
             num_games,
-            started_at: (&ingest.date_started).into(),
-            finished_at: ingest.date_finished.as_ref().map(Into::into),
+            started_at: (&ingest.started_at).into(),
+            finished_at: ingest.finished_at.as_ref().map(Into::into),
+            aborted_at: ingest.aborted_at.as_ref().map(Into::into),
         })
         .collect();
 

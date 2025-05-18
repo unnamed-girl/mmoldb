@@ -14,13 +14,13 @@ use mmolb_parsing::parsed_event::{
     RunnerOut, StartOfInningPitcher,
 };
 use std::collections::VecDeque;
-use std::fmt::Debug;
+use std::fmt::{Debug, Formatter};
 use std::fmt::Write;
 use strum::IntoDiscriminant;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum SimError {
+pub enum SimFatalError {
     #[error("This game had no events")]
     NoEvents,
 
@@ -259,15 +259,15 @@ where
     pub fn next(
         &mut self,
         expected: &'static [ParsedEventMessageDiscriminants],
-    ) -> Result<&'a ParsedEventMessage<&'g str>, SimError> {
+    ) -> Result<&'a ParsedEventMessage<&'g str>, SimFatalError> {
         match self.inner.next() {
             Some(val) => {
                 self.prev_event_type = Some(val.discriminant());
                 Ok(val)
             }
             None => match self.prev_event_type {
-                None => Err(SimError::NoEvents),
-                Some(previous) => Err(SimError::NotEnoughEvents { expected, previous }),
+                None => Err(SimFatalError::NoEvents),
+                Some(previous) => Err(SimFatalError::NotEnoughEvents { expected, previous }),
             },
         }
     }
@@ -288,7 +288,7 @@ macro_rules! extract_next_game_event {
         let expected = &[$($expected,)*];
         match $iter.next(expected)? {
             $($p => Ok($e),)*
-            other => Err(SimError::UnexpectedEventType {
+            other => Err(SimFatalError::UnexpectedEventType {
                 expected,
                 previous,
                 received: other.discriminant(),
@@ -319,7 +319,7 @@ macro_rules! game_event {
             $($p => {
                 Ok($e)
             })*
-            other => Err(SimError::UnexpectedEventType {
+            other => Err(SimFatalError::UnexpectedEventType {
                 expected,
                 previous,
                 received: other.discriminant(),
@@ -722,7 +722,7 @@ impl<'g> Game<'g> {
     pub fn new<'a, IterT>(
         game_id: &'g str,
         events: &'a mut IterT,
-    ) -> Result<(Game<'g>, Vec<Vec<IngestLog>>), SimError>
+    ) -> Result<(Game<'g>, Vec<Vec<IngestLog>>), SimFatalError>
     where
         'g: 'a,
         IterT: Iterator<Item = &'a ParsedEventMessage<&'g str>>,
@@ -1449,7 +1449,7 @@ impl<'g> Game<'g> {
         event: &ParsedEventMessage<&'g str>,
         raw_event: &mmolb_parsing::game::Event,
         ingest_logs: &mut IngestLogs,
-    ) -> Result<Option<EventDetail<&'g str>>, SimError> {
+    ) -> Result<Option<EventDetail<&'g str>>, SimFatalError> {
         let previous_event = self.state.prev_event_type;
         let this_event_discriminant = event.discriminant();
 
@@ -2280,6 +2280,100 @@ fn positioned_player_as_ref<StrT: AsRef<str>>(
     }
 }
 
+// Exactly equivalent to Option<TaxaBase> but we can derive Display on it
+#[derive(Debug)]
+pub enum MaybeBase {
+    NoBase,
+    Base(TaxaBase),
+}
+
+impl std::fmt::Display for MaybeBase {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoBase => write!(f, "batting"),
+            Self::Base(b) => write!(f, "{}", b),
+        }
+    }
+}
+
+impl From<Option<TaxaBase>> for MaybeBase {
+    fn from(value: Option<TaxaBase>) -> Self {
+        match value {
+            None => { MaybeBase::NoBase }
+            Some(b) => { MaybeBase::Base(b) }
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum MissingBaseDescriptionFormat<'g> {
+    #[error(
+        "Missing base description format when runner {runner_name} got out moving from {prev_base} \
+        to {out_at_base}"
+    )]
+    Out {
+        runner_name: &'g str,
+        prev_base: MaybeBase,
+        out_at_base: TaxaBase,
+    },
+}
+
+#[derive(Debug, Error)]
+pub enum ToParsedError<'g> {
+    #[error(transparent)]
+    // Note: Can't use #[from] because of the lifetime
+    MissingBaseDescriptionFormat(MissingBaseDescriptionFormat<'g>),
+    
+    #[error("{event_type} must have a fair_ball_type")]
+    MissingFairBallType { event_type: TaxaEventType },
+    
+    #[error("{event_type} must have a fair_ball_direction")]
+    MissingFairBallDirection { event_type: TaxaEventType },
+    
+    #[error("{event_type} must have a valid fair_ball_direction, but it had the non-fair-direction position {invalid_direction}")]
+    InvalidFairBallDirection { 
+        event_type: TaxaEventType,
+        invalid_direction: TaxaPosition,
+    },
+
+    #[error("{event_type} must have a fielding_error_type")]
+    MissingFieldingErrorType { event_type: TaxaEventType },
+
+    #[error("{event_type} must have exactly {required} runners out, but there were {actual}")]
+    WrongNumberOfRunnersOut {
+        event_type: TaxaEventType,
+        required: usize,
+        actual: usize,
+    },
+
+    #[error("{event_type} must have 1 or 2 runners out, but there were {actual}")]
+    WrongNumberOfRunnersOutInDoublePlay {
+        event_type: TaxaEventType,
+        actual: usize,
+    },
+
+    #[error("{event_type} must have exactly {required} fielder, but there were {actual}")]
+    WrongNumberOfFielders {
+        event_type: TaxaEventType,
+        required: usize,
+        actual: usize,
+    },
+}
+
+#[derive(Debug, Error)]
+pub enum ToParsedContactError {
+    #[error("Event with a fair_ball_index must have a fair_ball_type")]
+    MissingFairBallType,
+    
+    #[error("Event with a fair_ball_index must have a fair_ball_direction")]
+    MissingFairBallDirection,
+    
+    #[error("Event with a fair_ball_index must have a valid fair_ball_direction, but it had the non-fair-direction position {invalid_direction}")]
+    InvalidFairBallDirection { 
+        invalid_direction: TaxaPosition,
+    },
+}
+
 impl<StrT: AsRef<str>> EventDetail<StrT> {
     fn count(&self) -> (u8, u8) {
         (self.count_balls, self.count_strikes)
@@ -2359,28 +2453,81 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
 
     // A runner out is any runner where the final base is None
     // Every such runner must have a base_before of Some
-    fn runners_out_iter(&self) -> impl Iterator<Item = (&str, BaseNameVariant)> {
+    fn runners_out_iter(&self) -> impl Iterator<Item = Result<(&str, BaseNameVariant), MissingBaseDescriptionFormat>> {
         self.baserunners
             .iter()
             .filter(|runner| runner.is_out)
             .map(|runner| {
-                let base_format = runner
-                    .base_description_format
-                    .expect("Runner who got out must have a base_description_format");
+                let base_format = runner.base_description_format
+                    .ok_or_else(|| MissingBaseDescriptionFormat::Out {
+                        runner_name: runner.name.as_ref(),
+                        prev_base: runner.base_before.into(),
+                        out_at_base: runner.base_after,
+                    })?;
 
-                (
+                Ok((
                     runner.name.as_ref(),
                     TaxaBaseWithDescriptionFormat(runner.base_after, base_format).into(),
-                )
+                ))
             })
     }
 
-    fn runners_out(&self) -> Vec<(&str, BaseNameVariant)> {
+    fn runners_out(&self) -> Result<Vec<(&str, BaseNameVariant)>, MissingBaseDescriptionFormat> {
         self.runners_out_iter().collect()
     }
 
-    pub fn to_parsed(&self) -> ParsedEventMessage<&str> {
-        match self.detail_type {
+    pub fn to_parsed(&self) -> Result<ParsedEventMessage<&str>, ToParsedError> {
+        let exactly_one_runner_out = || {
+            let runners_out = self.runners_out()
+                .map_err(ToParsedError::MissingBaseDescriptionFormat)?;
+            
+            match <[_; 1]>::try_from(runners_out) {
+                Ok([runner]) => Ok(runner),
+                Err(runners_out) => Err(ToParsedError::WrongNumberOfRunnersOut {
+                    event_type: self.detail_type,
+                    required: 1,
+                    actual: runners_out.len(),
+                })
+            }
+        };
+
+        let exactly_one_fielder = || {
+            match <[_; 1]>::try_from(self.fielders()) {
+                Ok([runner]) => Ok(runner),
+                Err(fielders) => Err(ToParsedError::WrongNumberOfFielders {
+                    event_type: self.detail_type,
+                    required: 1,
+                    actual: fielders.len(),
+                })
+            }
+        };
+        
+        let mandatory_fair_ball_type = || {
+            Ok(self
+                .fair_ball_type
+                .ok_or_else(|| ToParsedError::MissingFairBallType { event_type: self.detail_type })?
+                .into())
+        };
+        
+        let mandatory_fair_ball_direction = || {
+            Ok(self
+                .fair_ball_direction
+                .ok_or_else(|| ToParsedError::MissingFairBallDirection { event_type: self.detail_type })?
+                .try_into()
+                .map_err(|invalid_direction| ToParsedError::InvalidFairBallDirection { 
+                    event_type: self.detail_type,
+                    invalid_direction
+                })?)
+        };
+
+        let mandatory_fielding_error_type = || {
+            Ok(self
+                .fielding_error_type
+                .ok_or_else(|| ToParsedError::MissingFieldingErrorType { event_type: self.detail_type })?
+                .into())
+        };
+
+        Ok(match self.detail_type {
             TaxaEventType::Ball => ParsedEventMessage::Ball {
                 steals: self.steals(),
                 count: self.count(),
@@ -2445,11 +2592,6 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                 count: self.count(),
             },
             TaxaEventType::Hit => {
-                let (fielder,) = self
-                    .fielders_iter()
-                    .collect_tuple()
-                    .expect("Hit must have exactly one fielder. TODO Handle this properly.");
-
                 ParsedEventMessage::BatterToBase {
                     batter: self.batter_name.as_ref(),
                     distance: match self.hit_type {
@@ -2460,28 +2602,19 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                         Some(TaxaHitType::Double) => Distance::Double,
                         Some(TaxaHitType::Triple) => Distance::Triple,
                     },
-                    fair_ball_type: self
-                        .fair_ball_type
-                        .expect("BatterToBase type must have a fair_ball_type")
-                        .into(),
-                    fielder,
+                    fair_ball_type: mandatory_fair_ball_type()?,
+                    fielder: exactly_one_fielder()?,
                     scores: self.scores(),
                     advances: self.advances(false),
                 }
             }
             TaxaEventType::ForceOut => {
-                let ((runner_out_name, runner_out_at_base),) =
-                    self.runners_out_iter().collect_tuple().expect(
-                        "ForceOut must have exactly one runner out. TODO Handle this properly.",
-                    );
+                let (runner_out_name, runner_out_at_base) = exactly_one_runner_out()?;
 
                 ParsedEventMessage::ForceOut {
                     batter: self.batter_name.as_ref(),
                     fielders: self.fielders(),
-                    fair_ball_type: self
-                        .fair_ball_type
-                        .expect("ForceOut type must have a fair_ball_type")
-                        .into(),
+                    fair_ball_type: mandatory_fair_ball_type()?,
                     out: RunnerOut {
                         runner: runner_out_name,
                         base: runner_out_at_base,
@@ -2491,23 +2624,15 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                 }
             }
             TaxaEventType::CaughtOut => {
-                let (caught_by,) = self
-                    .fielders_iter()
-                    .collect_tuple()
-                    .expect("CaughtOut must have exactly one fielder. TODO Handle this properly.");
-
                 let scores = self.scores();
-                let fair_ball_type = self
-                    .fair_ball_type
-                    .expect("CaughtOut type must have a fair_ball_type")
-                    .into();
+                let fair_ball_type = mandatory_fair_ball_type()?;
                 let is_fly = fair_ball_type != FairBallType::GroundBall;
                 let sacrifice = is_fly && !scores.is_empty();
 
                 ParsedEventMessage::CaughtOut {
                     batter: self.batter_name.as_ref(),
                     fair_ball_type,
-                    caught_by,
+                    caught_by: exactly_one_fielder()?,
                     scores,
                     advances: self.advances(false),
                     sacrifice,
@@ -2530,31 +2655,17 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                 let grand_slam = scores.len() == 3;
                 ParsedEventMessage::HomeRun {
                     batter: self.batter_name.as_ref(),
-                    fair_ball_type: self
-                        .fair_ball_type
-                        .expect("HomeRun type must have a fair_ball_type")
-                        .into(),
-                    destination: self
-                        .fair_ball_direction
-                        .expect("HomeRun type must have a fair_ball_direction")
-                        .try_into()
-                        .expect("HomeRun type must have a valid fair_ball_direction"),
+                    fair_ball_type: mandatory_fair_ball_type()?,
+                    destination: mandatory_fair_ball_direction()?,
                     scores,
                     grand_slam,
                 }
             }
             TaxaEventType::FieldingError => {
-                let (fielder,) = self.fielders_iter().collect_tuple().expect(
-                    "FieldingError must have exactly one fielder. TODO Handle this properly.",
-                );
-
                 ParsedEventMessage::ReachOnFieldingError {
                     batter: self.batter_name.as_ref(),
-                    fielder,
-                    error: self
-                        .fielding_error_type
-                        .expect("FieldingError type must have a fielding_error_type")
-                        .into(),
+                    fielder: exactly_one_fielder()?,
+                    error: mandatory_fielding_error_type()?,
                     scores: self.scores(),
                     advances: self.advances(false),
                 }
@@ -2567,14 +2678,11 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
             TaxaEventType::DoublePlay => {
                 let scores = self.scores();
                 let sacrifice = !scores.is_empty();
-                match &self.runners_out().as_slice() {
-                    [] => panic!("At least one existing runner must get out in a DoublePlay"),
+                let runners_out = self.runners_out().map_err(ToParsedError::MissingBaseDescriptionFormat)?;
+                match &runners_out.as_slice() {
                     [(name, at_base)] => ParsedEventMessage::DoublePlayCaught {
                         batter: self.batter_name.as_ref(),
-                        fair_ball_type: self
-                            .fair_ball_type
-                            .expect("DoublePlay type must have a fair_ball_type")
-                            .into(),
+                        fair_ball_type: mandatory_fair_ball_type()?,
                         fielders: self.fielders(),
                         out_two: RunnerOut {
                             runner: name,
@@ -2600,16 +2708,14 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                             sacrifice,
                         }
                     }
-                    other => {
-                        panic!("Too many runners out in double play ({})", other.len());
-                    }
+                    _ => return Err(ToParsedError::WrongNumberOfRunnersOutInDoublePlay {
+                        event_type: self.detail_type,
+                        actual: runners_out.len(),
+                    }),
                 }
             }
             TaxaEventType::FieldersChoice => {
-                let ((runner_out_name, runner_out_at_base),) =
-                    self.runners_out_iter().collect_tuple().expect(
-                        "FieldersChoice must have exactly one runner out. TODO Handle this properly.",
-                    );
+                let (runner_out_name, runner_out_at_base) = exactly_one_runner_out()?;
 
                 ParsedEventMessage::ReachOnFieldersChoice {
                     batter: self.batter_name.as_ref(),
@@ -2629,9 +2735,11 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                 let fielder = fielders
                     .iter()
                     .exactly_one()
-                    .expect(
-                        "ErrorOnFieldersChoice must have exactly one fielder (note: this might not be true after supporting FieldingErrorType::Fielding). TODO Handle this properly.",
-                    )
+                    .map_err(|e| ToParsedError::WrongNumberOfFielders {
+                        event_type: self.detail_type,
+                        required: 1,
+                        actual: e.len(),
+                    })?
                     .name;
 
                 ParsedEventMessage::ReachOnFieldersChoice {
@@ -2639,32 +2747,39 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                     fielders,
                     result: FieldingAttempt::Error {
                         fielder,
-                        error: self
-                            .fielding_error_type
-                            .expect("ErrorOnFieldersChoice type must have a fielding_error_type")
-                            .into(),
+                        error: mandatory_fielding_error_type()?,
                     },
                     scores: self.scores(),
                     advances: self.advances(true),
                 }
             }
-        }
+        })
     }
 
-    pub fn to_parsed_contact(&self) -> ParsedEventMessage<&str> {
+    pub fn to_parsed_contact(&self) -> Result<ParsedEventMessage<&str>, ToParsedContactError> {
+        let mandatory_fair_ball_type = || {
+            Ok(self
+                .fair_ball_type
+                .ok_or_else(|| ToParsedContactError::MissingFairBallType)?
+                .into())
+        };
+
+        let mandatory_fair_ball_direction = || {
+            Ok(self
+                .fair_ball_direction
+                .ok_or_else(|| ToParsedContactError::MissingFairBallDirection)?
+                .try_into()
+                .map_err(|invalid_direction| ToParsedContactError::InvalidFairBallDirection {
+                    invalid_direction
+                })?)
+        };
+
         // We're going to construct a FairBall for this no matter
         // whether we had the type.
-        ParsedEventMessage::FairBall {
+        Ok(ParsedEventMessage::FairBall {
             batter: self.batter_name.as_ref(),
-            fair_ball_type: self
-                .fair_ball_type
-                .expect("Event with a fair_ball_index must have a fair_ball_type")
-                .into(),
-            destination: self
-                .fair_ball_direction
-                .expect("Event with a fair_ball_index must have a fair_ball_direction")
-                .try_into()
-                .expect("Event with a fair_ball_index must have a valid fair_ball_direction"),
-        }
+            fair_ball_type: mandatory_fair_ball_type()?,
+            destination: mandatory_fair_ball_direction()?,
+        })
     }
 }

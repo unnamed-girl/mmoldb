@@ -5,4 +5,5 @@ port = 42424  # Must match the port forwarded in .devcontainer/devcontainer.json
 url = "postgres://postgres:postgres@localhost/mmoldb"
 
 [debug]
-#log_level = "debug"
+cache_game_list_from_api = true
+cache_game_from_api = true

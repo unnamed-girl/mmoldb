@@ -182,9 +182,9 @@ impl From<mmolb_parsing::enums::Position> for TaxaPosition {
 }
 
 impl TryInto<mmolb_parsing::enums::FairBallDestination> for TaxaPosition {
-    type Error = ();
+    type Error = Self;
 
-    fn try_into(self) -> Result<mmolb_parsing::enums::FairBallDestination, ()> {
+    fn try_into(self) -> Result<mmolb_parsing::enums::FairBallDestination, Self::Error> {
         match self {
             TaxaPosition::Pitcher => Ok(mmolb_parsing::enums::FairBallDestination::Pitcher),
             TaxaPosition::Catcher => Ok(mmolb_parsing::enums::FairBallDestination::Catcher),
@@ -195,10 +195,10 @@ impl TryInto<mmolb_parsing::enums::FairBallDestination> for TaxaPosition {
             TaxaPosition::LeftField => Ok(mmolb_parsing::enums::FairBallDestination::LeftField),
             TaxaPosition::CenterField => Ok(mmolb_parsing::enums::FairBallDestination::CenterField),
             TaxaPosition::RightField => Ok(mmolb_parsing::enums::FairBallDestination::RightField),
-            TaxaPosition::StartingPitcher => Err(()),
-            TaxaPosition::ReliefPitcher => Err(()),
-            TaxaPosition::Closer => Err(()),
-            TaxaPosition::DesignatedHitter => Err(()),
+            TaxaPosition::StartingPitcher => Err(TaxaPosition::StartingPitcher),
+            TaxaPosition::ReliefPitcher => Err(TaxaPosition::ReliefPitcher),
+            TaxaPosition::Closer => Err(TaxaPosition::Closer),
+            TaxaPosition::DesignatedHitter => Err(TaxaPosition::DesignatedHitter),
         }
     }
 }
@@ -622,12 +622,11 @@ impl Taxa {
         self.fielding_error_type_mapping[ty]
     }
 
-    pub fn event_type_from_id(&self, id: i64) -> TaxaEventType {
+    pub fn event_type_from_id(&self, id: i64) -> Option<TaxaEventType> {
         self.event_type_mapping
             .iter()
             .find(|(_, ty_id)| id == **ty_id)
-            .expect("TODO Handle unknown event type")
-            .0
+            .map(|(val, _)| val)
     }
 
     pub fn hit_type_from_id(&self, id: i64) -> TaxaHitType {

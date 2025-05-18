@@ -53,7 +53,7 @@ pub struct NewFieldingErrorType<'a> {
 #[derive(Insertable)]
 #[diesel(table_name = crate::data_schema::data::ingests)]
 pub struct NewIngest {
-    pub date_started: NaiveDateTime,
+    pub started_at: NaiveDateTime,
 }
 
 #[derive(Identifiable, Queryable, Selectable)]
@@ -61,8 +61,9 @@ pub struct NewIngest {
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct Ingest {
     pub id: i64,
-    pub date_started: NaiveDateTime,
-    pub date_finished: Option<NaiveDateTime>,
+    pub started_at: NaiveDateTime,
+    pub finished_at: Option<NaiveDateTime>,
+    pub aborted_at: Option<NaiveDateTime>,
 }
 
 #[derive(Insertable)]
