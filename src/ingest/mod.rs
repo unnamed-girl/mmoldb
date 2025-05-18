@@ -19,6 +19,7 @@ use rocket::tokio::sync::{Mutex, Notify};
 use rocket::tokio::task::JoinHandle;
 use rocket::{Orbit, Rocket, Shutdown, tokio};
 use rocket_db_pools::Database;
+use rocket_db_pools::diesel::AsyncPgConnection;
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -395,26 +396,35 @@ async fn ingest_task_runner(
                 }
             }
         }
-
-        let ingest_result = do_ingest(&pool, &taxa, &client, &config, &mut shutdown).await;
-        if let Err((err, ingest_id)) = ingest_result {
-            if let Some(ingest_id) = ingest_id {
-                warn!("Fatal error in game ingest: {}. This ingest is aborted.", err);
-                match mark_ingest_aborted(&pool, ingest_id).await {
-                    Ok(()) => {}
-                    Err(err) => {
-                        warn!("Failed to mark game ingest as aborted: {}", err);
+        
+        // Get a db connection and do the ingest 
+        match pool.get().await {
+            Ok(mut conn) => {
+                let ingest_result = do_ingest(&mut conn, &taxa, &client, &config, &mut shutdown).await;
+                if let Err((err, ingest_id)) = ingest_result {
+                    if let Some(ingest_id) = ingest_id {
+                        warn!("Fatal error in game ingest: {}. This ingest is aborted.", err);
+                        match db::mark_ingest_aborted(&mut conn, ingest_id, Utc::now()).await {
+                            Ok(()) => {}
+                            Err(err) => {
+                                warn!("Failed to mark game ingest as aborted: {}", err);
+                            }
+                        }
+                    } else {
+                        warn!(
+                            "Fatal error in game ingest before adding ingest to database: {}. \
+                            This ingest is aborted.", 
+                            err,
+                        );
                     }
                 }
-            } else {
-                warn!(
-                    "Fatal error in game ingest before adding ingest to database: {}. This ingest \
-                    is aborted.", 
-                    err,
-                );
-            }
-        }
-
+            },
+            Err(err) => {
+                warn!("Ingest task couldn't get a database connection. Skipping ingest. Error message: {err}");
+                continue;
+            },
+        };
+        
         // Try to transition from running to idle, with lots of
         // recovery behaviors
         {
@@ -472,12 +482,6 @@ async fn ingest_task_runner(
             _ = &mut shutdown => { break; }
         }
     }
-}
-
-async fn mark_ingest_aborted(pool: &Db, ingest_id: i64) -> Result<(), IngestDbError> {
-    let mut conn = pool.get().await?;
-    db::mark_ingest_aborted(&mut conn, ingest_id, Utc::now()).await?;
-    Ok(())
 }
 
 #[derive(Debug, Error)]
@@ -583,7 +587,7 @@ async fn fetch_game(
 }
 
 async fn do_ingest(
-    pool: &Db,
+    conn: &mut AsyncPgConnection,
     taxa: &Taxa,
     client: &ClientWithMiddleware,
     config: &IngestConfig,
@@ -592,19 +596,14 @@ async fn do_ingest(
     let ingest_start = Utc::now();
     info!("Ingest at {ingest_start} started");
 
-    // Introduce a scope so `conn` is dropped as soon as we finish with it
-    let ingest_id = {
-        let mut conn = pool.get().await
+    let ingest_id =  db::start_ingest(conn, ingest_start).await
             .map_err(|e| (e.into(), None))?;
-        db::start_ingest(&mut conn, ingest_start).await
-            .map_err(|e| (e.into(), None))?
-    };
 
-    do_ingest_internal(pool, taxa, client, config, shutdown, ingest_id, ingest_start).await
+    do_ingest_internal(conn, taxa, client, config, shutdown, ingest_id, ingest_start).await
         .map_err(|e| (e.into(), Some(ingest_id)))
 }
 async fn do_ingest_internal(
-    pool: &Db,
+    conn: &mut AsyncPgConnection,
     taxa: &Taxa,
     client: &ClientWithMiddleware,
     config: &IngestConfig,
@@ -642,15 +641,11 @@ async fn do_ingest_internal(
 
         let check_already_ingested_start = Utc::now();
         let already_ingested = if !config.reimport_all_games {
-            let mut conn = pool.get().await?;
-            db::has_game(&mut conn, &game_info.game_id)
-                .await
-                ?
+            db::has_game(conn, &game_info.game_id)
+                .await?
         } else {
-            let mut conn = pool.get().await?;
-            let num_deleted = db::delete_game(&mut conn, &game_info.game_id)
-                .await
-                ?;
+            let num_deleted = db::delete_game(conn, &game_info.game_id)
+                .await?;
 
             if num_deleted > 0 {
                 info!(
@@ -674,7 +669,7 @@ async fn do_ingest_internal(
                 game_data?
             }
             _ = &mut *shutdown => {
-                return Ok(());
+                break;
             }
         };
         let network_duration = (Utc::now() - network_start).as_seconds_f64();
@@ -691,7 +686,7 @@ async fn do_ingest_internal(
         );
 
         let result = ingest_game(
-            pool.clone(),
+            conn,
             &taxa,
             ingest_id,
             &game_info,
@@ -713,12 +708,7 @@ async fn do_ingest_internal(
     info!("{num_already_ingested_games_skipped} games already ingested");
 
     let ingest_end = Utc::now();
-    {
-        let mut conn = pool.get().await?;
-        db::mark_ingest_finished(&mut conn, ingest_id, ingest_end)
-            .await
-            ?
-    }
+    db::mark_ingest_finished(conn, ingest_id, ingest_end).await?;
     info!(
         "Marked ingest {ingest_id} finished. Time taken: {:#}.",
         HumanTime::from(ingest_end - ingest_start)
@@ -885,7 +875,7 @@ struct PreIngestTimings {
 }
 
 async fn ingest_game(
-    pool: Db,
+    conn: &mut AsyncPgConnection,
     taxa: &Taxa,
     ingest_id: i64,
     game_info: &CashewsGameResponse,
@@ -952,11 +942,9 @@ async fn ingest_game(
         db_insert_duration,
         db_fetch_for_check_duration,
     ) = {
-        let mut conn = pool.get().await?;
-
         let db_insert_start = Utc::now();
         let game_id = db::insert_game(
-            &mut conn,
+            conn,
             &taxa,
             ingest_id,
             &game_info.game_id,
@@ -970,8 +958,7 @@ async fn ingest_game(
 
         // We can rebuild them
         let db_fetch_for_check_start = Utc::now();
-        let inserted_events = db::events_for_game(&mut conn, &taxa, &game_info.game_id)
-            .await?;
+        let inserted_events = db::events_for_game(conn, &taxa, &game_info.game_id).await?;
         let db_fetch_for_check_duration = (Utc::now() - db_fetch_for_check_start).as_seconds_f64();
 
         (
@@ -1022,17 +1009,13 @@ async fn ingest_game(
     let insert_extra_logs_start = Utc::now();
     let extra_ingest_logs = extra_ingest_logs.into_vec();
     if !extra_ingest_logs.is_empty() {
-        let mut conn = pool.get().await?;
-        db::insert_additional_ingest_logs(&mut conn, game_id, extra_ingest_logs)
-            .await
-            ?;
+        db::insert_additional_ingest_logs(conn, game_id, extra_ingest_logs).await?;
     }
     let insert_extra_logs_duration = (Utc::now() - insert_extra_logs_start).as_seconds_f64();
 
     {
-        let mut conn = pool.get().await?;
         db::insert_timings(
-            &mut conn,
+            conn,
             game_id,
             db::Timings {
                 check_already_ingested_duration: pre_ingest_timings.check_already_ingested_duration,
@@ -1048,8 +1031,7 @@ async fn ingest_game(
                 total_duration: (Utc::now() - pre_ingest_timings.total_start).as_seconds_f64(),
             },
         )
-        .await
-        ?;
+        .await?;
     }
 
     info!(
@@ -1120,7 +1102,8 @@ fn check_round_trip(
                 "Round-trip of {} through EventDetail produced a mismatch:\n\
                  Original: <pre>{:?}</pre>\
                  Through EventDetail: <pre>{:?}</pre>",
-                if is_contact_event { "contact event" } else { "event" }, parsed, original_detail,
+                if is_contact_event { "contact event" } else { "event" }, parsed,
+                parsed_through_detail,
             ),
         );
     }
@@ -1145,7 +1128,7 @@ fn check_round_trip(
         log_if_error(
             ingest_logs,
             index,
-            original_detail.to_parsed_contact(),
+            reconstructed_detail.to_parsed_contact(),
             "Attempt to round-trip contact event through ParsedEventMessage -> EventDetail -> \
             database -> EventDetail -> ParsedEventMessage failed at the EventDetail -> \
             ParsedEventMessage step with error",
@@ -1154,7 +1137,7 @@ fn check_round_trip(
         log_if_error(
             ingest_logs,
             index,
-            original_detail.to_parsed(),
+            reconstructed_detail.to_parsed(),
             "Attempt to round-trip event through ParsedEventMessage -> EventDetail -> database \
             -> EventDetail -> ParsedEventMessage failed at the EventDetail -> ParsedEventMessage \
             step with error"
@@ -1171,8 +1154,8 @@ fn check_round_trip(
                  Original: <pre>{:?}</pre>\n\
                  Through EventDetail: <pre>{:?}</pre>",
                 if is_contact_event { "contact event" } else { "event" }, 
-                parsed, 
-                reconstructed_detail,
+                parsed,
+                parsed_through_db,
             ),
         );
     }

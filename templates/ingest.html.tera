@@ -16,7 +16,7 @@
     <section class="card seamless">
         <h2 class="ingest-heading">Ingest {{ ingest.id }}</h2>
         <p class="ingest-metadata">
-            Started {{ self::date_format(date=ingest.started_at) }}{% if ingest.finished_at %} and finished {{ self::date_format(date=ingest.finished_at) }}{% endif %}{% if ingest.aborted_at %} and aborted {{ self::date_format(date=ingest.aborted_at) }}{% endif %}..
+            Started {{ self::date_format(date=ingest.started_at) }}{% if ingest.finished_at %} and finished {{ self::date_format(date=ingest.finished_at) }}{% endif %}{% if ingest.aborted_at %} and aborted {{ self::date_format(date=ingest.aborted_at) }}{% endif %}.
         </p>
 
         {% if ingest.games %}

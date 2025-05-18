@@ -19,6 +19,7 @@ use crate::models::{
 use chrono::{DateTime, NaiveDateTime, Utc};
 use itertools::PeekingNext;
 use rocket_db_pools::{diesel::AsyncPgConnection, diesel::prelude::*};
+use rocket_db_pools::diesel::scoped_futures::ScopedFutureExt;
 pub use to_db_format::RowToEventError;
 
 pub async fn ingest_count(conn: &mut AsyncPgConnection) -> QueryResult<i64> {
@@ -50,7 +51,7 @@ pub async fn latest_ingests(conn: &mut AsyncPgConnection) -> QueryResult<Vec<(In
              left join data.games g on g.ingest = i.id
         group by i.id, i.started_at
         order by i.started_at desc
-        limit 10
+        limit 25
     ",
     )
     .load::<IngestWithGameCount>(conn)
@@ -318,8 +319,21 @@ pub async fn events_for_game<'e>(
     ))
 }
 
-// TODO Transaction
 pub async fn insert_game<'e>(
+    conn: &mut AsyncPgConnection,
+    taxa: &Taxa,
+    ingest_id: i64,
+    mmolb_game_id: &str,
+    game_data: &mmolb_parsing::game::Game,
+    logs: impl IntoIterator<Item = impl IntoIterator<Item = IngestLog>> + Send,
+    event_details: &'e [EventDetail<&'e str>],
+) -> QueryResult<i64> {
+    conn.transaction::<_, _, _>(|conn| async move {
+        insert_game_internal(conn, taxa, ingest_id, mmolb_game_id, game_data, logs, event_details).await
+    }.scope_boxed()).await
+}
+
+async fn insert_game_internal<'e>(
     conn: &mut AsyncPgConnection,
     taxa: &Taxa,
     ingest_id: i64,
