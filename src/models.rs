@@ -159,7 +159,7 @@ pub struct DbRawEvent {
 }
 
 // This struct happens to be used in a context where it's more natural
-// for it to own its data. A non-owning version is also perfectly 
+// for it to own its data. A non-owning version is also perfectly
 // possible.
 #[derive(Insertable)]
 #[diesel(table_name = crate::info_schema::info::event_ingest_log)]
@@ -180,6 +180,55 @@ pub struct DbEventIngestLog {
     pub log_order: i32,
     pub log_level: i32,
     pub log_text: String,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = crate::info_schema::info::game_ingest_timing)]
+pub struct NewGameIngestTimings {
+    pub game_id: i64,
+    pub check_already_ingested_duration: f64,
+    pub network_duration: f64,
+    pub parse_duration: f64,
+    pub sim_duration: f64,
+    pub db_insert_duration: f64,
+    pub db_fetch_for_check_get_game_id_duration: f64,
+    pub db_fetch_for_check_get_events_duration: f64,
+    pub db_fetch_for_check_get_runners_duration: f64,
+    pub db_fetch_for_check_group_runners_duration: f64,
+    pub db_fetch_for_check_get_fielders_duration: f64,
+    pub db_fetch_for_check_group_fielders_duration: f64,
+    pub db_fetch_for_check_post_process_duration: f64,
+    pub db_fetch_for_check_duration: f64,
+    pub db_duration: f64,
+    pub check_round_trip_duration: f64,
+    pub insert_extra_logs_duration: f64,
+    pub total_duration: f64,
+}
+
+#[derive(Identifiable, Queryable, Selectable, Associations)]
+#[diesel(belongs_to(DbGame, foreign_key = game_id))]
+#[diesel(table_name = crate::info_schema::info::game_ingest_timing)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct DbGameIngestTimings {
+    pub id: i64,
+    pub game_id: i64,
+    pub check_already_ingested_duration: f64,
+    pub network_duration: f64,
+    pub parse_duration: f64,
+    pub sim_duration: f64,
+    pub db_insert_duration: f64,
+    pub db_fetch_for_check_get_game_id_duration: f64,
+    pub db_fetch_for_check_get_events_duration: f64,
+    pub db_fetch_for_check_get_runners_duration: f64,
+    pub db_fetch_for_check_group_runners_duration: f64,
+    pub db_fetch_for_check_get_fielders_duration: f64,
+    pub db_fetch_for_check_group_fielders_duration: f64,
+    pub db_fetch_for_check_post_process_duration: f64,
+    pub db_fetch_for_check_duration: f64,
+    pub db_duration: f64,
+    pub check_round_trip_duration: f64,
+    pub insert_extra_logs_duration: f64,
+    pub total_duration: f64,
 }
 
 #[derive(Insertable)]

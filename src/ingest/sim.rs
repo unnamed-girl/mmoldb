@@ -126,6 +126,7 @@ impl IngestLogs {
         });
     }
 
+    #[allow(dead_code)]
     pub fn trace(&mut self, s: impl Into<String>) {
         self.logs.push(IngestLog {
             log_level: 5,

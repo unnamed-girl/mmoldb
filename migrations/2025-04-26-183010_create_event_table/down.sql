@@ -1,6 +1,7 @@
 drop table data.event_fielders;
 drop table data.event_baserunners;
 drop table data.events;
+drop table info.game_ingest_timing;
 drop table info.event_ingest_log;
 drop table info.raw_events;
 drop table data.games;

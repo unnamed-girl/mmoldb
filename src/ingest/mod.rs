@@ -7,13 +7,14 @@ use std::sync::Arc;
 pub use sim::{EventDetail, EventDetailFielder, EventDetailRunner, IngestLog};
 
 use crate::db::Taxa;
-use crate::ingest::sim::{Game, SimError};
+use crate::ingest::sim::Game;
 use crate::{Db, db};
 use chrono::serde::ts_milliseconds;
 use chrono::{DateTime, Utc};
 use chrono_humanize::HumanTime;
 use log::{error, info, warn};
 use mmolb_parsing::ParsedEventMessage;
+use reqwest::StatusCode;
 use reqwest_middleware::ClientWithMiddleware;
 use rocket::fairing::{Fairing, Info, Kind};
 use rocket::futures::FutureExt;
@@ -357,10 +358,99 @@ pub async fn ingest_task_runner(pool: Db, taxa: Taxa, client: ClientWithMiddlewa
     }
 }
 
+#[derive(Debug, Error)]
+enum FetchGameFromCacheError {
+    #[error("Only-if-cached request failed with message {0}")]
+    RequestError(reqwest_middleware::Error),
+
+    #[error("Only-if-cached request returned non-success status code {0}")]
+    NonSuccessStatusCode(reqwest::Error),
+
+    #[error("Only-if-cached request failed to json decode with error {0}")]
+    FailedJsonDecode(reqwest::Error),
+}
+
+async fn fetch_game_from_cache(client: &ClientWithMiddleware, url: &str) -> Result<mmolb_parsing::Game, FetchGameFromCacheError> {
+    client
+        .get(url)
+        .with_extension(http_cache_reqwest::CacheMode::OnlyIfCached)
+        .send()
+        .await
+        .map_err(FetchGameFromCacheError::RequestError)?
+        .error_for_status()
+        .map_err(FetchGameFromCacheError::NonSuccessStatusCode)?
+        .json()
+        .await
+        .map_err(FetchGameFromCacheError::FailedJsonDecode)
+}
+
+#[derive(Debug, Error)]
+enum FetchGameError {
+    #[error("Uncached request failed with message {0} after {1}")]
+    RequestError(reqwest_middleware::Error, FetchGameFromCacheError),
+
+    #[error("Uncached request returned non-success status code {0} after {1}")]
+    NonSuccessStatusCode(reqwest::Error, FetchGameFromCacheError),
+
+    #[error("Uncached request failed to json decode with error {0} after {1}")]
+    FailedJsonDecode(reqwest::Error, FetchGameFromCacheError),
+}
+
+// TODO From what I've read this would be a lot easier with the Tower
+//   crate. Investigate that.
+async fn fetch_game(client: &ClientWithMiddleware, game_id: &str) -> Result<mmolb_parsing::Game, FetchGameError> {
+    let url = format!("https://mmolb.com/api/game/{}", game_id);
+
+    // First, attempt to grab data from the cache, and if we succeed,
+    // return early. Otherwise record the fetch-from-cache error and
+    // continue.
+    let cache_err = match fetch_game_from_cache(client, &url).await {
+        Ok(game) => {
+            info!("Returning game from cache");
+            return Ok(game);
+        }
+        Err(err) => { err }
+    };
+
+    info!("Fetching game from the server because of cache error {cache_err:?}");
+
+    // Unfortunately, the nice-looking way with a bunch of map_err
+    // can't work because Rust doesn't know that only the earliest
+    // callback will be invoked. Hence this absolute mess of nested
+    // match statements
+    Ok(match match match send_game_request(client, url).await {
+            Ok(r) => { r }
+            Err(err) => {
+                return Err(FetchGameError::RequestError(err, cache_err));
+            }
+        }
+        .error_for_status() {
+            Ok(r) => { r }
+            Err(err) => {
+                return Err(FetchGameError::NonSuccessStatusCode(err, cache_err));
+            }
+        }
+        .json::<mmolb_parsing::Game>()
+        .await {
+            Ok(game) => { game }
+            Err(err) => {
+                return Err(FetchGameError::FailedJsonDecode(err, cache_err));
+            }
+    })
+}
+
+async fn send_game_request(client: &ClientWithMiddleware, url: String) -> Result<reqwest::Response, reqwest_middleware::Error> {
+    client
+        .get(url)
+        .with_extension(http_cache_reqwest::CacheMode::Reload)
+        .send()
+        .await
+}
+
 pub async fn do_ingest(pool: &Db, taxa: &Taxa, client: &ClientWithMiddleware, is_debug: bool) {
     // Temp override
     let is_debug = false;
-    
+
     let ingest_start = Utc::now();
     info!("Ingest at {ingest_start} started");
 
@@ -372,7 +462,7 @@ pub async fn do_ingest(pool: &Db, taxa: &Taxa, client: &ClientWithMiddleware, is
             .expect("TODO Error handling")
     };
 
-    info!("Recorded ingest start in database");
+    info!("Recorded ingest start in database. Requesting games list...");
 
     let games_request = if is_debug {
         // In development we want to always cache this
@@ -389,17 +479,19 @@ pub async fn do_ingest(pool: &Db, taxa: &Taxa, client: &ClientWithMiddleware, is
 
     let games: GamesResponse = games_response.json().await.expect("TODO Error handling");
 
-    info!("Ingesting {} total games", games.len());
+    info!("Got games list. Starting ingest of {} total games.", games.len());
 
     let mut num_incomplete_games_skipped = 0;
     let mut num_already_ingested_games_skipped = 0;
 
     for game_info in games {
+        let total_start = Utc::now();
         if game_info.state != GameState::Complete {
             num_incomplete_games_skipped += 1;
             continue;
         }
 
+        let check_already_ingested_start = Utc::now();
         let already_ingested = if !is_debug {
             let mut conn = pool.get().await.expect("TODO Error handling");
             db::has_game(&mut conn, &game_info.game_id)
@@ -424,16 +516,13 @@ pub async fn do_ingest(pool: &Db, taxa: &Taxa, client: &ClientWithMiddleware, is
             num_already_ingested_games_skipped += 1;
             continue;
         }
+        let check_already_ingested_duration = (Utc::now() - check_already_ingested_start).as_seconds_f64();
 
-        let url = format!("https://mmolb.com/api/game/{}", game_info.game_id);
-        let game_data = client
-            .get(url)
-            .send()
+        let network_start = Utc::now();
+        let game_data = fetch_game(client, &game_info.game_id)
             .await
-            .expect("TODO Error handling")
-            .json::<mmolb_parsing::Game>()
-            .await
-            .expect("TODO Error handling");
+            .expect("TODO API error handling -- this should have some sort of limited retry");
+        let network_duration = (Utc::now() - network_start).as_seconds_f64();
 
         info!(
             "Fetched {} {} @ {} {} s{}d{}: {}",
@@ -453,6 +542,11 @@ pub async fn do_ingest(pool: &Db, taxa: &Taxa, client: &ClientWithMiddleware, is
             ingest_id,
             &game_info,
             game_data,
+            PreIngestTimings {
+                total_start,
+                check_already_ingested_duration,
+                network_duration,
+            }
         ))
         .catch_unwind()
         .await;
@@ -488,6 +582,7 @@ impl IngestLogs {
         Self { logs: Vec::new() }
     }
 
+    #[allow(dead_code)]
     pub fn critical(&mut self, game_event_index: usize, s: impl Into<String>) {
         self.logs.push((game_event_index, IngestLog {
             log_level: 0,
@@ -502,6 +597,7 @@ impl IngestLogs {
         }));
     }
 
+    #[allow(dead_code)]
     pub fn warn(&mut self, game_event_index: usize, s: impl Into<String>) {
         self.logs.push((game_event_index, IngestLog {
             log_level: 2,
@@ -535,14 +631,23 @@ impl IngestLogs {
     }
 }
 
+struct PreIngestTimings {
+    pub total_start: DateTime<Utc>,
+    pub check_already_ingested_duration: f64,
+    pub network_duration: f64,
+}
+
 async fn ingest_game(
     pool: Db,
     taxa: &Taxa,
     ingest_id: i64,
     game_info: &CashewsGameResponse,
     game_data: mmolb_parsing::Game,
+    pre_ingest_timings: PreIngestTimings,
 ) {
+    let parse_start = Utc::now();
     let parsed_copy = mmolb_parsing::process_game(&game_data);
+    let parse_duration = (Utc::now() - parse_start).as_seconds_f64();
 
     // I'm adding enumeration to parsed, then stripping it out for
     // the iterator fed to Game::new, on purpose. I need the
@@ -550,6 +655,7 @@ async fn ingest_game(
     // inside Game::new.
     let mut parsed = parsed_copy.iter().zip(&game_data.event_log).enumerate();
 
+    let sim_start = Utc::now();
     let (mut game, game_creation_ingest_logs) = {
         let mut parsed_for_game = (&mut parsed).map(|(_, (parsed, _))| parsed);
 
@@ -562,7 +668,7 @@ async fn ingest_game(
             assert_eq!(unparsed, raw.message);
             // Sim has a different IngestLogs... this made sense at the time
             let mut ingest_logs = sim::IngestLogs::new();
-            
+
             let event = match game.next(index, &parsed, &raw, &mut ingest_logs) {
                 Ok(result) => { result }
                 Err(e) => {
@@ -570,10 +676,11 @@ async fn ingest_game(
                     None
                 }
             };
-            
+
             (event, ingest_logs.into_vec())
         })
         .unzip();
+    let sim_duration = (Utc::now() - sim_start).as_seconds_f64();
 
     // Take the None values out of detail_events
     let detail_events = detail_events
@@ -582,9 +689,11 @@ async fn ingest_game(
         .collect::<Vec<_>>();
 
     // Scope to drop conn as soon as I'm done with it
-    let (game_id, inserted_events) = {
+    let db_start = Utc::now();
+    let (game_id, (inserted_events, events_for_game_timings), db_insert_duration, db_fetch_for_check_duration) = {
         let mut conn = pool.get().await.expect("TODO Error handling");
 
+        let db_insert_start = Utc::now();
         let game_id = db::insert_game(
             &mut conn,
             &taxa,
@@ -596,15 +705,20 @@ async fn ingest_game(
         )
         .await
         .expect("TODO Error handling");
+        let db_insert_duration = (Utc::now() - db_insert_start).as_seconds_f64();
 
         // We can rebuild them
+        let db_fetch_for_check_start = Utc::now();
         let inserted_events = db::events_for_game(&mut conn, &taxa, &game_info.game_id)
             .await
             .expect("TODO Error handling");
+        let db_fetch_for_check_duration = (Utc::now() - db_fetch_for_check_start).as_seconds_f64();
 
-        (game_id, inserted_events)
+        (game_id, inserted_events, db_insert_duration, db_fetch_for_check_duration)
     };
+    let db_duration = (Utc::now() - db_start).as_seconds_f64();
 
+    let check_round_trip_start = Utc::now();
     let mut extra_ingest_logs = IngestLogs::new();
     assert_eq!(inserted_events.len(), detail_events.len());
     for (reconstructed_detail, original_detail) in inserted_events.iter().zip(detail_events) {
@@ -632,11 +746,33 @@ async fn ingest_game(
             &reconstructed_detail.to_parsed(),
         );
     }
+    let check_round_trip_duration = (Utc::now() - check_round_trip_start).as_seconds_f64();
 
+    let insert_extra_logs_start = Utc::now();
     let extra_ingest_logs = extra_ingest_logs.into_vec();
     if !extra_ingest_logs.is_empty() {
         let mut conn = pool.get().await.expect("TODO Error handling");
         db::insert_additional_ingest_logs(&mut conn, game_id, extra_ingest_logs)
+            .await
+            .expect("TODO Error handling");
+    }
+    let insert_extra_logs_duration = (Utc::now() - insert_extra_logs_start).as_seconds_f64();
+
+    {
+        let mut conn = pool.get().await.expect("TODO Error handling");
+        db::insert_timings(&mut conn, game_id, db::Timings {
+            check_already_ingested_duration: pre_ingest_timings.check_already_ingested_duration,
+            network_duration: pre_ingest_timings.network_duration,
+            parse_duration,
+            sim_duration,
+            db_insert_duration,
+            db_fetch_for_check_duration,
+            events_for_game_timings,
+            db_duration,
+            check_round_trip_duration,
+            insert_extra_logs_duration,
+            total_duration: (Utc::now() - pre_ingest_timings.total_start).as_seconds_f64(),
+        })
             .await
             .expect("TODO Error handling");
     }

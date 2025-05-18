@@ -57,7 +57,7 @@ create table data.games (
     -- bookkeeping
     id bigserial primary key not null,
     ingest bigserial references data.ingests not null,
-    mmolb_game_id text not null unique,
+    mmolb_game_id text not null unique, -- note: unique causes an index to be built
 
     -- game metadata
     season int not null,
@@ -67,6 +67,8 @@ create table data.games (
     home_team_emoji text not null,
     home_team_name text not null
 );
+
+create index games_ingest_id_index on data.games (ingest);
 
 create table info.raw_events (
     -- bookkeeping
@@ -85,8 +87,32 @@ create table info.event_ingest_log (
 
     -- log data
     log_order int not null,
-    log_level int not null, -- TODO Structure this field
+    log_level int not null,
     log_text text not null
+);
+
+create table info.game_ingest_timing (
+    -- bookkeeping
+    id bigserial primary key not null,
+    game_id bigserial references data.games on delete cascade not null,
+
+    check_already_ingested_duration float8 not null,
+    network_duration float8 not null,
+    parse_duration float8 not null,
+    sim_duration float8 not null,
+    db_insert_duration float8 not null,
+    db_fetch_for_check_duration float8 not null,
+    db_fetch_for_check_get_game_id_duration float8 not null,
+    db_fetch_for_check_get_events_duration float8 not null,
+    db_fetch_for_check_get_runners_duration float8 not null,
+    db_fetch_for_check_group_runners_duration float8 not null,
+    db_fetch_for_check_get_fielders_duration float8 not null,
+    db_fetch_for_check_group_fielders_duration float8 not null,
+    db_fetch_for_check_post_process_duration float8 not null,
+    db_duration float8 not null,
+    check_round_trip_duration float8 not null,
+    insert_extra_logs_duration float8 not null,
+    total_duration float8 not null
 );
 
 create table data.events (
@@ -128,6 +154,8 @@ create table data.events (
 --     constraint fair_ball_direction_null_sync check ((fair_ball_event_index is not null) = (fair_ball_direction is not null))
  );
 
+create index events_game_id_index on data.events (game_id);
+
 create table data.event_baserunners (
     -- bookkeeping
     id bigserial primary key not null,
@@ -166,6 +194,8 @@ create table data.event_baserunners (
     steal bool not null -- this records all ATTEMPTED steals. identify failed steals by looking at is_out
 );
 
+create index event_baserunners_event_id_index on data.event_baserunners (event_id);
+
 create table data.event_fielders (
     -- bookkeeping
     id bigserial primary key not null,
@@ -176,3 +206,5 @@ create table data.event_fielders (
     fielder_position bigint references taxa.position not null,
     play_order int not null
 );
+
+create index event_fielders_event_id_index on data.event_fielders (event_id);

@@ -12,7 +12,7 @@ pub use crate::db::taxa::{
 };
 
 use crate::ingest::{EventDetail, IngestLog};
-use crate::models::{DbEvent, DbEventIngestLog, DbFielder, DbGame, DbRawEvent, DbRunner, Ingest, NewEventIngestLogOwning, NewGame, NewIngest, NewRawEvent};
+use crate::models::{DbEvent, DbEventIngestLog, DbFielder, DbGame, DbRawEvent, DbRunner, Ingest, NewEventIngestLogOwning, NewGame, NewGameIngestTimings, NewIngest, NewRawEvent};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use itertools::PeekingNext;
 use rocket_db_pools::{diesel::prelude::*, diesel::AsyncPgConnection};
@@ -169,29 +169,44 @@ pub async fn delete_game(conn: &mut AsyncPgConnection, with_id: &str) -> QueryRe
         .await
 }
 
+pub struct EventsForGameTimings {
+    pub get_game_id_duration: f64,
+    pub get_events_duration: f64,
+    pub get_runners_duration: f64,
+    pub group_runners_duration: f64,
+    pub get_fielders_duration: f64,
+    pub group_fielders_duration: f64,
+    pub post_process_duration: f64,
+}
+
 pub async fn events_for_game<'e>(
     conn: &mut AsyncPgConnection,
     taxa: &Taxa,
     for_game_id: &str,
-) -> QueryResult<Vec<EventDetail<String>>> {
+) -> QueryResult<(Vec<EventDetail<String>>, EventsForGameTimings)> {
     use crate::data_schema::data::event_baserunners::dsl as runner_dsl;
     use crate::data_schema::data::event_fielders::dsl as fielder_dsl;
     use crate::data_schema::data::events::dsl as events_dsl;
     use crate::data_schema::data::games::dsl as games_dsl;
 
+    let get_game_id_start = Utc::now();
     let game_id = games_dsl::games
         .filter(games_dsl::mmolb_game_id.eq(for_game_id))
         .select(games_dsl::id)
         .get_result::<i64>(conn)
         .await?;
+    let get_game_id_duration = (Utc::now() - get_game_id_start).as_seconds_f64();
 
+    let get_events_start = Utc::now();
     let db_events = events_dsl::events
         .filter(events_dsl::game_id.eq(game_id))
         .order(events_dsl::game_event_index.asc())
         .select(DbEvent::as_select())
         .load(conn)
         .await?;
+    let get_events_duration = (Utc::now() - get_events_start).as_seconds_f64();
 
+    let get_runners_start = Utc::now();
     let db_runners = DbRunner::belonging_to(&db_events)
         .order((
             runner_dsl::event_id,
@@ -199,19 +214,29 @@ pub async fn events_for_game<'e>(
         ))
         .select(DbRunner::as_select())
         .load(conn)
-        .await?
-        .grouped_by(&db_events);
+        .await?;
+    let get_runners_duration = (Utc::now() - get_runners_start).as_seconds_f64();
 
+    let group_runners_start = Utc::now();
+    let db_runners = db_runners.grouped_by(&db_events);
+    let group_runners_duration = (Utc::now() - group_runners_start).as_seconds_f64();
+
+    let get_fielders_start = Utc::now();
     let db_fielders = DbFielder::belonging_to(&db_events)
         .order((fielder_dsl::event_id, fielder_dsl::play_order))
         .select(DbFielder::as_select())
         .load(conn)
-        .await?
-        .grouped_by(&db_events);
+        .await?;
+    let get_fielders_duration = (Utc::now() - get_fielders_start).as_seconds_f64();
+
+    let group_fielders_start = Utc::now();
+    let db_fielders = db_fielders.grouped_by(&db_events);
+    let group_fielders_duration = (Utc::now() - group_fielders_start).as_seconds_f64();
 
     // This complicated-looking statement just zips all the iterators
     // together and passes the corresponding elements to row_to_event
-    Ok(db_events
+    let post_process_start = Utc::now();
+    let result = db_events
         .into_iter()
         .zip(db_runners)
         .zip(db_fielders)
@@ -223,9 +248,21 @@ pub async fn events_for_game<'e>(
                 db_fielders,
             )
         })
-        .collect())
+        .collect();
+    let post_process_duration = (Utc::now() - post_process_start).as_seconds_f64();
+
+    Ok((result, EventsForGameTimings {
+        get_game_id_duration,
+        get_events_duration,
+        get_runners_duration,
+        group_runners_duration,
+        get_fielders_duration,
+        group_fielders_duration,
+        post_process_duration,
+    }))
 }
 
+// TODO Transaction
 pub async fn insert_game<'e>(
     conn: &mut AsyncPgConnection,
     taxa: &Taxa,
@@ -427,4 +464,49 @@ pub async fn game_and_raw_events(
         .collect::<Vec<_>>();
 
     Ok((game, events_with_logs))
+}
+
+pub struct Timings {
+    pub check_already_ingested_duration: f64,
+    pub network_duration: f64,
+    pub parse_duration: f64,
+    pub sim_duration: f64,
+    pub db_insert_duration: f64,
+    pub db_fetch_for_check_duration: f64,
+    pub events_for_game_timings: EventsForGameTimings,
+    pub db_duration: f64,
+    pub check_round_trip_duration: f64,
+    pub insert_extra_logs_duration: f64,
+    pub total_duration: f64,
+}
+
+pub async fn insert_timings(
+    conn: &mut AsyncPgConnection,
+    for_game_id: i64,
+    timings: Timings,
+) -> QueryResult<()> {
+    NewGameIngestTimings {
+        game_id: for_game_id,
+        check_already_ingested_duration: timings.check_already_ingested_duration,
+        network_duration: timings.network_duration,
+        parse_duration: timings.parse_duration,
+        sim_duration: timings.sim_duration,
+        db_fetch_for_check_get_game_id_duration: timings.events_for_game_timings.get_game_id_duration,
+        db_fetch_for_check_get_events_duration: timings.events_for_game_timings.get_events_duration,
+        db_fetch_for_check_get_runners_duration: timings.events_for_game_timings.get_runners_duration,
+        db_fetch_for_check_group_runners_duration: timings.events_for_game_timings.group_runners_duration,
+        db_fetch_for_check_get_fielders_duration: timings.events_for_game_timings.get_fielders_duration,
+        db_fetch_for_check_group_fielders_duration: timings.events_for_game_timings.group_fielders_duration,
+        db_fetch_for_check_post_process_duration: timings.events_for_game_timings.post_process_duration,
+        db_insert_duration: timings.db_insert_duration,
+        db_fetch_for_check_duration: timings.db_fetch_for_check_duration,
+        db_duration: timings.db_duration,
+        check_round_trip_duration: timings.check_round_trip_duration,
+        insert_extra_logs_duration: timings.insert_extra_logs_duration,
+        total_duration: timings.total_duration,
+    }
+        .insert_into(crate::info_schema::info::game_ingest_timing::dsl::game_ingest_timing)
+        .execute(conn)
+        .await
+        .map(|_| ())
 }
