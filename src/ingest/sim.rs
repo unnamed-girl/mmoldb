@@ -3,16 +3,19 @@ use crate::db::{
     TaxaFairBallType, TaxaFieldingErrorType, TaxaHitType, TaxaPosition,
 };
 use itertools::{EitherOrBoth, Itertools, PeekingNext};
+use log::warn;
 use mmolb_parsing::ParsedEventMessage;
 use mmolb_parsing::enums::{
     Base, BaseNameVariant, BatterStat, Distance, FairBallDestination, FairBallType, FoulType,
     HomeAway, NowBattingStats, Position, StrikeType, TopBottom,
 };
-use mmolb_parsing::parsed_event::{BaseSteal, FieldingAttempt, ParsedEventMessageDiscriminants, PositionedPlayer, RunnerAdvance, RunnerOut, StartOfInningPitcher};
+use mmolb_parsing::parsed_event::{
+    BaseSteal, FieldingAttempt, ParsedEventMessageDiscriminants, PositionedPlayer, RunnerAdvance,
+    RunnerOut, StartOfInningPitcher,
+};
 use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::fmt::Write;
-use log::warn;
 use strum::IntoDiscriminant;
 use thiserror::Error;
 
@@ -133,7 +136,7 @@ impl IngestLogs {
             log_text: s.into(),
         });
     }
-    
+
     pub fn into_vec(self) -> Vec<IngestLog> {
         self.logs
     }
@@ -484,7 +487,12 @@ impl<'g> EventDetailBuilder<'g> {
         Some(self.build(game, ingest_logs, type_detail))
     }
 
-    pub fn build(self, game: &Game<'g>, ingest_logs: &mut IngestLogs, type_detail: TaxaEventType) -> EventDetail<&'g str> {
+    pub fn build(
+        self,
+        game: &Game<'g>,
+        ingest_logs: &mut IngestLogs,
+        type_detail: TaxaEventType,
+    ) -> EventDetail<&'g str> {
         let batter_name = game
             .batter_for_active_team(self.batter_count_at_event_start)
             .name;
@@ -516,7 +524,7 @@ impl<'g> EventDetailBuilder<'g> {
                         is_steal: true,
                     }
                 } else if let Some(_scorer_name) = {
-                    // Tapping into the if-else chain so I can do some 
+                    // Tapping into the if-else chain so I can do some
                     // processing between the call to .next() and the
                     // `if let` match
                     if let Some(scorer_name) = scores.next() {
@@ -524,7 +532,7 @@ impl<'g> EventDetailBuilder<'g> {
                         if scorer_name != prev_runner.runner_name {
                             ingest_logs.error(format!(
                                 "Runner {scorer_name} scored, but the farthest runner was {}. \
-                                Ignoring the score.", 
+                                Ignoring the score.",
                                 prev_runner.runner_name,
                             ));
                             None
@@ -655,7 +663,10 @@ impl<'g> EventDetailBuilder<'g> {
         }
         let extra_advances = advances.collect::<Vec<_>>();
         if !extra_advances.is_empty() {
-            ingest_logs.error(format!("Advancing runner(s) not found: {:?}", extra_advances));
+            ingest_logs.error(format!(
+                "Advancing runner(s) not found: {:?}",
+                extra_advances
+            ));
         }
         let extra_runners_out = runners_out.collect::<Vec<_>>();
         if !extra_runners_out.is_empty() {
@@ -708,7 +719,10 @@ struct RunnerUpdate<'g, 'a> {
 }
 
 impl<'g> Game<'g> {
-    pub fn new<'a, IterT>(game_id: &'g str, events: &'a mut IterT) -> Result<(Game<'g>, Vec<Vec<IngestLog>>), SimError>
+    pub fn new<'a, IterT>(
+        game_id: &'g str,
+        events: &'a mut IterT,
+    ) -> Result<(Game<'g>, Vec<Vec<IngestLog>>), SimError>
     where
         'g: 'a,
         IterT: Iterator<Item = &'a ParsedEventMessage<&'g str>>,
@@ -731,11 +745,15 @@ impl<'g> Game<'g> {
                 home_team_emoji,
             )
         )?;
-        
+
         ingest_logs.push({
             let mut logs = IngestLogs::new();
-            logs.debug(format!("Set home team to name: \"{home_team_name}\", emoji: \"{home_team_emoji}\""));
-            logs.debug(format!("Set away team to name: \"{away_team_name}\", emoji: \"{away_team_emoji}\""));
+            logs.debug(format!(
+                "Set home team to name: \"{home_team_name}\", emoji: \"{home_team_emoji}\""
+            ));
+            logs.debug(format!(
+                "Set away team to name: \"{away_team_name}\", emoji: \"{away_team_emoji}\""
+            ));
             logs.into_vec()
         });
 
@@ -790,8 +808,12 @@ impl<'g> Game<'g> {
                 not match the one from LiveNow ({home_team_emoji})"
             ));
         }
-        event_ingest_logs.debug(format!("Set home team pitcher to name: \"{home_pitcher_name}\""));
-        event_ingest_logs.debug(format!("Set away team pitcher to name: \"{away_pitcher_name}\""));
+        event_ingest_logs.debug(format!(
+            "Set home team pitcher to name: \"{home_pitcher_name}\""
+        ));
+        event_ingest_logs.debug(format!(
+            "Set away team pitcher to name: \"{away_pitcher_name}\""
+        ));
         ingest_logs.push(event_ingest_logs.into_vec());
 
         let away_lineup = extract_next_game_event!(
@@ -801,7 +823,10 @@ impl<'g> Game<'g> {
         )?;
         ingest_logs.push({
             let mut logs = IngestLogs::new();
-            logs.debug(format!("Set away lineup to: {}", format_lineup(&away_lineup)));
+            logs.debug(format!(
+                "Set away lineup to: {}",
+                format_lineup(&away_lineup)
+            ));
             logs.into_vec()
         });
 
@@ -812,7 +837,10 @@ impl<'g> Game<'g> {
         )?;
         ingest_logs.push({
             let mut logs = IngestLogs::new();
-            logs.debug(format!("Set home lineup to: {}", format_lineup(&home_lineup)));
+            logs.debug(format!(
+                "Set home lineup to: {}",
+                format_lineup(&home_lineup)
+            ));
             logs.into_vec()
         });
 
@@ -1064,7 +1092,11 @@ impl<'g> Game<'g> {
         }
     }
 
-    fn check_baserunner_consistency(&self, raw_event: &mmolb_parsing::game::Event, ingest_logs: &mut IngestLogs) {
+    fn check_baserunner_consistency(
+        &self,
+        raw_event: &mmolb_parsing::game::Event,
+        ingest_logs: &mut IngestLogs,
+    ) {
         self.check_internal_baserunner_consistency(ingest_logs);
 
         let mut on_1b = false;
@@ -1080,11 +1112,20 @@ impl<'g> Game<'g> {
             }
         }
 
-        fn test_on_base(log: &mut IngestLogs, which_base: &str, expected_value: bool, value_from_mmolb: bool) {
+        fn test_on_base(
+            log: &mut IngestLogs,
+            which_base: &str,
+            expected_value: bool,
+            value_from_mmolb: bool,
+        ) {
             if value_from_mmolb && !expected_value {
-                log.error(format!("Observed a runner on {which_base} but we expected it to be empty"));
+                log.error(format!(
+                    "Observed a runner on {which_base} but we expected it to be empty"
+                ));
             } else if !value_from_mmolb && expected_value {
-                log.error(format!("Expected a runner on {which_base} but observed it to be empty"));
+                log.error(format!(
+                    "Expected a runner on {which_base} but observed it to be empty"
+                ));
             }
         }
         test_on_base(ingest_logs, "first", on_1b, raw_event.on_1b);
@@ -1093,16 +1134,36 @@ impl<'g> Game<'g> {
     }
 
     fn check_internal_baserunner_consistency(&self, ingest_logs: &mut IngestLogs) {
-        if !self.state.runners_on.iter().is_sorted_by(|a, b| a.base > b.base) {
-            ingest_logs.error(format!("Runners on base list was not sorted descending by base: {:?}", self.state.runners_on));
+        if !self
+            .state
+            .runners_on
+            .iter()
+            .is_sorted_by(|a, b| a.base > b.base)
+        {
+            ingest_logs.error(format!(
+                "Runners on base list was not sorted descending by base: {:?}",
+                self.state.runners_on
+            ));
         }
 
-        if self.state.runners_on.iter().unique_by(|r| r.base).count() != self.state.runners_on.len() {
-            ingest_logs.error(format!("Runners on base list has multiple runners on the same base: {:?}", self.state.runners_on));
+        if self.state.runners_on.iter().unique_by(|r| r.base).count() != self.state.runners_on.len()
+        {
+            ingest_logs.error(format!(
+                "Runners on base list has multiple runners on the same base: {:?}",
+                self.state.runners_on
+            ));
         }
 
-        if self.state.runners_on.iter().any(|r| r.base == TaxaBase::Home) {
-            ingest_logs.error(format!("Runners on base list has a runner on Home: {:?}", self.state.runners_on));
+        if self
+            .state
+            .runners_on
+            .iter()
+            .any(|r| r.base == TaxaBase::Home)
+        {
+            ingest_logs.error(format!(
+                "Runners on base list has a runner on Home: {:?}",
+                self.state.runners_on
+            ));
         }
     }
 
@@ -1136,9 +1197,9 @@ impl<'g> Game<'g> {
             // Consistency check
             if last_occupied_base == Some(TaxaBase::Home) {
                 ingest_logs.error(format!(
-                    "When processing {} (on {:#?}), the previous occupied base was Home", 
-                    runner.runner_name, runner.base),
-                );
+                    "When processing {} (on {:#?}), the previous occupied base was Home",
+                    runner.runner_name, runner.base
+                ));
             }
 
             // Runners can only score if there is no one ahead of them
@@ -1305,7 +1366,10 @@ impl<'g> Game<'g> {
         }
         let extra_runners_out = runners_out_iter.collect::<Vec<_>>();
         if !extra_runners_out.is_empty() {
-            ingest_logs.error(format!("Failed to apply runner(s) out: {:?}", extra_runners_out));
+            ingest_logs.error(format!(
+                "Failed to apply runner(s) out: {:?}",
+                extra_runners_out
+            ));
         }
 
         // Consistency check
@@ -1365,11 +1429,18 @@ impl<'g> Game<'g> {
         self.add_outs(outs_to_add);
     }
 
-    fn update_runners_steals_only(&mut self, steals: &[BaseSteal<&'g str>], ingest_logs: &mut IngestLogs) {
-        self.update_runners(RunnerUpdate {
-            steals,
-            ..Default::default()
-        }, ingest_logs);
+    fn update_runners_steals_only(
+        &mut self,
+        steals: &[BaseSteal<&'g str>],
+        ingest_logs: &mut IngestLogs,
+    ) {
+        self.update_runners(
+            RunnerUpdate {
+                steals,
+                ..Default::default()
+            },
+            ingest_logs,
+        );
     }
 
     pub fn next(
@@ -1436,7 +1507,7 @@ impl<'g> Game<'g> {
                             self.batting_team().team_emoji,
                         ));
                     }
-                    
+
                     match pitcher_status {
                         StartOfInningPitcher::Same { name, emoji } => {
                             ingest_logs.info(format!(
@@ -1453,7 +1524,7 @@ impl<'g> Game<'g> {
                                     leaving_pitcher, self.active_pitcher().name,
                                 ));
                             }
-        
+
                             if *leaving_position != self.active_pitcher().position {
                                 ingest_logs.warn(format!(
                                     "The position of the pitcher who left ({}) did not match the \
@@ -1461,7 +1532,7 @@ impl<'g> Game<'g> {
                                     leaving_position, self.active_pitcher().position,
                                 ));
                             }
-        
+
                             ingest_logs.info(format!(
                                 "Started {} of {} with new pitcher {arriving_position} {arriving_pitcher}",
                                 self.state.inning_half,
@@ -2117,20 +2188,32 @@ impl<'g> Game<'g> {
 fn format_lineup(lineup: &[PositionedPlayer<impl AsRef<str>>]) -> String {
     let mut s = String::new();
     for player in lineup {
-        write!(s, "\n    - name: \"{}\", position: \"{}\"", player.name.as_ref(), player.position).unwrap();
+        write!(
+            s,
+            "\n    - name: \"{}\", position: \"{}\"",
+            player.name.as_ref(),
+            player.position
+        )
+        .unwrap();
     }
     s
 }
 
 // This can be disabled once the to-do is addressed
 #[allow(unreachable_code, unused_variables)]
-fn check_now_batting_stats(stats: &NowBattingStats, batter_stats: &BatterStats, ingest_logs: &mut IngestLogs) {
+fn check_now_batting_stats(
+    stats: &NowBattingStats,
+    batter_stats: &BatterStats,
+    ingest_logs: &mut IngestLogs,
+) {
     return; // TODO Finish implementing this
 
     match stats {
         NowBattingStats::FirstPA => {
             if !batter_stats.is_empty() {
-                ingest_logs.warn("In NowBatting, expected this batter to have no stats in the current game");
+                ingest_logs.warn(
+                    "In NowBatting, expected this batter to have no stats in the current game",
+                );
             }
         }
         NowBattingStats::Stats { stats } => {
@@ -2155,7 +2238,10 @@ fn check_now_batting_stats(stats: &NowBattingStats, batter_stats: &BatterStats, 
                     }
                 }
                 Some(other) => {
-                    ingest_logs.warn(format!("First item in stats was not HitsForAtBats {:?}", other));
+                    ingest_logs.warn(format!(
+                        "First item in stats was not HitsForAtBats {:?}",
+                        other
+                    ));
                 }
             }
 
@@ -2164,10 +2250,14 @@ fn check_now_batting_stats(stats: &NowBattingStats, batter_stats: &BatterStats, 
             for zipped in their_stats.zip_longest(our_stats) {
                 match zipped {
                     EitherOrBoth::Left(theirs) => {
-                        ingest_logs.warn(format!("NowBatting event had unexpected stat entry {:?}", theirs));
+                        ingest_logs.warn(format!(
+                            "NowBatting event had unexpected stat entry {:?}",
+                            theirs
+                        ));
                     }
                     EitherOrBoth::Right(ours) => {
-                        ingest_logs.warn(format!("NowBatting missing expected stat entry {:?}", ours));
+                        ingest_logs
+                            .warn(format!("NowBatting missing expected stat entry {:?}", ours));
                     }
                     EitherOrBoth::Both(theirs, ours) => {
                         todo!("Compare {:?} to {:?}", theirs, ours)

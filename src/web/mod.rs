@@ -1,17 +1,17 @@
 mod error;
 mod utility_contexts;
 
-use rocket::{get, routes, uri, State};
+use rocket::{State, get, routes, uri};
 use rocket_db_pools::Connection;
 use rocket_db_pools::diesel::AsyncConnection;
 use rocket_db_pools::diesel::scoped_futures::ScopedFutureExt;
 use rocket_dyn_templates::{Template, context};
 use serde::Serialize;
 
+use crate::ingest::{IngestStatus, IngestTask};
 use crate::{Db, db};
 use error::AppError;
 use utility_contexts::FormattedDateContext;
-use crate::ingest::{IngestStatus, IngestTask};
 
 #[get("/game/<game_id>")]
 async fn game_page(game_id: i64, mut db: Connection<Db>) -> Result<Template, AppError> {
@@ -54,21 +54,27 @@ async fn game_page(game_id: i64, mut db: Connection<Db>) -> Result<Template, App
         away_team_name: game.away_team_name,
         home_team_emoji: game.home_team_emoji,
         home_team_name: game.home_team_name,
-        events: events.into_iter().map(|(event, logs)| EventContext {
-            text: event.event_text,
-            logs: logs.into_iter().map(|log| LogContext {
-                level: match log.log_level {
-                    0 => "critical",
-                    1 => "error",
-                    2 => "warning",
-                    3 => "info",
-                    4 => "debug",
-                    5 => "trace",
-                    _ => "unknown",
-                },
-                text: log.log_text,
-            }).collect(),
-        }).collect(),
+        events: events
+            .into_iter()
+            .map(|(event, logs)| EventContext {
+                text: event.event_text,
+                logs: logs
+                    .into_iter()
+                    .map(|log| LogContext {
+                        level: match log.log_level {
+                            0 => "critical",
+                            1 => "error",
+                            2 => "warning",
+                            3 => "info",
+                            4 => "debug",
+                            5 => "trace",
+                            _ => "unknown",
+                        },
+                        text: log.log_text,
+                    })
+                    .collect(),
+            })
+            .collect(),
     };
 
     Ok(Template::render("game", context! { game: game }))
@@ -105,18 +111,20 @@ async fn ingest_page(ingest_id: i64, mut db: Connection<Db>) -> Result<Template,
         finished_at: ingest.date_finished.as_ref().map(Into::into),
         games: games
             .into_iter()
-            .map(|(game, num_warnings, num_errors, num_critical)| GameContext {
-                uri: uri!(game_page(game.id)).to_string(),
-                season: game.season,
-                day: game.day,
-                away_team_emoji: game.away_team_emoji,
-                away_team_name: game.away_team_name,
-                home_team_emoji: game.home_team_emoji,
-                home_team_name: game.home_team_name,
-                num_warnings,
-                num_errors, 
-                num_critical
-            })
+            .map(
+                |(game, num_warnings, num_errors, num_critical)| GameContext {
+                    uri: uri!(game_page(game.id)).to_string(),
+                    season: game.season,
+                    day: game.day,
+                    away_team_emoji: game.away_team_emoji,
+                    away_team_name: game.away_team_name,
+                    home_team_emoji: game.home_team_emoji,
+                    home_team_name: game.home_team_name,
+                    num_warnings,
+                    num_errors,
+                    num_critical,
+                },
+            )
             .collect(),
     };
 
@@ -124,7 +132,10 @@ async fn ingest_page(ingest_id: i64, mut db: Connection<Db>) -> Result<Template,
 }
 
 #[get("/")]
-async fn index(mut db: Connection<Db>, ingest_task: &State<IngestTask>) -> Result<Template, AppError> {
+async fn index(
+    mut db: Connection<Db>,
+    ingest_task: &State<IngestTask>,
+) -> Result<Template, AppError> {
     #[derive(Serialize, Default)]
     struct IngestTaskContext {
         is_starting: bool,

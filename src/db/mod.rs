@@ -5,17 +5,20 @@
 mod taxa;
 mod to_db_format;
 
-use std::collections::HashMap;
 pub use crate::db::taxa::{
     Taxa, TaxaBase, TaxaBaseDescriptionFormat, TaxaBaseWithDescriptionFormat, TaxaEventType,
     TaxaFairBallType, TaxaFieldingErrorType, TaxaHitType, TaxaPosition,
 };
+use std::collections::HashMap;
 
 use crate::ingest::{EventDetail, IngestLog};
-use crate::models::{DbEvent, DbEventIngestLog, DbFielder, DbGame, DbRawEvent, DbRunner, Ingest, NewEventIngestLogOwning, NewGame, NewGameIngestTimings, NewIngest, NewRawEvent};
+use crate::models::{
+    DbEvent, DbEventIngestLog, DbFielder, DbGame, DbRawEvent, DbRunner, Ingest,
+    NewEventIngestLogOwning, NewGame, NewGameIngestTimings, NewIngest, NewRawEvent,
+};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use itertools::PeekingNext;
-use rocket_db_pools::{diesel::prelude::*, diesel::AsyncPgConnection};
+use rocket_db_pools::{diesel::AsyncPgConnection, diesel::prelude::*};
 
 pub async fn ingest_count(conn: &mut AsyncPgConnection) -> QueryResult<i64> {
     use crate::data_schema::data::ingests::dsl::*;
@@ -104,8 +107,8 @@ pub async fn ingest_with_games(
 ) -> QueryResult<(Ingest, Vec<(DbGame, i64, i64, i64)>)> {
     use crate::data_schema::data::games::dsl as game_dsl;
     use crate::data_schema::data::ingests::dsl as ingest_dsl;
-    use crate::info_schema::info::raw_events::dsl as raw_event_dsl;
     use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
+    use crate::info_schema::info::raw_events::dsl as raw_event_dsl;
 
     let ingest = ingest_dsl::ingests
         .filter(ingest_dsl::id.eq(for_ingest_id))
@@ -117,8 +120,12 @@ pub async fn ingest_with_games(
         .await?;
 
     let game_ids = games.iter().map(|g| g.id).collect::<Vec<i64>>();
-    
-    async fn count_log_level(conn: &mut AsyncPgConnection, game_ids: &Vec<i64>, level: i32) -> QueryResult<Vec<(i64, i64)>> {
+
+    async fn count_log_level(
+        conn: &mut AsyncPgConnection,
+        game_ids: &Vec<i64>,
+        level: i32,
+    ) -> QueryResult<Vec<(i64, i64)>> {
         raw_event_dsl::raw_events
             .filter(raw_event_dsl::game_id.eq_any(game_ids))
             .left_join(event_ingest_log_dsl::event_ingest_log)
@@ -130,16 +137,31 @@ pub async fn ingest_with_games(
             .await
     }
 
-    let mut num_warnings = count_log_level(conn, &game_ids, 2).await?.into_iter().peekable();
-    let mut num_errors = count_log_level(conn, &game_ids, 1).await?.into_iter().peekable();
-    let mut num_critical = count_log_level(conn, &game_ids, 0).await?.into_iter().peekable();
+    let mut num_warnings = count_log_level(conn, &game_ids, 2)
+        .await?
+        .into_iter()
+        .peekable();
+    let mut num_errors = count_log_level(conn, &game_ids, 1)
+        .await?
+        .into_iter()
+        .peekable();
+    let mut num_critical = count_log_level(conn, &game_ids, 0)
+        .await?
+        .into_iter()
+        .peekable();
 
     let games = games
         .into_iter()
         .map(|game| {
-            let warnings = num_warnings.peeking_next(|(id, _)| *id == game.id).map_or(0, |(_, n)| n);
-            let errors = num_errors.peeking_next(|(id, _)| *id == game.id).map_or(0, |(_, n)| n);
-            let critical = num_critical.peeking_next(|(id, _)| *id == game.id).map_or(0, |(_, n)| n);
+            let warnings = num_warnings
+                .peeking_next(|(id, _)| *id == game.id)
+                .map_or(0, |(_, n)| n);
+            let errors = num_errors
+                .peeking_next(|(id, _)| *id == game.id)
+                .map_or(0, |(_, n)| n);
+            let critical = num_critical
+                .peeking_next(|(id, _)| *id == game.id)
+                .map_or(0, |(_, n)| n);
             (game, warnings, errors, critical)
         })
         .collect();
@@ -241,25 +263,23 @@ pub async fn events_for_game<'e>(
         .zip(db_runners)
         .zip(db_fielders)
         .map(|((db_event, db_runners), db_fielders)| {
-            to_db_format::row_to_event(
-                taxa,
-                db_event,
-                db_runners,
-                db_fielders,
-            )
+            to_db_format::row_to_event(taxa, db_event, db_runners, db_fielders)
         })
         .collect();
     let post_process_duration = (Utc::now() - post_process_start).as_seconds_f64();
 
-    Ok((result, EventsForGameTimings {
-        get_game_id_duration,
-        get_events_duration,
-        get_runners_duration,
-        group_runners_duration,
-        get_fielders_duration,
-        group_fielders_duration,
-        post_process_duration,
-    }))
+    Ok((
+        result,
+        EventsForGameTimings {
+            get_game_id_duration,
+            get_events_duration,
+            get_runners_duration,
+            group_runners_duration,
+            get_fielders_duration,
+            group_fielders_duration,
+            post_process_duration,
+        },
+    ))
 }
 
 // TODO Transaction
@@ -275,9 +295,9 @@ pub async fn insert_game<'e>(
     use crate::data_schema::data::event_baserunners::dsl as baserunners_dsl;
     use crate::data_schema::data::event_fielders::dsl as fielders_dsl;
     use crate::data_schema::data::events::dsl as events_dsl;
+    use crate::data_schema::data::games::dsl as games_dsl;
     use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
     use crate::info_schema::info::raw_events::dsl as raw_events_dsl;
-    use crate::data_schema::data::games::dsl as games_dsl;
 
     let game_id = diesel::insert_into(games_dsl::games)
         .values(&NewGame {
@@ -294,12 +314,18 @@ pub async fn insert_game<'e>(
         .get_result::<i64>(conn)
         .await?;
 
-    let raw_event_ids = diesel::insert_into(raw_events_dsl::raw_events)
-        .values(game_data.event_log.iter().enumerate().map(|(index, raw_event)| NewRawEvent {
+    let new_raw_events = game_data
+        .event_log
+        .iter()
+        .enumerate()
+        .map(|(index, raw_event)| NewRawEvent {
             game_id,
             game_event_index: index as i32,
             event_text: &raw_event.message,
-        }).collect::<Vec<_>>())
+        })
+        .collect::<Vec<_>>();
+    let raw_event_ids = diesel::insert_into(raw_events_dsl::raw_events)
+        .values(new_raw_events)
         .returning(raw_events_dsl::id)
         .get_results::<i64>(conn)
         .await?;
@@ -399,7 +425,10 @@ pub async fn insert_additional_ingest_logs(
     // Maps raw_event_id to its highest log_order
     let mut highest_log_order_for_event: HashMap<_, _> = event_ingest_log_dsl::event_ingest_log
         .group_by(event_ingest_log_dsl::raw_event_id)
-        .select((event_ingest_log_dsl::raw_event_id, diesel::dsl::max(event_ingest_log_dsl::log_order)))
+        .select((
+            event_ingest_log_dsl::raw_event_id,
+            diesel::dsl::max(event_ingest_log_dsl::log_order),
+        ))
         .filter(event_ingest_log_dsl::raw_event_id.eq_any(&raw_event_ids))
         .order_by(event_ingest_log_dsl::raw_event_id.asc())
         .get_results::<(i64, Option<i32>)>(conn)
@@ -436,9 +465,9 @@ pub async fn game_and_raw_events(
     conn: &mut AsyncPgConnection,
     for_game_id: i64,
 ) -> QueryResult<(DbGame, Vec<(DbRawEvent, Vec<DbEventIngestLog>)>)> {
+    use crate::data_schema::data::games::dsl as games_dsl;
     use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
     use crate::info_schema::info::raw_events::dsl as raw_events_dsl;
-    use crate::data_schema::data::games::dsl as games_dsl;
 
     let game = games_dsl::games
         .filter(games_dsl::id.eq(for_game_id))
@@ -491,13 +520,25 @@ pub async fn insert_timings(
         network_duration: timings.network_duration,
         parse_duration: timings.parse_duration,
         sim_duration: timings.sim_duration,
-        db_fetch_for_check_get_game_id_duration: timings.events_for_game_timings.get_game_id_duration,
+        db_fetch_for_check_get_game_id_duration: timings
+            .events_for_game_timings
+            .get_game_id_duration,
         db_fetch_for_check_get_events_duration: timings.events_for_game_timings.get_events_duration,
-        db_fetch_for_check_get_runners_duration: timings.events_for_game_timings.get_runners_duration,
-        db_fetch_for_check_group_runners_duration: timings.events_for_game_timings.group_runners_duration,
-        db_fetch_for_check_get_fielders_duration: timings.events_for_game_timings.get_fielders_duration,
-        db_fetch_for_check_group_fielders_duration: timings.events_for_game_timings.group_fielders_duration,
-        db_fetch_for_check_post_process_duration: timings.events_for_game_timings.post_process_duration,
+        db_fetch_for_check_get_runners_duration: timings
+            .events_for_game_timings
+            .get_runners_duration,
+        db_fetch_for_check_group_runners_duration: timings
+            .events_for_game_timings
+            .group_runners_duration,
+        db_fetch_for_check_get_fielders_duration: timings
+            .events_for_game_timings
+            .get_fielders_duration,
+        db_fetch_for_check_group_fielders_duration: timings
+            .events_for_game_timings
+            .group_fielders_duration,
+        db_fetch_for_check_post_process_duration: timings
+            .events_for_game_timings
+            .post_process_duration,
         db_insert_duration: timings.db_insert_duration,
         db_fetch_for_check_duration: timings.db_fetch_for_check_duration,
         db_duration: timings.db_duration,
@@ -505,8 +546,8 @@ pub async fn insert_timings(
         insert_extra_logs_duration: timings.insert_extra_logs_duration,
         total_duration: timings.total_duration,
     }
-        .insert_into(crate::info_schema::info::game_ingest_timing::dsl::game_ingest_timing)
-        .execute(conn)
-        .await
-        .map(|_| ())
+    .insert_into(crate::info_schema::info::game_ingest_timing::dsl::game_ingest_timing)
+    .execute(conn)
+    .await
+    .map(|_| ())
 }

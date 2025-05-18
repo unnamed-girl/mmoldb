@@ -1,10 +1,10 @@
 mod http;
 mod sim;
 
+pub use sim::{EventDetail, EventDetailFielder, EventDetailRunner, IngestLog};
 use std::mem;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
-pub use sim::{EventDetail, EventDetailFielder, EventDetailRunner, IngestLog};
 
 use crate::db::Taxa;
 use crate::ingest::sim::Game;
@@ -18,9 +18,9 @@ use reqwest::StatusCode;
 use reqwest_middleware::ClientWithMiddleware;
 use rocket::fairing::{Fairing, Info, Kind};
 use rocket::futures::FutureExt;
-use rocket::{tokio, Orbit, Rocket, Shutdown};
 use rocket::tokio::sync::{Mutex, Notify};
 use rocket::tokio::task::JoinHandle;
+use rocket::{Orbit, Rocket, Shutdown, tokio};
 use rocket_db_pools::Database;
 use serde::Deserialize;
 use strum::IntoDiscriminant;
@@ -44,7 +44,7 @@ pub enum IngestSetupError {
 pub enum IngestFatalError {
     #[error("The ingest task was interrupted while manipulating the task state")]
     InterruptedManipulatingTaskState,
-    
+
     #[error("Ingest task transitioned to NotStarted state from some other state")]
     ReenteredNotStarted,
 }
@@ -60,11 +60,10 @@ pub enum IngestStatus {
     ShuttingDown,
 }
 
-
 #[derive(Debug)]
 enum IngestTaskState {
     // Ingest is not yet started. This state should be short-lived.
-    // Notify is used to notify the task when the state has 
+    // Notify is used to notify the task when the state has
     // transitioned to Idle.
     NotStarted(Arc<Notify>),
     // Ingest failed to start. This is a terminal state.
@@ -94,19 +93,21 @@ pub struct IngestTask {
 impl IngestTask {
     pub fn new() -> Self {
         Self {
-            state: Arc::new(Mutex::new(IngestTaskState::NotStarted(Arc::new(Notify::new())))),
+            state: Arc::new(Mutex::new(IngestTaskState::NotStarted(Arc::new(
+                Notify::new(),
+            )))),
         }
     }
-    
+
     pub async fn state(&self) -> IngestStatus {
         let task_state = self.state.lock().await;
         match &*task_state {
-            IngestTaskState::NotStarted(_) => { IngestStatus::Starting }
-            IngestTaskState::FailedToStart(err) => { IngestStatus::FailedToStart(err.to_string()) }
-            IngestTaskState::Idle(_) => { IngestStatus::Idle }
-            IngestTaskState::Running(_) => { IngestStatus::Running }
-            IngestTaskState::ShutdownRequested => { IngestStatus::ShuttingDown }
-            IngestTaskState::ExitedWithError(err) => { IngestStatus::ExitedWithError(err.to_string()) }
+            IngestTaskState::NotStarted(_) => IngestStatus::Starting,
+            IngestTaskState::FailedToStart(err) => IngestStatus::FailedToStart(err.to_string()),
+            IngestTaskState::Idle(_) => IngestStatus::Idle,
+            IngestTaskState::Running(_) => IngestStatus::Running,
+            IngestTaskState::ShutdownRequested => IngestStatus::ShuttingDown,
+            IngestTaskState::ExitedWithError(err) => IngestStatus::ExitedWithError(err.to_string()),
         }
     }
 }
@@ -114,7 +115,9 @@ impl IngestTask {
 pub struct IngestFairing;
 
 impl IngestFairing {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 
 #[rocket::async_trait]
@@ -142,14 +145,15 @@ impl Fairing for IngestFairing {
             if let IngestTaskState::NotStarted(notify) = &*task_status {
                 notify.clone()
             } else {
-                *task_status = IngestTaskState::FailedToStart(IngestSetupError::LeftNotStartedTooEarly);
+                *task_status =
+                    IngestTaskState::FailedToStart(IngestSetupError::LeftNotStartedTooEarly);
                 return;
             }
         };
 
         let shutdown = rocket.shutdown();
         let is_debug = rocket.config().profile == "debug";
-        
+
         match launch_ingest_task(pool, is_debug, task.clone(), shutdown).await {
             Ok(handle) => {
                 *task.state.lock().await = IngestTaskState::Idle(handle);
@@ -174,7 +178,10 @@ impl Fairing for IngestFairing {
                     error!("Failed to shut down Ingest task: {}", e);
                 }
             } else {
-                error!("Ingest task is in non-Idle or Running state at shutdown: {:?}", *state);
+                error!(
+                    "Ingest task is in non-Idle or Running state at shutdown: {:?}",
+                    *state
+                );
             }
         } else {
             error!("Rocket is not managing an IngestTask!");
@@ -243,21 +250,35 @@ pub async fn launch_ingest_task(
             .map_err(|err| IngestSetupError::TaxaSetupError(err))?
     };
 
-    Ok(tokio::spawn(ingest_task_runner(pool, taxa, client, is_debug, task, shutdown)))
+    Ok(tokio::spawn(ingest_task_runner(
+        pool, taxa, client, is_debug, task, shutdown,
+    )))
 }
 
-pub async fn ingest_task_runner(pool: Db, taxa: Taxa, client: ClientWithMiddleware, is_debug: bool, task: IngestTask, mut shutdown: Shutdown) {
+pub async fn ingest_task_runner(
+    pool: Db,
+    taxa: Taxa,
+    client: ClientWithMiddleware,
+    is_debug: bool,
+    task: IngestTask,
+    mut shutdown: Shutdown,
+) {
     loop {
-        // Try to transition from idle to running, with lots of 
+        // Try to transition from idle to running, with lots of
         // recovery behaviors
         loop {
             let mut task_state = task.state.lock().await;
-            // We can't atomically move handle from idle to running, 
+            // We can't atomically move handle from idle to running,
             // but we can replace it with the error that should happen
             // if something were to interrupt us. This should never be
             // seen by outside code, since we have the state locked.
             // It's just defensive programming.
-            let prev_state = mem::replace(&mut *task_state, IngestTaskState::ExitedWithError(IngestFatalError::InterruptedManipulatingTaskState));
+            let prev_state = mem::replace(
+                &mut *task_state,
+                IngestTaskState::ExitedWithError(
+                    IngestFatalError::InterruptedManipulatingTaskState,
+                ),
+            );
             match prev_state {
                 IngestTaskState::NotStarted(notify) => {
                     // Put the value back how it was, drop the mutex, and wait.
@@ -298,7 +319,7 @@ pub async fn ingest_task_runner(pool: Db, taxa: Taxa, client: ClientWithMiddlewa
                 }
             }
         }
-        
+
         let ingest_result = AssertUnwindSafe(do_ingest(&pool, &taxa, &client, is_debug))
             .catch_unwind()
             .await;
@@ -307,19 +328,25 @@ pub async fn ingest_task_runner(pool: Db, taxa: Taxa, client: ClientWithMiddlewa
             warn!("Ingest task panicked! Error: {:?}", err);
         }
 
-        // Try to transition from running to idle, with lots of 
+        // Try to transition from running to idle, with lots of
         // recovery behaviors
         {
             let mut task_state = task.state.lock().await;
-            // We can't atomically move handle from idle to running, 
+            // We can't atomically move handle from idle to running,
             // but we can replace it with the error that should happen
             // if something were to interrupt us. This should never be
             // seen by outside code, since we have the state locked.
             // It's just defensive programming.
-            let prev_state = mem::replace(&mut *task_state, IngestTaskState::ExitedWithError(IngestFatalError::InterruptedManipulatingTaskState));
+            let prev_state = mem::replace(
+                &mut *task_state,
+                IngestTaskState::ExitedWithError(
+                    IngestFatalError::InterruptedManipulatingTaskState,
+                ),
+            );
             match prev_state {
                 IngestTaskState::NotStarted(_) => {
-                    *task_state = IngestTaskState::ExitedWithError(IngestFatalError::ReenteredNotStarted);
+                    *task_state =
+                        IngestTaskState::ExitedWithError(IngestFatalError::ReenteredNotStarted);
                     return;
                 }
                 IngestTaskState::FailedToStart(err) => {
@@ -335,7 +362,9 @@ pub async fn ingest_task_runner(pool: Db, taxa: Taxa, client: ClientWithMiddlewa
                 }
                 IngestTaskState::Idle(handle) => {
                     // Shouldn't happen, but if it does recovery is easy
-                    warn!("Ingest task state was Idle at the bottom of the loop (expected Running)");
+                    warn!(
+                        "Ingest task state was Idle at the bottom of the loop (expected Running)"
+                    );
                     *task_state = IngestTaskState::Idle(handle);
                 }
                 IngestTaskState::ShutdownRequested => {
@@ -350,7 +379,7 @@ pub async fn ingest_task_runner(pool: Db, taxa: Taxa, client: ClientWithMiddlewa
                 }
             }
         }
-        
+
         tokio::select! {
             _ = tokio::time::sleep(tokio::time::Duration::from_secs(30 * 60)) => {},
             _ = &mut shutdown => { break; }
@@ -370,7 +399,10 @@ enum FetchGameFromCacheError {
     FailedJsonDecode(reqwest::Error),
 }
 
-async fn fetch_game_from_cache(client: &ClientWithMiddleware, url: &str) -> Result<mmolb_parsing::Game, FetchGameFromCacheError> {
+async fn fetch_game_from_cache(
+    client: &ClientWithMiddleware,
+    url: &str,
+) -> Result<mmolb_parsing::Game, FetchGameFromCacheError> {
     client
         .get(url)
         .with_extension(http_cache_reqwest::CacheMode::OnlyIfCached)
@@ -398,7 +430,10 @@ enum FetchGameError {
 
 // TODO From what I've read this would be a lot easier with the Tower
 //   crate. Investigate that.
-async fn fetch_game(client: &ClientWithMiddleware, game_id: &str) -> Result<mmolb_parsing::Game, FetchGameError> {
+async fn fetch_game(
+    client: &ClientWithMiddleware,
+    game_id: &str,
+) -> Result<mmolb_parsing::Game, FetchGameError> {
     let url = format!("https://mmolb.com/api/game/{}", game_id);
 
     // First, attempt to grab data from the cache, and if we succeed,
@@ -409,7 +444,7 @@ async fn fetch_game(client: &ClientWithMiddleware, game_id: &str) -> Result<mmol
             info!("Returning game from cache");
             return Ok(game);
         }
-        Err(err) => { err }
+        Err(err) => err,
     };
 
     info!("Fetching game from the server because of cache error {cache_err:?}");
@@ -418,28 +453,35 @@ async fn fetch_game(client: &ClientWithMiddleware, game_id: &str) -> Result<mmol
     // can't work because Rust doesn't know that only the earliest
     // callback will be invoked. Hence this absolute mess of nested
     // match statements
-    Ok(match match match send_game_request(client, url).await {
-            Ok(r) => { r }
+    Ok(
+        match match match send_game_request(client, url).await {
+            Ok(r) => r,
             Err(err) => {
                 return Err(FetchGameError::RequestError(err, cache_err));
             }
         }
-        .error_for_status() {
-            Ok(r) => { r }
+        .error_for_status()
+        {
+            Ok(r) => r,
             Err(err) => {
                 return Err(FetchGameError::NonSuccessStatusCode(err, cache_err));
             }
         }
         .json::<mmolb_parsing::Game>()
-        .await {
-            Ok(game) => { game }
+        .await
+        {
+            Ok(game) => game,
             Err(err) => {
                 return Err(FetchGameError::FailedJsonDecode(err, cache_err));
             }
-    })
+        },
+    )
 }
 
-async fn send_game_request(client: &ClientWithMiddleware, url: String) -> Result<reqwest::Response, reqwest_middleware::Error> {
+async fn send_game_request(
+    client: &ClientWithMiddleware,
+    url: String,
+) -> Result<reqwest::Response, reqwest_middleware::Error> {
     client
         .get(url)
         .with_extension(http_cache_reqwest::CacheMode::Reload)
@@ -479,7 +521,10 @@ pub async fn do_ingest(pool: &Db, taxa: &Taxa, client: &ClientWithMiddleware, is
 
     let games: GamesResponse = games_response.json().await.expect("TODO Error handling");
 
-    info!("Got games list. Starting ingest of {} total games.", games.len());
+    info!(
+        "Got games list. Starting ingest of {} total games.",
+        games.len()
+    );
 
     let mut num_incomplete_games_skipped = 0;
     let mut num_already_ingested_games_skipped = 0;
@@ -516,7 +561,8 @@ pub async fn do_ingest(pool: &Db, taxa: &Taxa, client: &ClientWithMiddleware, is
             num_already_ingested_games_skipped += 1;
             continue;
         }
-        let check_already_ingested_duration = (Utc::now() - check_already_ingested_start).as_seconds_f64();
+        let check_already_ingested_duration =
+            (Utc::now() - check_already_ingested_start).as_seconds_f64();
 
         let network_start = Utc::now();
         let game_data = fetch_game(client, &game_info.game_id)
@@ -546,7 +592,7 @@ pub async fn do_ingest(pool: &Db, taxa: &Taxa, client: &ClientWithMiddleware, is
                 total_start,
                 check_already_ingested_duration,
                 network_duration,
-            }
+            },
         ))
         .catch_unwind()
         .await;
@@ -584,46 +630,64 @@ impl IngestLogs {
 
     #[allow(dead_code)]
     pub fn critical(&mut self, game_event_index: usize, s: impl Into<String>) {
-        self.logs.push((game_event_index, IngestLog {
-            log_level: 0,
-            log_text: s.into(),
-        }));
+        self.logs.push((
+            game_event_index,
+            IngestLog {
+                log_level: 0,
+                log_text: s.into(),
+            },
+        ));
     }
 
     pub fn error(&mut self, game_event_index: usize, s: impl Into<String>) {
-        self.logs.push((game_event_index, IngestLog {
-            log_level: 1,
-            log_text: s.into(),
-        }));
+        self.logs.push((
+            game_event_index,
+            IngestLog {
+                log_level: 1,
+                log_text: s.into(),
+            },
+        ));
     }
 
     #[allow(dead_code)]
     pub fn warn(&mut self, game_event_index: usize, s: impl Into<String>) {
-        self.logs.push((game_event_index, IngestLog {
-            log_level: 2,
-            log_text: s.into(),
-        }));
+        self.logs.push((
+            game_event_index,
+            IngestLog {
+                log_level: 2,
+                log_text: s.into(),
+            },
+        ));
     }
 
     pub fn info(&mut self, game_event_index: usize, s: impl Into<String>) {
-        self.logs.push((game_event_index, IngestLog {
-            log_level: 3,
-            log_text: s.into(),
-        }));
+        self.logs.push((
+            game_event_index,
+            IngestLog {
+                log_level: 3,
+                log_text: s.into(),
+            },
+        ));
     }
 
     pub fn debug(&mut self, game_event_index: usize, s: impl Into<String>) {
-        self.logs.push((game_event_index, IngestLog {
-            log_level: 4,
-            log_text: s.into(),
-        }));
+        self.logs.push((
+            game_event_index,
+            IngestLog {
+                log_level: 4,
+                log_text: s.into(),
+            },
+        ));
     }
 
     pub fn trace(&mut self, game_event_index: usize, s: impl Into<String>) {
-        self.logs.push((game_event_index, IngestLog {
-            log_level: 5,
-            log_text: s.into(),
-        }));
+        self.logs.push((
+            game_event_index,
+            IngestLog {
+                log_level: 5,
+                log_text: s.into(),
+            },
+        ));
     }
 
     pub fn into_vec(self) -> Vec<(usize, IngestLog)> {
@@ -670,7 +734,7 @@ async fn ingest_game(
             let mut ingest_logs = sim::IngestLogs::new();
 
             let event = match game.next(index, &parsed, &raw, &mut ingest_logs) {
-                Ok(result) => { result }
+                Ok(result) => result,
                 Err(e) => {
                     ingest_logs.critical(e.to_string());
                     None
@@ -690,7 +754,12 @@ async fn ingest_game(
 
     // Scope to drop conn as soon as I'm done with it
     let db_start = Utc::now();
-    let (game_id, (inserted_events, events_for_game_timings), db_insert_duration, db_fetch_for_check_duration) = {
+    let (
+        game_id,
+        (inserted_events, events_for_game_timings),
+        db_insert_duration,
+        db_fetch_for_check_duration,
+    ) = {
         let mut conn = pool.get().await.expect("TODO Error handling");
 
         let db_insert_start = Utc::now();
@@ -714,7 +783,12 @@ async fn ingest_game(
             .expect("TODO Error handling");
         let db_fetch_for_check_duration = (Utc::now() - db_fetch_for_check_start).as_seconds_f64();
 
-        (game_id, inserted_events, db_insert_duration, db_fetch_for_check_duration)
+        (
+            game_id,
+            inserted_events,
+            db_insert_duration,
+            db_fetch_for_check_duration,
+        )
     };
     let db_duration = (Utc::now() - db_start).as_seconds_f64();
 
@@ -722,7 +796,6 @@ async fn ingest_game(
     let mut extra_ingest_logs = IngestLogs::new();
     assert_eq!(inserted_events.len(), detail_events.len());
     for (reconstructed_detail, original_detail) in inserted_events.iter().zip(detail_events) {
-
         let index = reconstructed_detail.game_event_index;
         let fair_ball_index = reconstructed_detail.fair_ball_event_index;
 
@@ -760,21 +833,25 @@ async fn ingest_game(
 
     {
         let mut conn = pool.get().await.expect("TODO Error handling");
-        db::insert_timings(&mut conn, game_id, db::Timings {
-            check_already_ingested_duration: pre_ingest_timings.check_already_ingested_duration,
-            network_duration: pre_ingest_timings.network_duration,
-            parse_duration,
-            sim_duration,
-            db_insert_duration,
-            db_fetch_for_check_duration,
-            events_for_game_timings,
-            db_duration,
-            check_round_trip_duration,
-            insert_extra_logs_duration,
-            total_duration: (Utc::now() - pre_ingest_timings.total_start).as_seconds_f64(),
-        })
-            .await
-            .expect("TODO Error handling");
+        db::insert_timings(
+            &mut conn,
+            game_id,
+            db::Timings {
+                check_already_ingested_duration: pre_ingest_timings.check_already_ingested_duration,
+                network_duration: pre_ingest_timings.network_duration,
+                parse_duration,
+                sim_duration,
+                db_insert_duration,
+                db_fetch_for_check_duration,
+                events_for_game_timings,
+                db_duration,
+                check_round_trip_duration,
+                insert_extra_logs_duration,
+                total_duration: (Utc::now() - pre_ingest_timings.total_start).as_seconds_f64(),
+            },
+        )
+        .await
+        .expect("TODO Error handling");
     }
 
     info!(
@@ -797,24 +874,26 @@ fn check_round_trip(
     reconstructed_detail: &ParsedEventMessage<&str>,
 ) {
     if parsed != original_detail {
-        ingest_logs.error(index, format!(
-            "Round-trip of {} through EventDetail produced a mismatch:\n\
+        ingest_logs.error(
+            index,
+            format!(
+                "Round-trip of {} through EventDetail produced a mismatch:\n\
              Original: <pre>{:?}</pre>\
              Through EventDetail: <pre>{:?}</pre>",
-            label,
-            parsed,
-            original_detail,
-        ));
+                label, parsed, original_detail,
+            ),
+        );
     }
 
     if parsed != reconstructed_detail {
-        ingest_logs.error(index, format!(
-            "Round-trip of {} through database produced a mismatch:\n\
+        ingest_logs.error(
+            index,
+            format!(
+                "Round-trip of {} through database produced a mismatch:\n\
              Original: <pre>{:?}</pre>\n\
              Through EventDetail: <pre>{:?}</pre>",
-            label,
-            parsed,
-            reconstructed_detail,
-        ));
+                label, parsed, reconstructed_detail,
+            ),
+        );
     }
 }

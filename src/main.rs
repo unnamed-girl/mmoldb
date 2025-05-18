@@ -9,11 +9,11 @@ mod ingest;
 mod models;
 mod web;
 
+use crate::ingest::{IngestFairing, IngestTask};
 use log::warn;
 use rocket::launch;
 use rocket_db_pools::{Database, diesel::PgPool};
 use rocket_dyn_templates::Template;
-use crate::ingest::{IngestFairing, IngestTask};
 
 #[derive(Database, Clone)]
 #[database("mmoldb")]
