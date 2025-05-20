@@ -15,7 +15,7 @@ use log::{error, info, warn};
 use mmolb_parsing::ParsedEventMessage;
 use reqwest_middleware::ClientWithMiddleware;
 use rocket::fairing::{Fairing, Info, Kind};
-use rocket::tokio::sync::{Mutex, Notify};
+use rocket::tokio::sync::{RwLock, Notify};
 use rocket::tokio::task::JoinHandle;
 use rocket::{Orbit, Rocket, Shutdown, tokio};
 use rocket_db_pools::Database;
@@ -153,20 +153,20 @@ enum IngestTaskState {
 
 #[derive(Clone)]
 pub struct IngestTask {
-    state: Arc<Mutex<IngestTaskState>>,
+    state: Arc<RwLock<IngestTaskState>>,
 }
 
 impl IngestTask {
     pub fn new() -> Self {
         Self {
-            state: Arc::new(Mutex::new(IngestTaskState::NotStarted(Arc::new(
+            state: Arc::new(RwLock::new(IngestTaskState::NotStarted(Arc::new(
                 Notify::new(),
             )))),
         }
     }
 
     pub async fn state(&self) -> IngestStatus {
-        let task_state = self.state.lock().await;
+        let task_state = self.state.read().await;
         match &*task_state {
             IngestTaskState::NotStarted(_) => IngestStatus::Starting,
             IngestTaskState::FailedToStart(err) => IngestStatus::FailedToStart(err.to_string()),
@@ -219,7 +219,7 @@ impl Fairing for IngestFairing {
         };
 
         let notify = {
-            let mut task_status = task.state.lock().await;
+            let mut task_status = task.state.write().await;
             if let IngestTaskState::NotStarted(notify) = &*task_status {
                 notify.clone()
             } else {
@@ -233,11 +233,11 @@ impl Fairing for IngestFairing {
 
         match launch_ingest_task(pool, config, task.clone(), shutdown).await {
             Ok(handle) => {
-                *task.state.lock().await = IngestTaskState::Idle(handle);
+                *task.state.write().await = IngestTaskState::Idle(handle);
                 notify.notify_waiters();
             }
             Err(err) => {
-                *task.state.lock().await = IngestTaskState::FailedToStart(err);
+                *task.state.write().await = IngestTaskState::FailedToStart(err);
             }
         };
     }
@@ -246,7 +246,7 @@ impl Fairing for IngestFairing {
         if let Some(task) = rocket.state::<IngestTask>() {
             // Signal that we would like to shut down please
             let prev_state = {
-                let mut state = task.state.lock().await;
+                let mut state = task.state.write().await;
                 mem::replace(&mut *state, IngestTaskState::ShutdownRequested)
             };
             // If we have a join handle, try to shut down gracefully
@@ -382,7 +382,7 @@ async fn ingest_task_runner(
         // Try to transition from idle to running, with lots of
         // recovery behaviors
         loop {
-            let mut task_state = task.state.lock().await;
+            let mut task_state = task.state.write().await;
             // We can't atomically move handle from idle to running,
             // but we can replace it with the error that should happen
             // if something were to interrupt us. This should never be
@@ -466,7 +466,7 @@ async fn ingest_task_runner(
         // Try to transition from running to idle, with lots of
         // recovery behaviors
         {
-            let mut task_state = task.state.lock().await;
+            let mut task_state = task.state.write().await;
             // We can't atomically move handle from idle to running,
             // but we can replace it with the error that should happen
             // if something were to interrupt us. This should never be
