@@ -6,4 +6,4 @@ url = "postgres://postgres:postgres@localhost/mmoldb"
 
 [debug]
 cache_game_list_from_api = true
-cache_game_from_api = true
+cache_games_from_api = true

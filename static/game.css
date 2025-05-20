@@ -2,12 +2,15 @@
     list-style: none;
     padding: 0;
 }
+
 .event {
     padding: 15px 20px;
 }
+
 .event:nth-child(even) {
     background: rgba(0, 0, 0, 0.4);
 }
+
 .event:nth-child(odd) {
     background: rgba(0, 0, 0, 0);
 }

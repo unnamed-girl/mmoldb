@@ -10,11 +10,13 @@
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💽</text></svg>">
 </head>
 <body>
-    <h1 class="main-title card">MMOLDB</h1>
+    <h1 class="main-title card"><a href="{{ index_url }}">MMOLDB</a></h1>
 
     <section class="card status-card">
         <a class="status-item" href="{{ games_page_url }}">{{ total_games | num_format }} total games</a>
+        {% if total_games_with_issues > 0 %}
         <a class="status-item with-issues" href="{{ games_with_issues_page_url }}">{{ total_games_with_issues | num_format }} games with import issues</a>
+        {% endif %}
         <span class="status-item">
             {% if task_status.error %}
             Latest ingest failed!
@@ -35,10 +37,11 @@
     <section class="card">
         <h2 class="about-heading">About</h2>
         <p class="about">
-            <strong>MMOLDB</strong> will be a publicly queryable database for
+            <strong>MMOLDB</strong> plans to be a publicly queryable database for
             <a href="https://mmolb.com/">MMOLB</a> games inspired by the
             Blaseball datablase. It's still in early development. Right now
-            there's no way to query it, but I'm working on it.
+            there's no way to query it, but I'm working on it. In the meantime,
+            check out the games status at the links in the card above.
         </p>
     </section>
 

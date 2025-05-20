@@ -1,9 +1,11 @@
 use log::error;
 use rocket::http::Status;
 use rocket::response::Responder;
-use rocket::{Request, Response};
+use rocket::{uri, Request, Response};
 use rocket_dyn_templates::{Template, context};
 use thiserror::Error;
+
+use crate::web::pages::rocket_uri_macro_index_page;
 
 #[derive(Debug, Error)]
 pub enum AppError {
@@ -20,6 +22,7 @@ impl<'r, 'o: 'r> Responder<'r, 'o> for AppError {
             req.rocket(),
             "error",
             context! {
+                index_url: uri!(index_page()),
                 error_text: format!("{:#?}", self),
             },
         )

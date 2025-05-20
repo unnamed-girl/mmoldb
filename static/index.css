@@ -3,6 +3,11 @@
     justify-content: center;
 }
 
+.status-card a {
+    /* Override :visited style */
+    color: var(--text-color);
+}
+
 .status-item {
     padding: 0 10px;
 }

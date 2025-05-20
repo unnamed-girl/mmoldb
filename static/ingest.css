@@ -1,9 +1,17 @@
+/* TODO This is used in more than ingest -- rename it? */
+
 .ingest-heading {
-    padding: 20px 20px 0 20px;
+    padding: 0 20px;
 }
 
 .ingest-metadata {
     padding: 0 20px;
+}
+
+.no-games {
+    padding: 10px 20px;
+    color: var(--text-color-deemphasized);
+    font-style: italic;
 }
 
 .games {

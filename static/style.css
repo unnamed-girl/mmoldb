@@ -20,6 +20,7 @@ body {
 
 body {
     --text-color: white;
+    --text-color-deemphasized: #8c8c8c;
 
     background: #01292b;
     max-width: 800px;
@@ -33,6 +34,11 @@ body {
     font-size: 4em;
 }
 
+.main-title a {
+    text-decoration: none;
+    color: var(--text-color);
+}
+
 .card {
     background: rgba(0, 0, 0, 0.4);
     padding: 20px;
@@ -43,6 +49,15 @@ body {
 
 .card.seamless {
     padding: 0;
+}
+
+.card.seamless-h {
+    padding-left: 0;
+    padding-right: 0;
+}
+
+.seamless-subhead {
+    padding: 20px 20px 0 20px;
 }
 
 .card > :first-child {
@@ -59,5 +74,5 @@ body {
 }
 
 :visited {
-    color: #8c8c8c;
+    color: var(--text-color-deemphasized);
 }

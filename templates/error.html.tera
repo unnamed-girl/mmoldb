@@ -6,7 +6,7 @@
     <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-    <h1 class="main-title card">MMOLDB Error</h1>
+    <h1 class="main-title card"><a href="{{ index_url }}">MMOLDB</a></h1>
 
     <section class="card">
         <h2 class="error-heading">Error</h2>
