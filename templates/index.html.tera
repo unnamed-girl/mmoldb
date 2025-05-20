@@ -1,17 +1,31 @@
-{# All one line to avoid newlines being turned into spaces by HTML whitespace collapse. #}
-{% macro date_format(date) %}<span title="{{ date.absolute }}">{{ date.relative }}</span>{% endmacro date_format %}
+{% import "macros" as macros %}
 
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>MMOLDB Status</title>
+    <title>MMOLDB</title>
     <link rel="stylesheet" href="/static/style.css" />
     <link rel="stylesheet" href="/static/index.css" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💽</text></svg>">
 </head>
 <body>
-    <h1 class="main-title card">MMOLDB Status</h1>
+    <h1 class="main-title card">MMOLDB</h1>
+
+    <section class="card">
+        <a href="{{ games_page_url }}">{{ total_games }} games</a> |
+        <a href="{{ games_with_issues_page_url }}">{{ total_games_with_issues }} games with issues</a> |
+        {% if task_status.error %}
+        Latest ingest failed! |
+        {% elif task_status.is_starting %}
+        Ingest is starting... |
+        {% elif task_status.is_stopping %}
+        Ingest is stopping... |
+        {% elif task_status.is_running %}
+        Ingest running |
+        {% endif %}
+        Next ingest at TODO
+    </section>
 
     <section class="card">
         <h2 class="about-heading">About</h2>

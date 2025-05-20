@@ -28,6 +28,47 @@ pub async fn ingest_count(conn: &mut AsyncPgConnection) -> QueryResult<i64> {
     ingests.count().get_result(conn).await
 }
 
+pub async fn game_count(conn: &mut AsyncPgConnection) -> QueryResult<i64> {
+    use crate::data_schema::data::games::dsl::*;
+
+    games.count().get_result(conn).await
+}
+
+pub async fn game_with_issues_count(conn: &mut AsyncPgConnection) -> QueryResult<i64> {
+    use diesel::sql_types::*;
+    #[derive(QueryableByName)]
+    struct GamesWithIssuesCount {
+        #[diesel(sql_type = Int8)]
+        pub games_with_issues: i64,
+    }
+
+
+    diesel::sql_query(
+        "
+        select count(distinct data.games.id) games_with_issues
+        from data.games
+        join info.raw_events on data.games.id = info.raw_events.game_id
+        join info.event_ingest_log on info.raw_events.id = info.event_ingest_log.raw_event_id
+        where info.event_ingest_log.log_level < 3
+        ",
+    )
+    .get_result::<GamesWithIssuesCount>(conn)
+    .await
+    .map(|games_with_issues| games_with_issues.games_with_issues)
+}
+
+pub async fn latest_ingest_start_time(conn: &mut AsyncPgConnection) -> QueryResult<Option<NaiveDateTime>> {
+    use crate::data_schema::data::ingests::dsl::*;
+
+    ingests
+        .select(started_at)
+        .order(started_at.desc())
+        .first(conn)
+        .await
+        .optional()
+
+}
+
 pub async fn latest_ingests(conn: &mut AsyncPgConnection) -> QueryResult<Vec<(Ingest, i64)>> {
     use diesel::sql_types::*;
     #[derive(QueryableByName)]
@@ -129,23 +170,9 @@ macro_rules! log_only_assert {
     };
 }
 
-pub async fn ingest_with_games(
-    conn: &mut AsyncPgConnection,
-    for_ingest_id: i64,
-) -> QueryResult<(Ingest, Vec<(DbGame, i64, i64, i64)>)> {
-    use crate::data_schema::data::games::dsl as game_dsl;
-    use crate::data_schema::data::ingests::dsl as ingest_dsl;
+async fn add_log_levels_to_games(conn: &mut AsyncPgConnection, games: Vec<DbGame>) -> QueryResult<Vec<(DbGame, i64, i64, i64)>> {
     use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
     use crate::info_schema::info::raw_events::dsl as raw_event_dsl;
-
-    let ingest = ingest_dsl::ingests
-        .filter(ingest_dsl::id.eq(for_ingest_id))
-        .get_result::<Ingest>(conn)
-        .await?;
-    let games = DbGame::belonging_to(&ingest)
-        .order_by(game_dsl::id)
-        .get_results::<DbGame>(conn)
-        .await?;
 
     let game_ids = games.iter().map(|g| g.id).collect::<Vec<i64>>();
 
@@ -195,17 +222,39 @@ pub async fn ingest_with_games(
         .collect();
 
     log_only_assert!(
-        num_warnings.next().is_none(), 
+        num_warnings.next().is_none(),
         "db::ingest_with_games failed to match at least one warnings count with its event",
     );
     log_only_assert!(
-        num_errors.next().is_none(), 
+        num_errors.next().is_none(),
         "db::ingest_with_games failed to match at least one errors count with its event",
     );
     log_only_assert!(
-        num_critical.next().is_none(), 
+        num_critical.next().is_none(),
         "db::ingest_with_games failed to match at least one critical count with its event",
     );
+
+    Ok(games)
+}
+
+pub async fn ingest_with_games(
+    conn: &mut AsyncPgConnection,
+    for_ingest_id: i64,
+) -> QueryResult<(Ingest, Vec<(DbGame, i64, i64, i64)>)> {
+    use crate::data_schema::data::games::dsl as game_dsl;
+    use crate::data_schema::data::ingests::dsl as ingest_dsl;
+
+    let ingest = ingest_dsl::ingests
+        .filter(ingest_dsl::id.eq(for_ingest_id))
+        .get_result::<Ingest>(conn)
+        .await?;
+
+    let games = DbGame::belonging_to(&ingest)
+        .order_by(game_dsl::id)
+        .get_results::<DbGame>(conn)
+        .await?;
+
+    let games = add_log_levels_to_games(conn, games).await?;
 
     Ok((ingest, games))
 }
@@ -226,6 +275,17 @@ pub async fn delete_game(conn: &mut AsyncPgConnection, with_id: &str) -> QueryRe
     delete(games.filter(mmolb_game_id.eq(with_id)))
         .execute(conn)
         .await
+}
+
+pub async fn all_games(conn: &mut AsyncPgConnection) -> QueryResult<Vec<(DbGame, i64, i64, i64)>> {
+    use crate::data_schema::data::games::dsl as games_dsl;
+
+    let games = games_dsl::games
+        .order_by(games_dsl::id)
+        .get_results::<DbGame>(conn)
+        .await?;
+    
+    add_log_levels_to_games(conn, games).await
 }
 
 pub struct EventsForGameTimings {

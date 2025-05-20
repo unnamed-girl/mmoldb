@@ -12,6 +12,7 @@ use crate::ingest::{IngestStatus, IngestTask};
 use crate::{Db, db};
 use error::AppError;
 use utility_contexts::FormattedDateContext;
+use crate::web::utility_contexts::GameContext;
 
 #[get("/game/<game_id>")]
 async fn game_page(game_id: i64, mut db: Connection<Db>) -> Result<Template, AppError> {
@@ -83,20 +84,6 @@ async fn game_page(game_id: i64, mut db: Connection<Db>) -> Result<Template, App
 #[get("/ingest/<ingest_id>")]
 async fn ingest_page(ingest_id: i64, mut db: Connection<Db>) -> Result<Template, AppError> {
     #[derive(Serialize)]
-    struct GameContext {
-        uri: String,
-        season: i32,
-        day: i32,
-        away_team_emoji: String,
-        away_team_name: String,
-        home_team_emoji: String,
-        home_team_name: String,
-        num_warnings: i64,
-        num_errors: i64,
-        num_critical: i64,
-    }
-
-    #[derive(Serialize)]
     struct IngestContext {
         id: i64,
         started_at: FormattedDateContext,
@@ -111,26 +98,41 @@ async fn ingest_page(ingest_id: i64, mut db: Connection<Db>) -> Result<Template,
         started_at: (&ingest.started_at).into(),
         finished_at: ingest.finished_at.as_ref().map(Into::into),
         aborted_at: ingest.aborted_at.as_ref().map(Into::into),
-        games: games
-            .into_iter()
-            .map(
-                |(game, num_warnings, num_errors, num_critical)| GameContext {
-                    uri: uri!(game_page(game.id)).to_string(),
-                    season: game.season,
-                    day: game.day,
-                    away_team_emoji: game.away_team_emoji,
-                    away_team_name: game.away_team_name,
-                    home_team_emoji: game.home_team_emoji,
-                    home_team_name: game.home_team_name,
-                    num_warnings,
-                    num_errors,
-                    num_critical,
-                },
-            )
-            .collect(),
+        games: GameContext::from_db(games, |game_id| uri!(game_page(game_id)).to_string()),
     };
 
     Ok(Template::render("ingest", context! { ingest: ingest }))
+}
+
+#[get("/games")]
+async fn games_page(mut db: Connection<Db>) -> Result<Template, AppError> {
+    let games = db.transaction(|conn| async move {
+        db::all_games(conn).await
+    }.scope_boxed()).await?;
+
+    Ok(Template::render("games", context! {
+        subhead: "Games",
+        games: GameContext::from_db(games, |game_id| uri!(game_page(game_id)).to_string()),
+    }))
+}
+
+#[get("/games-with-issues")]
+async fn games_with_issues_page(mut db: Connection<Db>) -> Result<Template, AppError> {
+    // TODO Get rid of this query + filter and replace it with a query 
+    //   that only returns what I need
+    let games = db.transaction(|conn| async move {
+        db::all_games(conn).await
+    }.scope_boxed()).await?;
+    
+    let games = games.into_iter()
+        .filter(|(_, num_warnings, num_errors, num_critical)| {
+            *num_warnings != 0 || *num_errors != 0 || *num_critical != 0
+        });
+
+    Ok(Template::render("games", context! {
+        subhead: "Games with issues",
+        games: GameContext::from_db(games, |game_id| uri!(game_page(game_id)).to_string()),
+    }))
 }
 
 #[get("/")]
@@ -183,12 +185,15 @@ async fn index(
     // A transaction is probably overkill for this, but it's
     // TECHNICALLY the only correct way to make sure that the
     // value of number_of_ingests_not_shown is correct
-    let (total_num_ingests, displayed_ingests) = db
+    let (total_games, total_games_with_issues, total_num_ingests, displayed_ingests) = db
         .transaction::<_, diesel::result::Error, _>(|conn| {
             async move {
-                let num = db::ingest_count(conn).await?;
-                let ingests = db::latest_ingests(conn).await?;
-                Ok((num, ingests))
+                let num_games = db::game_count(conn).await?;
+                let num_games_with_issues = db::game_with_issues_count(conn).await?;
+
+                let num_ingests = db::ingest_count(conn).await?;
+                let latest_ingests = db::latest_ingests(conn).await?;
+                Ok((num_games, num_games_with_issues, num_ingests, latest_ingests))
             }
             .scope_boxed()
         })
@@ -209,6 +214,10 @@ async fn index(
     Ok(Template::render(
         "index",
         context! {
+            games_page_url: uri!(games_page()),
+            total_games: total_games,
+            games_with_issues_page_url: uri!(games_with_issues_page()),
+            total_games_with_issues: total_games_with_issues,
             task_status: ingest_task_status,
             ingests: ingests,
             number_of_ingests_not_shown: number_of_ingests_not_shown,
@@ -217,5 +226,5 @@ async fn index(
 }
 
 pub fn routes() -> Vec<rocket::Route> {
-    routes![index, ingest_page, game_page]
+    routes![index, games_page, games_with_issues_page, ingest_page, game_page]
 }

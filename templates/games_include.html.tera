@@ -1,0 +1,25 @@
+{% macro games(games) %}
+{% for game in games %}
+    <li class="game">
+        <a href="{{ game.uri }}">
+            s{{ game.season }}d{{ game.day }}:
+            {{ game.away_team_emoji }} {{ game.away_team_name }}
+            @
+            {{ game.home_team_emoji }} {{ game.home_team_name }}
+            {% if game.num_warnings > 0 or game.num_errors > 0 or game.num_critical > 0 %}
+                <p class="num-issues-container">
+                    {% if game.num_warnings > 0 %}
+                        <span class="num-warnings">⚠️ {{ game.num_warnings }} warnings</span>
+                    {% endif %}
+                    {% if game.num_errors > 0 %}
+                        <span class="num-errors">🚨 {{ game.num_errors }} errors</span>
+                    {% endif %}
+                    {% if game.num_critical > 0 %}
+                        <span class="num-critical">💀 {{ game.num_critical }} critical errors</span>
+                    {% endif %}
+                </p>
+            {% endif %}
+        </a>
+    </li>
+{% endfor %}
+{% endmacro %}

@@ -1,0 +1,2 @@
+{# All one line to avoid newlines being turned into spaces by HTML whitespace collapse. #}
+{% macro date_format(date) %}<span title="{{ date.absolute }}">{{ date.relative }}</span>{% endmacro date_format %}

@@ -4,12 +4,12 @@ mod sim;
 pub use sim::{EventDetail, EventDetailFielder, EventDetailRunner, IngestLog};
 use std::mem;
 use std::sync::Arc;
-
+use std::time::Duration;
 use crate::db::{RowToEventError, Taxa};
 use crate::ingest::sim::{Game, SimFatalError};
 use crate::{Db, db};
 use chrono::serde::ts_milliseconds;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use chrono_humanize::HumanTime;
 use log::{error, info, warn};
 use mmolb_parsing::ParsedEventMessage;
@@ -23,6 +23,8 @@ use rocket_db_pools::diesel::AsyncPgConnection;
 use serde::Deserialize;
 use thiserror::Error;
 
+fn default_ingest_period() -> u64 { 30 * 60 } // 30 minutes, expressed in seconds
+
 fn default_retries() -> u64 { 3 }
 fn default_fetch_rate_limit() -> u64 { 10 }
 
@@ -31,6 +33,8 @@ fn default_fetch_rate_limit() -> u64 { 10 }
 // probably doesn't hurt
 #[serde(crate = "rocket::serde")]
 struct IngestConfig {
+    #[serde(default = "default_ingest_period")]
+    ingest_period_sec: u64,
     #[serde(default)]
     reimport_all_games: bool,
     #[serde(default)]
@@ -47,13 +51,11 @@ struct IngestConfig {
 
 #[derive(Debug, Error)]
 pub enum IngestSetupError {
-    #[error(transparent)]
-    SetupConnectionAcquisitionFailed(
-        #[from] rocket_db_pools::diesel::pooled_connection::deadpool::PoolError,
-    ),
+    #[error("Failed to get a database connection for ingest setup due to {0}")]
+    DbPoolSetupError(#[from] rocket_db_pools::diesel::pooled_connection::deadpool::PoolError),
 
-    #[error(transparent)]
-    TaxaSetupError(#[from] diesel::result::Error),
+    #[error("Database error during ingest setup: {0}")]
+    DbSetupError(#[from] diesel::result::Error),
 
     #[error("Ingest task transitioned away from NotStarted before liftoff")]
     LeftNotStartedTooEarly,
@@ -316,19 +318,22 @@ async fn launch_ingest_task(
 ) -> Result<JoinHandle<()>, IngestSetupError> {
     let client = http::get_caching_http_client();
 
-    let taxa = {
+    let (taxa, previous_ingest_start_time) = {
         let mut conn = pool
             .get()
             .await
-            .map_err(|err| IngestSetupError::SetupConnectionAcquisitionFailed(err))?;
+            .map_err(|err| IngestSetupError::DbPoolSetupError(err))?;
 
-        Taxa::new(&mut conn)
-            .await
-            .map_err(|err| IngestSetupError::TaxaSetupError(err))?
+        let taxa = Taxa::new(&mut conn).await?;
+        
+        let previous_ingest_start_time = db::latest_ingest_start_time(&mut conn).await?
+            .map(|t| Utc.from_utc_datetime(&t));
+
+        (taxa, previous_ingest_start_time)
     };
 
     Ok(tokio::spawn(ingest_task_runner(
-        pool, taxa, client, config, task, shutdown,
+        pool, taxa, client, config, task, previous_ingest_start_time, shutdown,
     )))
 }
 
@@ -338,9 +343,42 @@ async fn ingest_task_runner(
     client: ClientWithMiddleware,
     config: IngestConfig,
     task: IngestTask,
+    mut previous_ingest_start_time: Option<DateTime<Utc>>,
     mut shutdown: Shutdown,
 ) {
+    let ingest_period = Duration::from_secs(config.ingest_period_sec);
     loop {
+        let (tag, ingest_start) = if let Some(prev_start) = previous_ingest_start_time {
+            let next_start = prev_start + ingest_period;
+            let wait_duration_chrono = next_start - Utc::now();
+            
+            // std::time::Duration can't represent negative durations. 
+            // Conveniently, the conversion from chrono to std also 
+            // performs the negativity check we would be doing anyway.
+            match wait_duration_chrono.to_std() {
+                Ok(wait_duration) => {
+                    info!("Next ingest {}", HumanTime::from(wait_duration_chrono));
+                    tokio::select! {
+                        _ = tokio::time::sleep(wait_duration) => {},
+                        _ = &mut shutdown => { break; }
+                    }
+                    
+                    (format!("after waiting {}", HumanTime::from(wait_duration_chrono)), next_start)
+                }
+                Err(_) => {
+                    // Indicates the wait duration was negative
+                    (format!("immediately (next scheduled ingest was {})", HumanTime::from(next_start)), Utc::now())
+                }
+            }
+        } else {
+            ("immediately (this is the first ingest)".to_string(), Utc::now())
+        };
+        
+        // I put this outside the `if` cluster intentionally, so the
+        // compiler will error if I miss a code path
+        info!("Starting ingest {tag}");
+        previous_ingest_start_time = Some(ingest_start);
+
         // Try to transition from idle to running, with lots of
         // recovery behaviors
         loop {
@@ -397,10 +435,10 @@ async fn ingest_task_runner(
             }
         }
         
-        // Get a db connection and do the ingest 
+        // Get a db connection and do the ingest
         match pool.get().await {
             Ok(mut conn) => {
-                let ingest_result = do_ingest(&mut conn, &taxa, &client, &config, &mut shutdown).await;
+                let ingest_result = do_ingest(&mut conn, &taxa, &client, &config, &mut shutdown, ingest_start).await;
                 if let Err((err, ingest_id)) = ingest_result {
                     if let Some(ingest_id) = ingest_id {
                         warn!("Fatal error in game ingest: {}. This ingest is aborted.", err);
@@ -475,11 +513,6 @@ async fn ingest_task_runner(
                     return;
                 }
             }
-        }
-
-        tokio::select! {
-            _ = tokio::time::sleep(tokio::time::Duration::from_secs(30 * 60)) => {},
-            _ = &mut shutdown => { break; }
         }
     }
 }
@@ -592,8 +625,8 @@ async fn do_ingest(
     client: &ClientWithMiddleware,
     config: &IngestConfig,
     shutdown: &mut Shutdown,
+    ingest_start: DateTime<Utc>,
 ) -> Result<(), (IngestFatalError, Option<i64>)> {
-    let ingest_start = Utc::now();
     info!("Ingest at {ingest_start} started");
 
     let ingest_id =  db::start_ingest(conn, ingest_start).await
@@ -626,11 +659,12 @@ async fn do_ingest_internal(
         games.len()
     );
 
-    let game_api_hit_period = std::time::Duration::from_millis(config.fetch_games_rate_limit_ms);
+    let game_api_hit_period = Duration::from_millis(config.fetch_games_rate_limit_ms);
     let rate_limiter = tokio_utils::RateLimiter::new(game_api_hit_period);
 
     let mut num_incomplete_games_skipped = 0;
     let mut num_already_ingested_games_skipped = 0;
+    let mut num_games_imported = 0;
 
     for game_info in games {
         let total_start = Utc::now();
@@ -702,8 +736,11 @@ async fn do_ingest_internal(
         if result.is_err() {
             break;
         }
+
+        num_games_imported += 1;
     }
 
+    info!("{num_games_imported} games ingested");
     info!("{num_incomplete_games_skipped} incomplete games skipped");
     info!("{num_already_ingested_games_skipped} games already ingested");
 
