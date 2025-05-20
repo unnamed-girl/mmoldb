@@ -39,16 +39,13 @@
 }
 
 .num-warnings {
-    /* TODO Use CSS variables for the colors */
-    background: #603805;
+    background: var(--ingest-warning-color);
 }
 
 .num-errors {
-    /* TODO Use CSS variables for the colors */
-    background: #5e0b0b;
+    background: var(--ingest-error-color);
 }
 
 .num-critical {
-    /* TODO Use CSS variables for the colors */
-    background: red;
+    background: var(--ingest-critical-color);
 }

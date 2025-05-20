@@ -21,3 +21,4 @@ mmolb_parsing = { git = "https://github.com/unnamed-girl/mmolb_parsing.git" }
 enum-map = "2.7.3"
 itertools = "0.14.0"
 tokio-utils = "0.1.2"
+num-format = "0.4.4"

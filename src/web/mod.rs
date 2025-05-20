@@ -118,12 +118,12 @@ async fn games_page(mut db: Connection<Db>) -> Result<Template, AppError> {
 
 #[get("/games-with-issues")]
 async fn games_with_issues_page(mut db: Connection<Db>) -> Result<Template, AppError> {
-    // TODO Get rid of this query + filter and replace it with a query 
+    // TODO Get rid of this query + filter and replace it with a query
     //   that only returns what I need
     let games = db.transaction(|conn| async move {
         db::all_games(conn).await
     }.scope_boxed()).await?;
-    
+
     let games = games.into_iter()
         .filter(|(_, num_warnings, num_errors, num_critical)| {
             *num_warnings != 0 || *num_errors != 0 || *num_critical != 0
@@ -211,6 +211,10 @@ async fn index(
         })
         .collect();
 
+    let last_ingest_finished_at = ingests
+        .first()
+        .and_then(|ingest| ingest.finished_at.clone());
+
     Ok(Template::render(
         "index",
         context! {
@@ -219,6 +223,7 @@ async fn index(
             games_with_issues_page_url: uri!(games_with_issues_page()),
             total_games_with_issues: total_games_with_issues,
             task_status: ingest_task_status,
+            last_ingest_finished_at: last_ingest_finished_at,
             ingests: ingests,
             number_of_ingests_not_shown: number_of_ingests_not_shown,
         },

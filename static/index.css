@@ -1,3 +1,20 @@
+.status-card {
+    display: flex;
+    justify-content: center;
+}
+
+.status-item {
+    padding: 0 10px;
+}
+
+a.status-item {
+    text-decoration: none;
+}
+
+.status-item.with-issues {
+    color: red;
+}
+
 .more-ingests {
     color: #8c8c8c;
 }

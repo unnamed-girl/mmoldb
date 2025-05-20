@@ -12,48 +12,34 @@
 <body>
     <h1 class="main-title card">MMOLDB</h1>
 
-    <section class="card">
-        <a href="{{ games_page_url }}">{{ total_games }} games</a> |
-        <a href="{{ games_with_issues_page_url }}">{{ total_games_with_issues }} games with issues</a> |
-        {% if task_status.error %}
-        Latest ingest failed! |
-        {% elif task_status.is_starting %}
-        Ingest is starting... |
-        {% elif task_status.is_stopping %}
-        Ingest is stopping... |
-        {% elif task_status.is_running %}
-        Ingest running |
-        {% endif %}
-        Next ingest at TODO
+    <section class="card status-card">
+        <a class="status-item" href="{{ games_page_url }}">{{ total_games | num_format }} total games</a>
+        <a class="status-item with-issues" href="{{ games_with_issues_page_url }}">{{ total_games_with_issues | num_format }} games with import issues</a>
+        <span class="status-item">
+            {% if task_status.error %}
+            Latest ingest failed!
+            {% elif task_status.is_starting %}
+            Ingest is starting...
+            {% elif task_status.is_stopping %}
+            Ingest is stopping...
+            {% elif task_status.is_running %}
+            Ingest running
+            {% elif last_ingest_finished_at %}
+            Last ingest finished {{ self::date_format(date=last_ingest_finished_at) }}
+            {% else %}
+            No ingest yet
+            {% endif %}
+        </span>
     </section>
 
     <section class="card">
         <h2 class="about-heading">About</h2>
         <p class="about">
-            <strong>MMOLDB</strong> will be a datablase-like for
-            <a href="https://mmolb.com/">MMOLB</a>. It's in very
-            early development.
+            <strong>MMOLDB</strong> will be a publicly queryable database for
+            <a href="https://mmolb.com/">MMOLB</a> games inspired by the
+            Blaseball datablase. It's still in early development. Right now
+            there's no way to query it, but I'm working on it.
         </p>
-    </section>
-
-    <section class="card">
-        <h2 class="status-heading">
-            Ingest status:
-            {% if task_status.error %}
-            Fatal error!
-            {% elif task_status.is_starting %}
-            Starting...
-            {% elif task_status.is_stopping %}
-            Exiting...
-            {% elif task_status.is_running %}
-            Running
-            {% else %}
-            Idle
-            {% endif %}
-        </h2>
-        {% if task_status.error %}
-        <p class="status-error">{{ task_status.error }}</p>
-        {% endif %}
     </section>
 
     <section class="card">

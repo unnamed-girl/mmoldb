@@ -4,6 +4,18 @@ h1, h2, h3, h4, h5, h6 {
     margin: 0;
 }
 
+/* Variables */
+
+body {
+    --ingest-trace-color: #343f40;
+    --ingest-debug-color: #162d51;
+    --ingest-info-color: #1d4436;
+    --ingest-warning-color: #603805;
+    --ingest-error-color: #5e0b0b;
+    /* Critical gets the glaring red and error gets the pretty red */
+    --ingest-critical-color: red;
+}
+
 /* Styles */
 
 body {

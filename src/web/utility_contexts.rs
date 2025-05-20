@@ -3,7 +3,7 @@ use chrono_humanize::HumanTime;
 use rocket::serde::Serialize;
 use crate::models::DbGame;
 
-#[derive(Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FormattedDateContext {
     relative: String,
     absolute: String,

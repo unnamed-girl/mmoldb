@@ -37,37 +37,33 @@
     overflow: scroll;
 }
 
+.log:nth-child(even) {
+    /* TODO Use manual dark colors instead, because this affects the color as well as the background */
+    filter: brightness(80%);
+}
+
 .log.critical {
-    /* Critical gets the glaring red and error gets the nice red */
-    background-color: red;
+    background-color: var(--ingest-critical-color);
 }
 
 .log.error {
-    background-color: #5e0b0b;
-}
-
-.log.error:nth-child(even) {
-    background-color: #530808;
+    background-color: var(--ingest-error-color);
 }
 
 .log.warning {
-    background-color: #603805;
+    background-color: var(--ingest-warning-color);
 }
 
 .log.info {
-    background-color: #1d4436;
+    background-color: var(--ingest-info-color);
 }
 
 .log.debug {
-    background-color: #162d51;
+    background-color: var(--ingest-debug-color);
     color: #ccc;
 }
 
-.log.debug:nth-child(even) {
-    background-color: #132746;
-}
-
 .log.trace {
-    background-color: #343f40;
+    background-color: var(--ingest-trace-color);
     color: #ccc;
 }
