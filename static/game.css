@@ -40,25 +40,36 @@
     overflow: scroll;
 }
 
-.log:nth-child(even) {
-    /* TODO Use manual dark colors instead, because this affects the color as well as the background */
-    filter: brightness(80%);
-}
-
 .log.critical {
     background-color: var(--ingest-critical-color);
+}
+
+.log.critical:nth-child(even) {
+    background-color: var(--ingest-critical-color-dark);
 }
 
 .log.error {
     background-color: var(--ingest-error-color);
 }
 
+.log.error:nth-child(even) {
+    background-color: var(--ingest-error-color-dark);
+}
+
 .log.warning {
     background-color: var(--ingest-warning-color);
 }
 
+.log.warning:nth-child(even) {
+    background-color: var(--ingest-warning-color-dark);
+}
+
 .log.info {
     background-color: var(--ingest-info-color);
+}
+
+.log.info:nth-child(even) {
+    background-color: var(--ingest-info-color-dark);
 }
 
 .log.debug {
@@ -66,7 +77,15 @@
     color: #ccc;
 }
 
+.log.debug:nth-child(even) {
+    background-color: var(--ingest-debug-color-dark);
+}
+
 .log.trace {
     background-color: var(--ingest-trace-color);
     color: #ccc;
+}
+
+.log.trace:nth-child(even) {
+    background-color: var(--ingest-trace-color-dark);
 }

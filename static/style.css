@@ -7,13 +7,20 @@ h1, h2, h3, h4, h5, h6 {
 /* Variables */
 
 body {
+    /* "dark" versions of the colors are used to alternate shade in table-like displays */
     --ingest-trace-color: #343f40;
+    --ingest-trace-color-dark: #2a3233;
     --ingest-debug-color: #162d51;
+    --ingest-debug-color-dark: #122441;
     --ingest-info-color: #1d4436;
+    --ingest-info-color-dark: #17362b;
     --ingest-warning-color: #603805;
+    --ingest-warning-color-dark: #4d2d04;
     --ingest-error-color: #5e0b0b;
+    --ingest-error-color-dark: #4b0909;
     /* Critical gets the glaring red and error gets the pretty red */
     --ingest-critical-color: red;
+    --ingest-critical-color-dark: #c00;
 }
 
 /* Styles */
