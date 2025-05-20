@@ -246,3 +246,8 @@ pub async fn index_page(
         },
     ))
 }
+
+#[get("/debug-always-error")]
+pub async fn debug_always_error_page() -> Result<Template, AppError> {
+    Err(AppError::TestError)
+}

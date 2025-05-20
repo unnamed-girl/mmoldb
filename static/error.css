@@ -1,0 +1,14 @@
+body {
+    background: #2b0101;
+}
+
+.middle-heading {
+    margin-top: 20px;
+}
+
+.debug-display {
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    padding: 12px;
+    background: rgba(0, 0, 0, 0.5);
+}

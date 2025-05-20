@@ -10,5 +10,6 @@ pub fn routes() -> Vec<rocket::Route> {
         pages::debug_no_games_page, 
         pages::ingest_page, 
         pages::game_page,
+        pages::debug_always_error_page,
     ]
 }

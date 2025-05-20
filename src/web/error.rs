@@ -9,6 +9,9 @@ use crate::web::pages::rocket_uri_macro_index_page;
 
 #[derive(Debug, Error)]
 pub enum AppError {
+    #[error("This URL produces a test error")]
+    TestError,
+
     #[error(transparent)]
     DbError(#[from] diesel::result::Error),
 }
@@ -16,14 +19,16 @@ pub enum AppError {
 impl<'r, 'o: 'r> Responder<'r, 'o> for AppError {
     fn respond_to(self, req: &'r Request<'_>) -> rocket::response::Result<'o> {
         error!("{:#?}", self);
+        
+        let is_debug = req.rocket().config().profile == "debug";
 
-        // TODO Figure out how to properly turn a thiserror enum into a Template
         let rendered = Template::show(
             req.rocket(),
             "error",
             context! {
                 index_url: uri!(index_page()),
-                error_text: format!("{:#?}", self),
+                error_text: format!("{:}", self),
+                error_debug: if is_debug { Some(format!("{:?}", self)) } else { None },
             },
         )
         .unwrap();

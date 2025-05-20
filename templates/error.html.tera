@@ -4,15 +4,23 @@
     <meta charset="UTF-8">
     <title>MMOLDB Error</title>
     <link rel="stylesheet" href="/static/style.css" />
+    <link rel="stylesheet" href="/static/error.css" />
 </head>
 <body>
     <h1 class="main-title card"><a href="{{ index_url }}">MMOLDB</a></h1>
 
-    <section class="card">
-        <h2 class="error-heading">Error</h2>
+    <section class="card error-card">
+        <h1 class="error-heading">MMOLDB Error</h1>
         <p class="error">
             {{ error_text }}
         </p>
+
+        <a href="{{ index_url }}">Return home</a>
+
+        {% if error_debug %}
+        <h2 class="middle-heading">Debug info:</h2>
+        <pre class="debug-display">{{ error_debug }}</pre>
+        {% endif %}
     </section>
 </body>
 </html>
