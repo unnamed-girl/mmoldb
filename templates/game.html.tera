@@ -47,7 +47,6 @@
         {% endfor %}
         </ul>
         {% else %}
-        {# TODO Style this however I end up styling import errors #}
         <p class="no-events">No events</p>
         {% endif %}
     </section>

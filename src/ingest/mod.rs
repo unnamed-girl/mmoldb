@@ -306,10 +306,9 @@ struct CashewsGameResponse {
 
 type GamesResponse = Vec<CashewsGameResponse>;
 
-// This function sets up the ingest task, then returns a (TODO something)
-// representing the execution of the ingest task. The intention is for
-// errors in setup to be propagated to the caller, but errors in the
-// task itself to be handled within the task
+// This function sets up the ingest task, then returns a JoinHandle for
+// the ingest task. Errors in setup are propagated to the caller. 
+// Errors in the task itself are handled within the task.
 async fn launch_ingest_task(
     pool: Db,
     config: IngestConfig,
