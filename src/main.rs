@@ -11,12 +11,14 @@ mod web;
 
 use std::collections::HashMap;
 use crate::ingest::{IngestFairing, IngestTask};
-use log::warn;
-use rocket::launch;
+use rocket::{launch, Build, Rocket};
 use rocket_db_pools::{Database, diesel::PgPool};
 use rocket_dyn_templates::Template;
 use rocket_dyn_templates::tera::Value;
 use num_format::{Locale, ToFormattedString};
+use rocket::fairing::AdHoc;
+use rocket_db_pools::diesel::prelude::*;
+
 
 #[derive(Database, Clone)]
 #[database("mmoldb")]
@@ -37,10 +39,28 @@ impl rocket_dyn_templates::tera::Filter for NumFormat {
     }
 }
 
+async fn run_migrations(rocket: Rocket<Build>) -> Rocket<Build> {
+    use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
+
+    const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
+    let config: rocket_db_pools::Config = rocket
+        .figment()
+        .extract_inner("databases.mmoldb")
+        .expect("mmoldb database connection information was not found in Rocket.toml");
+
+    rocket::tokio::task::spawn_blocking(move || {
+        diesel::PgConnection::establish(&config.url)
+            .expect("Failed to connect to mmoldb database during migrations")
+            .run_pending_migrations(MIGRATIONS)
+            .expect("Failed to apply migrations");
+    })
+        .await.expect("Error joining migrations task");
+
+    rocket
+}
+
 #[launch]
 fn rocket() -> _ {
-    warn!("TODO: Apply pending Diesel migrations");
-
     rocket::build()
         .mount("/", web::routes())
         .mount("/static", rocket::fs::FileServer::from("static"))
@@ -49,5 +69,6 @@ fn rocket() -> _ {
             engines.tera.register_filter("num_format", NumFormat);
         }))
         .attach(Db::init())
+        .attach(AdHoc::on_ignite("Migrations", run_migrations))
         .attach(IngestFairing::new())
 }

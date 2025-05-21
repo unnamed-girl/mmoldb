@@ -6,9 +6,10 @@ edition = "2024"
 [dependencies]
 rocket = "0.5.1"
 rocket_dyn_templates = { version = "0.2.0", features = ["tera"] }
-rocket_db_pools = { version = "0.2.0", features = ["diesel_postgres"] }
-diesel = { version = "2.1.1", features = ["chrono"] }
-chrono = { version = "0.4.40", features = ["serde"] }
+rocket_db_pools = { version = "0.2.0", features = ["diesel_postgres", "diesel-async"] }
+diesel = { version = "~2", features = ["chrono", "postgres"] }
+diesel_migrations = "~2"
+chrono = { version = "0.4.41", features = ["serde"] }
 thiserror = "2.0.12"
 log = "0.4.27"
 serde = { version = "1.0.219", features = ["derive"] }

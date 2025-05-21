@@ -3,6 +3,8 @@ port = 42424  # Must match the port forwarded in .devcontainer/devcontainer.json
 
 [default.databases.mmoldb]
 url = "postgres://postgres:postgres@localhost/mmoldb"
+max_connections = 1  # deadpool doesn't support it -- only used during migrations
+connect_timeout = 5  # 5 is the default but the migrations runner requires it to be specified
 
 [debug]
 cache_game_list_from_api = true
