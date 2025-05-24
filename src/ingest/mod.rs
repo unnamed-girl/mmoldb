@@ -87,7 +87,7 @@ pub enum IngestFatalError {
     #[error("Failed to fetch games list after {retries} retries: {err}")]
     FailedToFetchGamesList {
         retries: u64,
-        err: FetchGamesListError,
+        #[source] err: FetchGamesListError,
     },
 
     #[error(transparent)]
@@ -803,6 +803,7 @@ async fn fetch_games_list(client: &ClientWithMiddleware, config: &IngestConfig) 
                 tries += 1;
                 let wait_time = std::time::Duration::from_millis(100 * tries * tries);
                 warn!("Error fetching games; retrying in {}s. Error: {err}", wait_time.as_secs_f64());
+                warn!("Error debug: {err:?}");
                 tokio::time::sleep(wait_time).await;
             }
             Err(err) => {

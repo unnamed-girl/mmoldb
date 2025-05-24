@@ -18,13 +18,20 @@ FROM setup AS builder
 
 RUN cargo build --release --offline
 
-FROM debian:buster-slim
+FROM debian:bookworm
+
+RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
+   && apt-get -y install libssl3 libpq5 ca-certificates \
+   && apt-get autoremove -y && apt-get clean -y
 
 ENV ROCKET_ADDRESS=0.0.0.0
-ENV ROCKET_ENV=production
 
 EXPOSE 42424
 
 COPY --from=builder /code/target/release/mmoldb /mmoldb
+
+# Rocket app depends on some files in the code
+COPY . /code
+WORKDIR "/code"
 
 CMD [ "/mmoldb" ]
