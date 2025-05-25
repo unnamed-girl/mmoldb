@@ -21,6 +21,7 @@ pub async fn game_page(game_id: i64, mut db: Connection<Db>) -> Result<Template,
 
     #[derive(Serialize)]
     struct EventContext {
+        game_event_index: i32,
         text: String,
         logs: Vec<LogContext>,
     }
@@ -55,6 +56,7 @@ pub async fn game_page(game_id: i64, mut db: Connection<Db>) -> Result<Template,
         events: events
             .into_iter()
             .map(|(event, logs)| EventContext {
+                game_event_index: event.game_event_index,
                 text: event.event_text,
                 logs: logs
                     .into_iter()

@@ -32,7 +32,7 @@
         {% if game.events %}
         <ul class="events">
             {% for event in game.events %}
-            <li class="event">
+            <li class="event" id="event-{{ event.game_event_index }}">
                 <p class="event-text">{{ event.text | safe }}</p>
                 {% if event.logs %}
                 <ul class="logs">
@@ -49,6 +49,13 @@
         {% else %}
         <p class="no-events">No events</p>
         {% endif %}
+    </section>
+
+    <section class="event-scroll">
+        {% for event in game.events %}
+        {% set map = event.logs | group_by(attribute="level") %}
+        <a href="#event-{{ event.game_event_index }}" class="scroll-event{% if "trace" in map %} trace{% endif %}{% if "debug" in map %} debug{% endif %}{% if "info" in map %} info{% endif %}{% if "warn" in map %} warn{% endif %}{% if "error" in map %} error{% endif %}{% if "critical" in map %} critical{% endif %}"></a>
+        {% endfor %}
     </section>
 </body>
 </html>
