@@ -38,6 +38,8 @@ struct IngestConfig {
     #[serde(default)]
     reimport_all_games: bool,
     #[serde(default)]
+    start_ingest_every_launch: bool,
+    #[serde(default)]
     cache_game_list_from_api: bool,
     #[serde(default = "default_retries")]
     fetch_game_list_retries: u64,
@@ -325,8 +327,12 @@ async fn launch_ingest_task(
 
         let taxa = Taxa::new(&mut conn).await?;
         
-        let previous_ingest_start_time = db::latest_ingest_start_time(&mut conn).await?
-            .map(|t| Utc.from_utc_datetime(&t));
+        let previous_ingest_start_time = if config.start_ingest_every_launch {
+            None 
+        } else {
+            db::latest_ingest_start_time(&mut conn).await?
+                .map(|t| Utc.from_utc_datetime(&t))
+        };
 
         (taxa, previous_ingest_start_time)
     };
@@ -677,6 +683,7 @@ async fn do_ingest_internal(
             db::has_game(conn, &game_info.game_id)
                 .await?
         } else {
+            info!("Deleting {} if it exists", game_info.game_id);
             let num_deleted = db::delete_game(conn, &game_info.game_id)
                 .await?;
 

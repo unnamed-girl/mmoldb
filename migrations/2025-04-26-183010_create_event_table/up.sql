@@ -91,6 +91,9 @@ create table info.event_ingest_log (
     log_text text not null
 );
 
+-- Without this, deleting a game is super slow
+create index event_ingest_log_raw_event_id_index on info.event_ingest_log (raw_event_id);
+
 create table info.game_ingest_timing (
     -- bookkeeping
     id bigserial primary key not null,

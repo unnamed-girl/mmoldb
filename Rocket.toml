@@ -9,6 +9,8 @@ connect_timeout = 5  # 5 is the default but the migrations runner requires it to
 [debug]
 cache_game_list_from_api = true
 cache_games_from_api = true
+start_ingest_every_launch = true
+reimport_all_games = true
 
 [debug.databases.mmoldb]
 url = "postgres://postgres:postgres@db/mmoldb"

@@ -182,6 +182,17 @@ pub struct BatterInGame<StrT> {
 }
 
 impl<'g> BatterInGame<&'g str> {
+    pub fn new(name: &'g str) -> Self {
+        Self {
+            name,
+            stats: BatterStats {
+                hits: 0,
+                at_bats: 0,
+                stats: Vec::new(),
+            },
+        }
+    }
+    
     pub fn from_position_player(player: &PositionedPlayer<&'g str>) -> Self {
         Self {
             name: player.name,
@@ -234,6 +245,9 @@ pub struct Game<'g> {
     // Aggregates
     away: TeamInGame<'g>,
     home: TeamInGame<'g>,
+    
+    // Changes at most once
+    used_mote: bool,
 
     // Changes all the time
     state: GameState<'g>,
@@ -879,6 +893,7 @@ impl<'g> Game<'g> {
                     .collect(),
                 batter_count: 0,
             },
+            used_mote: false,
             state: GameState {
                 prev_event_type: ParsedEventMessageDiscriminants::PlayBall,
                 phase: GamePhase::ExpectInningStart,
@@ -1725,35 +1740,54 @@ impl<'g> Game<'g> {
                 },
             ),
             GamePhase::ExpectNowBatting => game_event!(
-               (previous_event, event),
-               [ParsedEventMessageDiscriminants::NowBatting]
-               ParsedEventMessage::NowBatting { batter: batter_name, stats } => {
-                   self.check_batter(batter_name, ingest_logs);
-                   let batter = self.active_batter();
-                   check_now_batting_stats(&stats, &batter.stats, ingest_logs);
-
-                   self.state.phase = GamePhase::ExpectPitch;
-                   None
-               },
-               [ParsedEventMessageDiscriminants::MoundVisit]
-               ParsedEventMessage::MoundVisit { emoji, team } => {
-                   if self.defending_team().team_name != *team {
-                        ingest_logs.warn(format!(
-                            "Team name in MoundVisit doesn't match: Expected {}, but saw {team}",
-                            self.defending_team().team_name,
+                (previous_event, event),
+                [ParsedEventMessageDiscriminants::NowBatting]
+                ParsedEventMessage::NowBatting { batter: batter_name, stats } => {
+                    let batter = self.active_batter_mut();
+                    if batter.name != *batter_name {
+                         ingest_logs.info(format!(
+                            "Batter {batter_name} did not match expected batter {}. \
+                            Assuming this player was replaced using a mote.",
+                            batter.name,
                         ));
-                   }
-
-                   if self.defending_team().team_emoji != *emoji {
-                        ingest_logs.warn(format!(
-                            "Team emoji in MoundVisit doesn't match: Expected {}, but saw {emoji}",
-                            self.defending_team().team_emoji,
-                        ));
-                   }
-
-                   self.state.phase = GamePhase::ExpectMoundVisitOutcome;
-                   None
-               },
+                        
+                        *batter = BatterInGame::new(batter_name);
+                        
+                        if self.used_mote {
+                            ingest_logs.error(
+                                "Attempted to use a mote to swap batters, but a mote was \
+                                already used in this game!",
+                            );
+                        } else {
+                            self.used_mote = true;
+                        }
+                    }
+                    // Need to reborrow for lifetime safety
+                    let batter = self.active_batter();
+                    check_now_batting_stats(&stats, &batter.stats, ingest_logs);
+ 
+                    self.state.phase = GamePhase::ExpectPitch;
+                    None
+                },
+                [ParsedEventMessageDiscriminants::MoundVisit]
+                ParsedEventMessage::MoundVisit { emoji, team } => {
+                    if self.defending_team().team_name != *team {
+                         ingest_logs.warn(format!(
+                             "Team name in MoundVisit doesn't match: Expected {}, but saw {team}",
+                             self.defending_team().team_name,
+                         ));
+                    }
+ 
+                    if self.defending_team().team_emoji != *emoji {
+                         ingest_logs.warn(format!(
+                             "Team emoji in MoundVisit doesn't match: Expected {}, but saw {emoji}",
+                             self.defending_team().team_emoji,
+                         ));
+                    }
+ 
+                    self.state.phase = GamePhase::ExpectMoundVisitOutcome;
+                    None
+                },
             ),
             GamePhase::ExpectFairBallOutcome(fair_ball) => game_event!(
                 (previous_event, event),
