@@ -1546,11 +1546,22 @@ impl<'g> Game<'g> {
 
                     match pitcher_status {
                         StartOfInningPitcher::Same { name, emoji } => {
-                            ingest_logs.info(format!(
-                                "Started {} of {} with same pitcher {emoji} {name}",
-                                self.state.inning_half,
-                                self.state.inning_number,
-                            ));
+                            if *name != self.active_pitcher().name {
+                                ingest_logs.warn(format!(
+                                    "At {} of {}, the message indicated there was no pitcher swap \
+                                    but the named pitcher ({name}) did not match the previously \
+                                    active pitcher ({})",
+                                    self.state.inning_half,
+                                    self.state.inning_number,
+                                    self.active_pitcher().name,
+                                ));
+                            } else {
+                                ingest_logs.info(format!(
+                                    "Started {} of {} with same pitcher {emoji} {name}",
+                                    self.state.inning_half,
+                                    self.state.inning_number,
+                                ));
+                            }
                         }
                         StartOfInningPitcher::Different { arriving_pitcher, arriving_position, leaving_pitcher, leaving_position } => {
                             if *leaving_pitcher != self.active_pitcher().name {
