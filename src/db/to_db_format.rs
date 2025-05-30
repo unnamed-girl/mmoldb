@@ -67,6 +67,7 @@ pub fn event_to_fielders<'e>(
             fielder_name: fielder.name,
             fielder_position: taxa.position_id(fielder.position),
             play_order: i as i32,
+            perfect_catch: fielder.is_perfect_catch,
         })
         .collect()
 }
@@ -102,6 +103,7 @@ pub fn row_to_event<'e>(
         .map(|f| EventDetailFielder {
             name: f.fielder_name,
             position: taxa.position_from_id(f.fielder_position).into(),
+            is_perfect_catch: f.perfect_catch,
         })
         .collect();
 

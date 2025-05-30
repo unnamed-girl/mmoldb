@@ -38,8 +38,8 @@ pub enum SimFatalError {
     },
 }
 
-#[derive(Debug)]
-pub struct EventDetailRunner<StrT> {
+#[derive(Debug, Clone)]
+pub struct EventDetailRunner<StrT: Clone> {
     pub name: StrT,
     pub base_before: Option<TaxaBase>,
     pub base_after: TaxaBase,
@@ -48,14 +48,15 @@ pub struct EventDetailRunner<StrT> {
     pub is_steal: bool,
 }
 
-#[derive(Debug)]
-pub struct EventDetailFielder<StrT> {
+#[derive(Debug, Clone)]
+pub struct EventDetailFielder<StrT: Clone> {
     pub name: StrT,
     pub position: TaxaPosition,
+    pub is_perfect_catch: Option<bool>,
 }
 
-#[derive(Debug)]
-pub struct EventDetail<StrT> {
+#[derive(Debug, Clone)]
+pub struct EventDetail<StrT: Clone> {
     pub game_event_index: usize,
     pub fair_ball_event_index: Option<usize>,
     pub inning: u8,
@@ -399,7 +400,7 @@ struct EventDetailBuilder<'g> {
     fair_ball_direction: Option<TaxaPosition>,
     hit_type: Option<TaxaHitType>,
     fielding_error_type: Option<TaxaFieldingErrorType>,
-    fielders: Vec<PositionedPlayer<&'g str>>,
+    fielders: Vec<EventDetailFielder<&'g str>>,
     advances: Vec<RunnerAdvance<&'g str>>,
     scores: Vec<&'g str>,
     steals: Vec<BaseSteal<&'g str>>,
@@ -430,16 +431,38 @@ impl<'g> EventDetailBuilder<'g> {
             warn!("EventDetailBuilder overwrote existing fielders");
         }
 
-        self.fielders = vec![fielder];
+        self.fielders = vec![EventDetailFielder {
+            name: fielder.name,
+            position: fielder.position.into(),
+            is_perfect_catch: None,
+        }];
         self
     }
 
-    fn fielders(mut self, fielders: Vec<PositionedPlayer<&'g str>>) -> Self {
+    fn catch_fielder(mut self, fielder: PositionedPlayer<&'g str>, is_perfect: bool) -> Self {
         if !self.fielders.is_empty() {
             warn!("EventDetailBuilder overwrote existing fielders");
         }
 
-        self.fielders = fielders;
+        self.fielders = vec![EventDetailFielder {
+            name: fielder.name,
+            position: fielder.position.into(),
+            is_perfect_catch: Some(is_perfect),
+        }];
+        self
+    }
+
+    fn fielders(mut self, fielders: impl IntoIterator<Item = PositionedPlayer<&'g str>>) -> Self {
+        if !self.fielders.is_empty() {
+            warn!("EventDetailBuilder overwrote existing fielders");
+        }
+
+        self.fielders = fielders.into_iter().map(|f| EventDetailFielder {
+            name: f.name,
+            position: f.position.into(),
+            is_perfect_catch: None,
+        }).collect();
+        
         self
     }
 
@@ -687,15 +710,6 @@ impl<'g> EventDetailBuilder<'g> {
             ingest_logs.error(format!("Runner(s) out not found: {:?}", extra_runners_out));
         }
 
-        let fielders = self
-            .fielders
-            .iter()
-            .map(|f| EventDetailFielder {
-                name: f.name,
-                position: f.position.into(),
-            })
-            .collect();
-
         EventDetail {
             game_event_index: self.game_event_index,
             fair_ball_event_index: self.fair_ball_event_index,
@@ -708,7 +722,7 @@ impl<'g> EventDetailBuilder<'g> {
             batter_count: self.batter_count_at_event_start,
             batter_name,
             pitcher_name: game.active_pitcher().name,
-            fielders,
+            fielders: self.fielders,
             detail_type: type_detail,
             hit_type: self.hit_type,
             fair_ball_type: self.fair_ball_type,
@@ -1817,13 +1831,9 @@ impl<'g> Game<'g> {
                         ingest_logs.warn("Non-flyout was described as sacrifice");
                     }
 
-                    if *perfect {
-                        ingest_logs.warn("No support for perfect catches yet");
-                    }
-
                     detail_builder
                         .fair_ball(fair_ball)
-                        .fielder(*caught_by)
+                        .catch_fielder(*caught_by, *perfect)
                         .runner_changes(advances.clone(), scores.clone())
                         .build_some(self, ingest_logs, TaxaEventType::CaughtOut)
                 },
@@ -2316,7 +2326,7 @@ fn check_now_batting_stats(
     }
 }
 
-fn positioned_player_as_ref<StrT: AsRef<str>>(
+fn positioned_player_as_ref<StrT: AsRef<str> + Clone>(
     p: &EventDetailFielder<StrT>,
 ) -> PositionedPlayer<&str> {
     PositionedPlayer {
@@ -2406,6 +2416,11 @@ pub enum ToParsedError<'g> {
         required: usize,
         actual: usize,
     },
+    
+    #[error("{event_type} fielder(s) must have a Some() perfect catch")]
+    MissingPerfectCatch {
+        event_type: TaxaEventType,
+    }
 }
 
 #[derive(Debug, Error)]
@@ -2422,7 +2437,7 @@ pub enum ToParsedContactError {
     },
 }
 
-impl<StrT: AsRef<str>> EventDetail<StrT> {
+impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
     fn count(&self) -> (u8, u8) {
         (self.count_balls, self.count_strikes)
     }
@@ -2541,7 +2556,7 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
 
         let exactly_one_fielder = || {
             match <[_; 1]>::try_from(self.fielders()) {
-                Ok([runner]) => Ok(runner),
+                Ok([fielder]) => Ok(fielder),
                 Err(fielders) => Err(ToParsedError::WrongNumberOfFielders {
                     event_type: self.detail_type,
                     required: 1,
@@ -2679,14 +2694,27 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                 let is_fly = fair_ball_type != FairBallType::GroundBall;
                 let sacrifice = is_fly && !scores.is_empty();
 
+                let fielder = self.fielders.iter().exactly_one()
+                    .map_err(|e| ToParsedError::WrongNumberOfFielders {
+                        event_type: self.detail_type,
+                        required: 1,
+                        actual: e.len(),
+                    })?;
+
+                let caught_by = positioned_player_as_ref(&fielder);
+                let perfect = fielder.is_perfect_catch
+                    .ok_or_else(|| ToParsedError::MissingPerfectCatch {
+                        event_type: self.detail_type,
+                    })?;
+                
                 ParsedEventMessage::CaughtOut {
                     batter: self.batter_name.as_ref(),
                     fair_ball_type,
-                    caught_by: exactly_one_fielder()?,
+                    caught_by,
                     scores,
                     advances: self.advances(false),
                     sacrifice,
-                    perfect: false, // TODO
+                    perfect,
                 }
             }
             TaxaEventType::GroundedOut => ParsedEventMessage::GroundedOut {
@@ -2754,7 +2782,7 @@ impl<StrT: AsRef<str>> EventDetail<StrT> {
                                 base: *base_two,
                             },
                             scores,
-                            advances: self.advances(false),
+                            advances: self.advances(true),
                             sacrifice,
                         }
                     }

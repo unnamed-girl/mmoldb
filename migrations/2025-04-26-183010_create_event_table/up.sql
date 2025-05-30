@@ -207,7 +207,8 @@ create table data.event_fielders (
     -- actual data
     fielder_name text not null,
     fielder_position bigint references taxa.position not null,
-    play_order int not null
+    play_order int not null,
+    perfect_catch bool -- null indicates this was not a catch
 );
 
 create index event_fielders_event_id_index on data.event_fielders (event_id);

@@ -266,6 +266,7 @@ pub struct NewFielder<'a> {
     pub fielder_name: &'a str,
     pub fielder_position: i64,
     pub play_order: i32,
+    pub perfect_catch: Option<bool>,
 }
 
 #[derive(Identifiable, Queryable, Selectable, Associations)]
@@ -278,4 +279,5 @@ pub struct DbFielder {
     pub fielder_name: String,
     pub fielder_position: i64,
     pub play_order: i32,
+    pub perfect_catch: Option<bool>,
 }

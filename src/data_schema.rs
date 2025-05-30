@@ -21,6 +21,7 @@ pub mod data {
             fielder_name -> Text,
             fielder_position -> Int8,
             play_order -> Int4,
+            perfect_catch -> Nullable<Bool>,
         }
     }
 

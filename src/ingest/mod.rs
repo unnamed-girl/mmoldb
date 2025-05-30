@@ -1196,7 +1196,7 @@ fn check_round_trip(
             format!(
                 "Round-trip of {} through database produced a mismatch:\n\
                  Original: <pre>{:?}</pre>\n\
-                 Through EventDetail: <pre>{:?}</pre>",
+                 Through database: <pre>{:?}</pre>",
                 if is_contact_event { "contact event" } else { "event" }, 
                 parsed,
                 parsed_through_db,
