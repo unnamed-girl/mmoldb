@@ -1075,10 +1075,7 @@ impl<'g> Game<'g> {
         self.state.count_strikes = 0;
         self.state.count_balls = 0;
 
-        if self.state.inning_number >= 9
-            && self.state.inning_half == TopBottom::Bottom
-            && self.state.home_score > self.state.away_score
-        {
+        if self.is_walkoff() {
             // If it's the bottom of a 9th or later, and the score is
             // now in favor of the home team, it's a walk-off
             self.state.runners_on.clear();
@@ -1093,6 +1090,12 @@ impl<'g> Game<'g> {
         }
 
         self.batting_team_mut().batter_count += 1;
+    }
+
+    fn is_walkoff(&self) -> bool {
+        self.state.inning_number >= 9
+            && self.state.inning_half == TopBottom::Bottom
+            && self.state.home_score > self.state.away_score
     }
 
     pub fn add_outs(&mut self, num_outs: i32) {
@@ -1118,6 +1121,10 @@ impl<'g> Game<'g> {
             TopBottom::Bottom => {
                 self.state.home_score += runs;
             }
+        }
+
+        if self.is_walkoff() {
+            self.state.phase = GamePhase::ExpectGameEnd;
         }
     }
 
@@ -1967,6 +1974,7 @@ impl<'g> Game<'g> {
                         advances,
                         runners_out: &[*out_one, *out_two],
                         runners_out_may_include_batter: Some(batter),
+                        runner_advances_may_include_batter: Some(batter),
                         ..Default::default()
                     }, ingest_logs);
                     self.finish_pa();
@@ -2416,7 +2424,7 @@ pub enum ToParsedError<'g> {
         required: usize,
         actual: usize,
     },
-    
+
     #[error("{event_type} fielder(s) must have a Some() perfect catch")]
     MissingPerfectCatch {
         event_type: TaxaEventType,
@@ -2706,7 +2714,7 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                     .ok_or_else(|| ToParsedError::MissingPerfectCatch {
                         event_type: self.detail_type,
                     })?;
-                
+
                 ParsedEventMessage::CaughtOut {
                     batter: self.batter_name.as_ref(),
                     fair_ball_type,
