@@ -40,36 +40,13 @@
     overflow: scroll;
 }
 
-.critical {
-    background-color: var(--ingest-critical-color);
+.trace {
+    background-color: var(--ingest-trace-color);
+    color: #ccc;
 }
 
-.critical:nth-child(even) {
-    background-color: var(--ingest-critical-color-dark);
-}
-
-.error {
-    background-color: var(--ingest-error-color);
-}
-
-.error:nth-child(even) {
-    background-color: var(--ingest-error-color-dark);
-}
-
-.warning {
-    background-color: var(--ingest-warning-color);
-}
-
-.warning:nth-child(even) {
-    background-color: var(--ingest-warning-color-dark);
-}
-
-.info {
-    background-color: var(--ingest-info-color);
-}
-
-.info:nth-child(even) {
-    background-color: var(--ingest-info-color-dark);
+.trace:nth-child(even) {
+    background-color: var(--ingest-trace-color-dark);
 }
 
 .debug {
@@ -81,13 +58,36 @@
     background-color: var(--ingest-debug-color-dark);
 }
 
-.trace {
-    background-color: var(--ingest-trace-color);
-    color: #ccc;
+.info {
+    background-color: var(--ingest-info-color);
 }
 
-.trace:nth-child(even) {
-    background-color: var(--ingest-trace-color-dark);
+.info:nth-child(even) {
+    background-color: var(--ingest-info-color-dark);
+}
+
+.warning {
+    background-color: var(--ingest-warning-color);
+}
+
+.warning:nth-child(even) {
+    background-color: var(--ingest-warning-color-dark);
+}
+
+.error {
+    background-color: var(--ingest-error-color);
+}
+
+.error:nth-child(even) {
+    background-color: var(--ingest-error-color-dark);
+}
+
+.critical {
+    background-color: var(--ingest-critical-color);
+}
+
+.critical:nth-child(even) {
+    background-color: var(--ingest-critical-color-dark);
 }
 
 .event-scroll {
