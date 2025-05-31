@@ -1532,17 +1532,18 @@ impl<'g> Game<'g> {
                         }
                         StartOfInningPitcher::Different { arriving_pitcher, arriving_position, leaving_pitcher, leaving_position } => {
                             if *leaving_pitcher != self.active_pitcher().name {
-                                ingest_logs.warn(format!(
+                                ingest_logs.info(format!(
                                     "The pitcher who left ({}) did not match the previously active \
-                                    pitcher ({})",
+                                    pitcher ({}). Assuming a mote was used.",
                                     leaving_pitcher, self.active_pitcher().name,
                                 ));
                             }
 
                             if *leaving_position != self.active_pitcher().position {
-                                ingest_logs.warn(format!(
+                                ingest_logs.info(format!(
                                     "The position of the pitcher who left ({}) did not match the \
-                                    previously active pitcher's position ({})",
+                                    previously active pitcher's position ({}). Assuming a mote was \
+                                    used.",
                                     leaving_position, self.active_pitcher().position,
                                 ));
                             }
@@ -2111,17 +2112,18 @@ impl<'g> Game<'g> {
                 [ParsedEventMessageDiscriminants::PitcherSwap]
                 ParsedEventMessage::PitcherSwap { arriving_pitcher, arriving_position, leaving_pitcher, leaving_position } => {
                     if *leaving_pitcher != self.active_pitcher().name {
-                        ingest_logs.warn(format!(
+                        ingest_logs.info(format!(
                             "In a PitcherSwap event, the pitcher who left ({}) did not match the \
-                            previously active pitcher ({})",
+                            previously active pitcher ({}). Assuming a mote was used.",
                             leaving_pitcher, self.active_pitcher().name,
                         ));
                     }
 
                     if *leaving_position != self.active_pitcher().position {
-                        ingest_logs.warn(format!(
+                        ingest_logs.info(format!(
                             "In a PitcherSwap event, the position of the pitcher who left ({}) \
-                            did not match the previously active pitcher's position ({})",
+                            did not match the previously active pitcher's position ({}). Assuming \
+                            a mote was used",
                             leaving_position, self.active_pitcher().position,
                         ));
                     }
