@@ -1046,9 +1046,7 @@ impl<'g> Game<'g> {
         if self.is_walkoff() {
             // If it's the bottom of a 9th or later, and the score is
             // now in favor of the home team, it's a walk-off
-            self.state.runners_on.clear();
-            self.state.game_finished = true;
-            self.state.phase = GamePhase::ExpectGameEnd;
+            self.end_game();
         } else if self.state.outs >= 3 {
             // Otherwise, if there's 3 outs, the inning ends
             self.state.phase = GamePhase::ExpectInningEnd;
@@ -1056,6 +1054,12 @@ impl<'g> Game<'g> {
             // Otherwise just go to the next batter
             self.state.phase = GamePhase::ExpectNowBatting;
         }
+    }
+
+    fn end_game(&mut self) {
+        self.state.runners_on.clear();
+        self.state.game_finished = true;
+        self.state.phase = GamePhase::ExpectGameEnd;
     }
 
     fn is_walkoff(&self) -> bool {
@@ -1090,7 +1094,7 @@ impl<'g> Game<'g> {
         }
 
         if self.is_walkoff() {
-            self.state.phase = GamePhase::ExpectGameEnd;
+            self.end_game();
         }
     }
 
@@ -2078,8 +2082,7 @@ impl<'g> Game<'g> {
                     };
 
                     if game_finished {
-                        self.state.game_finished = true;
-                        self.state.phase = GamePhase::ExpectGameEnd;
+                        self.end_game();
                     } else {
                         self.state.phase = GamePhase::ExpectInningStart;
                     }
