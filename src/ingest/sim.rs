@@ -910,6 +910,13 @@ impl<'g> Game<'g> {
         }
     }
 
+    fn defending_team_mut(&mut self) -> &mut TeamInGame<'g> {
+        match self.state.inning_half {
+            TopBottom::Top => &mut self.home,
+            TopBottom::Bottom => &mut self.away,
+        }
+    }
+
     fn check_count(&self, (balls, strikes): (u8, u8), ingest_logs: &mut IngestLogs) {
         if self.state.count_balls != balls {
             ingest_logs.warn(format!(
@@ -1488,18 +1495,20 @@ impl<'g> Game<'g> {
                     self.state.inning_number = *number;
 
                     if *batting_team_name != self.batting_team().team_name {
-                        ingest_logs.warn(format!(
-                            "Batting team name from InningStart ({batting_team_name}) did \
-                            not match the one from LiveNow ({})",
+                        ingest_logs.info(format!(
+                            "Batting team name from InningStart ({batting_team_name}) did not \
+                            match the one from LiveNow ({}). Assuming this was a manual change.",
                             self.batting_team().team_name,
                         ));
+                        self.batting_team_mut().team_name = batting_team_name;
                     }
                     if *batting_team_emoji != self.batting_team().team_emoji {
-                        ingest_logs.warn(format!(
-                            "Batting team emoji from InningStart ({batting_team_emoji}) did \
-                            not match the one from LiveNow ({})",
+                        ingest_logs.info(format!(
+                            "Batting team emoji from InningStart ({batting_team_emoji}) did not \
+                            match the one from LiveNow ({}). Assuming this was a manual change.",
                             self.batting_team().team_emoji,
                         ));
+                        self.batting_team_mut().team_emoji = batting_team_emoji;
                     }
 
                     match pitcher_status {
@@ -1589,18 +1598,20 @@ impl<'g> Game<'g> {
                 [ParsedEventMessageDiscriminants::MoundVisit]
                 ParsedEventMessage::MoundVisit { emoji, team } => {
                     if *team != self.defending_team().team_name {
-                        ingest_logs.warn(format!(
-                            "Batting team name from MoundVisit ({team}) did \
-                            not match the one from LiveNow ({})",
+                        ingest_logs.info(format!(
+                            "Defending team name from MoundVisit ({team}) did not match the one from \
+                            LiveNow ({}). Assuming this was a manual change.",
                             self.defending_team().team_name,
                         ));
+                        self.defending_team_mut().team_name = team;
                     }
                     if *emoji != self.defending_team().team_emoji {
-                        ingest_logs.warn(format!(
-                            "Batting team emoji from MoundVisit ({emoji}) did \
-                            not match the one from LiveNow ({})",
+                        ingest_logs.info(format!(
+                            "Defending team emoji from MoundVisit ({emoji}) did not match the one \
+                            from LiveNow ({}). Assuming this was a manual change.",
                             self.defending_team().team_emoji,
                         ));
+                        self.defending_team_mut().team_emoji = emoji;
                     }
 
                     self.state.phase = GamePhase::ExpectMoundVisitOutcome;
