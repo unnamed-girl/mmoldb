@@ -25,7 +25,6 @@ pub fn event_to_row<'e>(
         count_strikes: event.count_strikes as i32,
         outs_before: event.outs_before,
         outs_after: event.outs_after,
-        batter_count: event.batter_count as i32,
         batter_name: event.batter_name,
         pitcher_name: event.pitcher_name,
     }
@@ -116,7 +115,6 @@ pub fn row_to_event<'e>(
         count_strikes: event.count_strikes as u8,
         outs_before: event.outs_before,
         outs_after: event.outs_after,
-        batter_count: event.batter_count as usize,
         batter_name: event.batter_name,
         pitcher_name: event.pitcher_name,
         detail_type: taxa.event_type_from_id(event.event_type)

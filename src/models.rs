@@ -112,7 +112,6 @@ pub struct NewEvent<'a> {
     pub count_strikes: i32,
     pub outs_before: i32,
     pub outs_after: i32,
-    pub batter_count: i32,
     pub batter_name: &'a str,
     pub pitcher_name: &'a str,
 }
@@ -135,7 +134,6 @@ pub struct DbEvent {
     pub count_strikes: i32,
     pub outs_before: i32,
     pub outs_after: i32,
-    pub batter_count: i32,
     pub batter_name: String,
     pub pitcher_name: String,
 }

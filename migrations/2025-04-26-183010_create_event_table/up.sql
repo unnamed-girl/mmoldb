@@ -145,7 +145,6 @@ create table data.events (
     -- note: runs scored, outs on play, steal info, etc. are all computed from data.event_baserunners
 
     -- player info
-    batter_count int not null, -- starts at 0 and increments every time a new batter steps up
     batter_name text not null,
     pitcher_name text not null
     -- note: more data is in data.event_baserunners and data.event_fielders
