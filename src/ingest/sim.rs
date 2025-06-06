@@ -1226,6 +1226,7 @@ impl<'g> Game<'g> {
                     // Then this is a score, and the runner should
                     // score a run and be removed from base.
                     runs_to_add += 1;
+                    ingest_logs.debug(format!("{} scored", runner.runner_name));
                     return false;
                 }
             }
@@ -1250,15 +1251,18 @@ impl<'g> Game<'g> {
                 return if steal.caught {
                     // Caught out: Add an out and remove the runner
                     outs_to_add += 1;
+                    ingest_logs.debug(format!("{} caught stealing", runner.runner_name));
                     false
                 } else if steal.base == Base::Home {
                     // Stole home: Add a run and remove the runner
+                    ingest_logs.debug(format!("{} stole home", runner.runner_name));
                     runs_to_add += 1;
                     false
                 } else {
                     // Stole any other base: Update the runner and
                     // retain them, also updating the last occupied
                     // base
+                    ingest_logs.debug(format!("{} stole {}", runner.runner_name, steal.base));
                     runner.base = steal.base.into();
                     last_occupied_base = Some(runner.base);
                     true
@@ -1269,21 +1273,24 @@ impl<'g> Game<'g> {
             if let Some(advance) = advances_iter.peeking_next(|a| {
                 // An advance is eligible if the name matches and
                 // the next occupied base is later than the one
-                // they advanced to
+                // they advanced to and the base they're advancing
+                // to is after the one they're at
                 a.runner == runner.runner_name
+                    && runner.base < a.base.into()
                     && last_occupied_base
                         .map_or(true, |occupied_base| occupied_base > a.base.into())
             }) {
                 // For an advance, the only thing necessary is to
                 // update the runner's base and the last occupied
                 // base, then retain the runner
+                ingest_logs.debug(format!("{} advanced from {} to {}", runner.runner_name, runner.base, advance.base));
                 runner.base = advance.base.into();
                 last_occupied_base = Some(runner.base);
                 return true;
             }
 
             // Next, look for outs
-            if let Some(_) = runners_out_iter.peeking_next(|o| {
+            if let Some(out) = runners_out_iter.peeking_next(|o| {
                 // A runner-out is eligible if the name matches and
                 // all bases behind the one they got out at are
                 // clear. The one they got out at may be occupied.
@@ -1306,12 +1313,14 @@ impl<'g> Game<'g> {
             }) {
                 // Every runner out is an out (obviously), and
                 // removes the runner from the bases
+                ingest_logs.debug(format!("{} out at {}", runner.runner_name, out.base));
                 outs_to_add += 1;
                 return false;
             }
 
             // If none of the above applies, the runner must not have moved
             last_occupied_base = Some(runner.base);
+            ingest_logs.debug(format!("{} didn't move from {}", runner.runner_name, runner.base));
             true
         });
 

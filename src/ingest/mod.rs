@@ -660,8 +660,8 @@ async fn do_ingest_internal(
 
     let problem_games: HashSet<_> = [
         // "6809a93e11f35e62dba3c113",
-        "680b4f1d11f35e62dba3ebb2",
-        // "680b875f11f35e62dba3f100",
+        // "680b4f1d11f35e62dba3ebb2", // TODO Investigate wrong automatic runner here
+        "680b875f11f35e62dba3f100",
         // "680bbfaa11f35e62dba3f6a6",
         // "680f4399555fc84a67b9fe1b",
         // "680f97f9555fc84a67ba0707",
