@@ -306,7 +306,12 @@ struct CashewsGameResponse {
     pub state: GameState,
 }
 
-type GamesResponse = Vec<CashewsGameResponse>;
+#[derive(Deserialize)]
+
+struct CashewsGamesResponse {
+    items: Vec<CashewsGameResponse>,
+    next_page: Option<String>,
+}
 
 // This function sets up the ingest task, then returns a JoinHandle for
 // the ingest task. Errors in setup are propagated to the caller. 
@@ -792,7 +797,7 @@ where
     })
 }
 
-async fn fetch_games_list(client: &ClientWithMiddleware, config: &IngestConfig) -> Result<GamesResponse, FetchGamesListError> {
+async fn fetch_games_list(client: &ClientWithMiddleware, config: &IngestConfig) -> Result<Vec<CashewsGameResponse>, FetchGamesListError> {
     let cache_mode = if config.cache_game_list_from_api {
         // ForceCache means to ignore staleness, but still go to the
         // network if it's not found in the cache
@@ -808,7 +813,7 @@ async fn fetch_games_list(client: &ClientWithMiddleware, config: &IngestConfig) 
             Ok(r) => { break r }
             Err(err) if tries < config.fetch_game_list_retries => {
                 tries += 1;
-                let wait_time = std::time::Duration::from_millis(100 * tries * tries);
+                let wait_time = Duration::from_millis(100 * tries * tries);
                 warn!("Error fetching games; retrying in {}s. Error: {err}", wait_time.as_secs_f64());
                 warn!("Error debug: {err:?}");
                 tokio::time::sleep(wait_time).await;
@@ -820,16 +825,19 @@ async fn fetch_games_list(client: &ClientWithMiddleware, config: &IngestConfig) 
     })
 }
 
-async fn fetch_games_list_base(client: &ClientWithMiddleware, cache_mode: http_cache_reqwest::CacheMode) -> Result<GamesResponse, FetchGamesListError> {
-    Ok(
-        client
-            .get("https://freecashe.ws/api/games")
-            .with_extension(cache_mode)
-            .send()
-            .await?
-            .json()
-            .await?
-    )
+async fn fetch_games_list_base(client: &ClientWithMiddleware, cache_mode: http_cache_reqwest::CacheMode) -> Result<Vec<CashewsGameResponse>, FetchGamesListError> {
+    // TODO Handle multiple seasons
+    // TODO Properly use pagination when it gets fixed
+    // TODO Only request games after the most recently ingested one
+    let response: CashewsGamesResponse = client
+        .get("https://freecashe.ws/api/games?season=0&count=10000000")
+        .with_extension(cache_mode)
+        .send()
+        .await?
+        .json()
+        .await?;
+    
+    Ok(response.items)
 }
 
 // A utility to more conveniently build a Vec<IngestLog>
