@@ -1237,12 +1237,15 @@ impl<'g> Game<'g> {
             // around in_scoring_phase if it's processed after
             // scores.
             if let Some(steal) = steals_iter.peeking_next(|s| {
-                // A steal is eligible if the name matches and the
-                // next occupied base is later than the one they
-                // tried to steal
+                // A steal is eligible if the name matches and the base
+                // they tried to steal is the one after the one they're
+                // currently on. I tried to leave this open to a runner
+                // stealing multiple bases in one attempt, in case that
+                // ever gets added, but it turned out it has to be that
+                // restrictive to properly handle the case when there's
+                // multiple same-named baserunners on the basepaths.
                 s.runner == runner.runner_name
-                    && last_occupied_base
-                        .map_or(true, |occupied_base| occupied_base > s.base.into())
+                    && s.base == runner.base.next_base().into()
             }) {
                 return if steal.caught {
                     // Caught out: Add an out and remove the runner
