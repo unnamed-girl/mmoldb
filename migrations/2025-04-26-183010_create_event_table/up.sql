@@ -138,6 +138,14 @@ create table data.events (
     fair_ball_direction bigint references taxa.position,
     -- populated when there's a fielding error
     fielding_error_type bigint references taxa.fielding_error_type,
+    -- this is specifically *described* as sacrifice, because there is
+    -- or was a bug that caused plays to incorrectly be called
+    -- sacrifices. The bug is as yet unconfirmed, so it might be
+    -- intended behavior, but it still doesn't follow the MLB
+    -- definition of a sacrifice.
+    -- this is null for events that can never be called sacrifices
+    -- (those that can are caught outs and grounded double plays)
+    described_as_sacrifice bool,
     count_balls int not null,
     count_strikes int not null,
     outs_before int not null,

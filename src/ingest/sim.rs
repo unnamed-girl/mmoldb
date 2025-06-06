@@ -79,6 +79,7 @@ pub struct EventDetail<StrT: Clone> {
     pub fair_ball_type: Option<TaxaFairBallType>,
     pub fair_ball_direction: Option<TaxaPosition>,
     pub fielding_error_type: Option<TaxaFieldingErrorType>,
+    pub described_as_sacrifice: Option<bool>,
 
     pub baserunners: Vec<EventDetailRunner<StrT>>,
 }
@@ -375,6 +376,7 @@ struct EventDetailBuilder<'g> {
     fair_ball_direction: Option<TaxaPosition>,
     hit_type: Option<TaxaHitType>,
     fielding_error_type: Option<TaxaFieldingErrorType>,
+    described_as_sacrifice: Option<bool>,
     fielders: Vec<EventDetailFielder<&'g str>>,
     advances: Vec<RunnerAdvance<&'g str>>,
     scores: Vec<&'g str>,
@@ -398,6 +400,12 @@ impl<'g> EventDetailBuilder<'g> {
 
     fn fielding_error_type(mut self, fielding_error_type: TaxaFieldingErrorType) -> Self {
         self.fielding_error_type = Some(fielding_error_type);
+        self
+    }
+
+    //noinspection RsSelfConvention
+    fn described_as_sacrifice(mut self, described_as_sacrifice: bool) -> Self {
+        self.described_as_sacrifice = Some(described_as_sacrifice);
         self
     }
 
@@ -699,6 +707,7 @@ impl<'g> EventDetailBuilder<'g> {
             fair_ball_type: self.fair_ball_type,
             fair_ball_direction: self.fair_ball_direction,
             fielding_error_type: self.fielding_error_type,
+            described_as_sacrifice: self.described_as_sacrifice,
             baserunners,
         }
     }
@@ -1024,6 +1033,7 @@ impl<'g> Game<'g> {
             fair_ball_type: None,
             fair_ball_direction: None,
             fielding_error_type: None,
+            described_as_sacrifice: None,
             scores: Vec::new(),
             steals: Vec::new(),
             runner_added: None,
@@ -1796,21 +1806,9 @@ impl<'g> Game<'g> {
                     self.add_out();
                     self.finish_pa(batter_name);
 
-                    if *fair_ball_type != FairBallType::GroundBall {
-                        if *sacrifice && scores.is_empty() {
-                            ingest_logs.warn("Flyout was described as a sacrifice, but nobody scored");
-                        } else if !*sacrifice && !scores.is_empty() {
-                            ingest_logs.warn(
-                                "Player(s) scored on flyout, but it was not described as a \
-                                sacrifice",
-                            );
-                        }
-                    } else if *sacrifice {
-                        ingest_logs.warn("Non-flyout was described as sacrifice");
-                    }
-
                     detail_builder
                         .fair_ball(fair_ball)
+                        .described_as_sacrifice(*sacrifice)
                         .catch_fielder(*caught_by, *perfect)
                         .runner_changes(advances.clone(), scores.clone())
                         .build_some(self, batter_name, ingest_logs, TaxaEventType::CaughtOut)
@@ -1929,17 +1927,6 @@ impl<'g> Game<'g> {
                 ParsedEventMessage::DoublePlayGrounded { batter, advances, scores, out_one, out_two, fielders, sacrifice } => {
                     self.check_batter(batter_name, batter, ingest_logs);
 
-                    // Assuming for now that sacrifice is any time
-                    // there are scores
-                    if *sacrifice && scores.is_empty() {
-                        ingest_logs.warn("DoublePlayGrounded was described as a sacrifice, but nobody scored");
-                    } else if !*sacrifice && !scores.is_empty() {
-                        ingest_logs.warn(
-                            "DoublePlayGrounded wasn't described as a sacrifice even though there \
-                            were scores",
-                        );
-                    }
-
                     self.update_runners(RunnerUpdate {
                         scores,
                         advances,
@@ -1952,6 +1939,7 @@ impl<'g> Game<'g> {
 
                     detail_builder
                         .fair_ball(fair_ball)
+                        .described_as_sacrifice(*sacrifice)
                         .runner_changes(advances.clone(), scores.clone())
                         .add_out(*out_one)
                         .add_out(*out_two)
@@ -2375,6 +2363,15 @@ pub enum ToParsedError<'g> {
     
     #[error("{event_type} must have a hit_type")]
     MissingHitType { event_type: TaxaEventType },
+    
+    #[error("{event_type} must have Some described_as_sacrifice")]
+    MissingDescribedAsSacrifice { event_type: TaxaEventType },
+    
+    #[error("{event_type} with {runners_out} runners out must have Some described_as_sacrifice")]
+    MissingDescribedAsSacrificeForRunnersOut { 
+        event_type: TaxaEventType,
+        runners_out: usize,
+    },
 
     #[error("{event_type} must have exactly {required} runners out, but there were {actual}")]
     WrongNumberOfRunnersOut {
@@ -2670,8 +2667,10 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
             TaxaEventType::CaughtOut => {
                 let scores = self.scores();
                 let fair_ball_type = mandatory_fair_ball_type()?;
-                let is_fly = fair_ball_type != FairBallType::GroundBall;
-                let sacrifice = is_fly && !scores.is_empty();
+                let sacrifice = self.described_as_sacrifice
+                    .ok_or_else(|| ToParsedError::MissingDescribedAsSacrifice {
+                        event_type: self.detail_type,
+                    })?;
 
                 let fielder = self.fielders.iter().exactly_one()
                     .map_err(|e| ToParsedError::WrongNumberOfFielders {
@@ -2734,7 +2733,6 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
             },
             TaxaEventType::DoublePlay => {
                 let scores = self.scores();
-                let sacrifice = !scores.is_empty();
                 let runners_out = self.runners_out().map_err(ToParsedError::MissingBaseDescriptionFormat)?;
                 match &runners_out.as_slice() {
                     [(name, at_base)] => ParsedEventMessage::DoublePlayCaught {
@@ -2749,6 +2747,12 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                         advances: self.advances(false),
                     },
                     [(name_one, base_one), (name_two, base_two)] => {
+                        let sacrifice = self.described_as_sacrifice
+                            .ok_or_else(|| ToParsedError::MissingDescribedAsSacrificeForRunnersOut {
+                                event_type: self.detail_type,
+                                runners_out: 2,
+                            })?;
+
                         ParsedEventMessage::DoublePlayGrounded {
                             batter: self.batter_name.as_ref(),
                             fielders: self.fielders(),

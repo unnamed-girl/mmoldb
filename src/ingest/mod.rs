@@ -8,7 +8,6 @@ use std::time::Duration;
 use crate::db::{RowToEventError, Taxa};
 use crate::ingest::sim::{Game, SimFatalError};
 use crate::{Db, db};
-use chrono::serde::ts_milliseconds;
 use chrono::{DateTime, TimeZone, Utc};
 use chrono_humanize::HumanTime;
 use log::{error, info, warn};
@@ -290,10 +289,6 @@ pub enum GameState {
     InningEnd,
 }
 
-// Allowing dead code because I want to keep the unused members of this
-// struct so that it's easy to see that I have them if I find a use for
-// them.
-#[allow(dead_code)]
 #[derive(Deserialize)]
 struct CashewsGameResponse {
     pub game_id: String,
@@ -301,8 +296,6 @@ struct CashewsGameResponse {
     pub day: i64,
     pub home_team_id: String,
     pub away_team_id: String,
-    #[serde(with = "ts_milliseconds")]
-    pub last_update: DateTime<Utc>,
     pub state: GameState,
 }
 
@@ -1102,10 +1095,10 @@ async fn ingest_game(
 fn log_if_error<'g, E: std::fmt::Display>(
     ingest_logs: &mut IngestLogs,
     index: usize,
-    to_contact_result: Result<ParsedEventMessage<&'g str>, E>,
+    to_parsed_result: Result<ParsedEventMessage<&'g str>, E>,
     log_prefix: &str,
 ) -> Option<ParsedEventMessage<&'g str>> {
-    match to_contact_result {
+    match to_parsed_result {
         Ok(to_contact_result) => { Some(to_contact_result) }
         Err(err) => {
             ingest_logs.error(
