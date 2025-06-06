@@ -224,6 +224,7 @@ struct GameState<'g> {
 pub struct Game<'g> {
     // Should never change
     game_id: &'g str,
+    is_postseason: bool,
 
     // Aggregates
     away: TeamInGame<'g>,
@@ -731,6 +732,7 @@ struct RunnerUpdate<'g, 'a> {
 impl<'g> Game<'g> {
     pub fn new<'a, IterT>(
         game_id: &'g str,
+        is_postseason: bool,
         events: &'a mut IterT,
     ) -> Result<(Game<'g>, Vec<Vec<IngestLog>>), SimFatalError>
     where
@@ -863,6 +865,7 @@ impl<'g> Game<'g> {
 
         let game = Self {
             game_id,
+            is_postseason,
             away: TeamInGame {
                 team_name: away_team_name,
                 team_emoji: away_team_emoji,
@@ -1602,8 +1605,7 @@ impl<'g> Game<'g> {
                     // Add the automatic runner to our state without emitting a db event for it.
                     // This way they will just show up on base without having an event that put
                     // them there, which I think is the correct interpretation.
-                    // TODO No automatic runners in postseason
-                    if *number > 9 {
+                    if *number > 9 && !self.is_postseason {
                         let stored_automatic_runner = self.active_automatic_runner()
                             .ok_or_else(|| SimFatalError::MissingAutomaticRunner {
                                 inning_num: *number
