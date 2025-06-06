@@ -1593,6 +1593,7 @@ impl<'g> Game<'g> {
                     // Add the automatic runner to our state without emitting a db event for it.
                     // This way they will just show up on base without having an event that put
                     // them there, which I think is the correct interpretation.
+                    // TODO No automatic runners in postseason
                     if *number > 9 {
                         let stored_automatic_runner = self.active_automatic_runner()
                             .ok_or_else(|| SimFatalError::MissingAutomaticRunner {
@@ -1614,6 +1615,8 @@ impl<'g> Game<'g> {
                         } else {
                             stored_automatic_runner
                         };
+                        
+                        ingest_logs.debug(format!("Adding automatic runner {runner_name}"));
 
                         self.state.runners_on.push_back(RunnerOn {
                             runner_name,
