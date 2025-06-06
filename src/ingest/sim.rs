@@ -5,10 +5,7 @@ use crate::db::{
 use itertools::{EitherOrBoth, Itertools, PeekingNext};
 use log::warn;
 use mmolb_parsing::ParsedEventMessage;
-use mmolb_parsing::enums::{
-    Base, BaseNameVariant, BatterStat, Distance, FairBallDestination, FairBallType, FoulType,
-    HomeAway, NowBattingStats, Position, StrikeType, TopBottom,
-};
+use mmolb_parsing::enums::{Base, BaseNameVariant, BatterStat, Distance, EventType, FairBallDestination, FairBallType, FoulType, HomeAway, NowBattingStats, Position, StrikeType, TopBottom};
 use mmolb_parsing::parsed_event::{
     BaseSteal, FieldingAttempt, ParsedEventMessageDiscriminants, PositionedPlayer, RunnerAdvance,
     RunnerOut, StartOfInningPitcher,
@@ -18,6 +15,11 @@ use std::fmt::{Debug, Formatter};
 use std::fmt::Write;
 use strum::IntoDiscriminant;
 use thiserror::Error;
+
+
+// This exists so I can take a reference to it later
+const STATIC_GAME_OVER_EVENT: ParsedEventMessage<&'static str> = ParsedEventMessage::GameOver;
+
 
 #[derive(Debug, Error)]
 pub enum SimFatalError {
@@ -1462,7 +1464,7 @@ impl<'g> Game<'g> {
     pub fn next(
         &mut self,
         index: usize,
-        event: &ParsedEventMessage<&'g str>,
+        mut event: &ParsedEventMessage<&'g str>,
         raw_event: &mmolb_parsing::game::Event,
         ingest_logs: &mut IngestLogs,
     ) -> Result<Option<EventDetail<&'g str>>, SimFatalError> {
@@ -1470,6 +1472,16 @@ impl<'g> Game<'g> {
         let this_event_discriminant = event.discriminant();
 
         let detail_builder = self.detail_builder(self.state.clone(), index);
+        
+        // Some games in season 0 had the text "Game over." instead of 
+        // "GAME OVER.", causing parsing to fail. Overwrite them to be
+        // a GameOver event.
+        if let ParsedEventMessage::ParseError { event_type: EventType::GameOver, message } = event {
+            // Can't match string on str in destructuring, unfortunately
+            if message == "Game over." {
+                event = &STATIC_GAME_OVER_EVENT;
+            }
+        };
 
         let result = match self.state.phase {
             GamePhase::ExpectInningStart => game_event!(
