@@ -820,18 +820,56 @@ async fn fetch_games_list(client: &ClientWithMiddleware, config: &IngestConfig) 
 }
 
 async fn fetch_games_list_base(client: &ClientWithMiddleware, cache_mode: http_cache_reqwest::CacheMode) -> Result<Vec<CashewsGameResponse>, FetchGamesListError> {
-    // TODO Handle multiple seasons
-    // TODO Properly use pagination when it gets fixed
-    // TODO Only request games after the most recently ingested one
-    let response: CashewsGamesResponse = client
-        .get("https://freecashe.ws/api/games?season=0&count=10000000")
-        .with_extension(cache_mode)
-        .send()
-        .await?
-        .json()
-        .await?;
+    // List of list of games, to be flattened later
+    let mut games = Vec::new();
 
-    Ok(response.items)
+    // TODO Only request games after the most recently ingested one
+    for season in 0.. {
+        info!("Starting fetch for season {season}");
+        let mut has_any_games = false;
+        let mut next_response: CashewsGamesResponse = client
+            .get("https://freecashe.ws/api/games")
+            .with_extension(cache_mode)
+            .query(&[("season", season.to_string())])
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        loop {
+            if next_response.items.is_empty() {
+                info!("Exiting loop for season {season} -- no more games");
+                break;
+            }
+
+            info!("Got {} games for season {season}", next_response.items.len());
+            has_any_games = true;
+            games.push(next_response.items);
+            
+            if let Some(next_page) = next_response.next_page {
+                info!("Fetching next page for season {season}");
+                next_response = client
+                    .get("https://freecashe.ws/api/games")
+                    .with_extension(cache_mode)
+                    .query(&[("season", season.to_string())])
+                    .query(&[("page", next_page)])
+                    .send()
+                    .await?
+                    .json()
+                    .await?
+            } else {
+                info!("Exiting loop for season {season} -- no next page");
+                break;
+            }
+        }
+        
+        if !has_any_games {
+            info!("Finished game list fetch at {season} -- no games for this season");
+            break;
+        }
+    }
+
+    Ok(games.into_iter().flatten().collect())
 }
 
 // A utility to more conveniently build a Vec<IngestLog>
