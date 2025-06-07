@@ -658,27 +658,6 @@ async fn do_ingest_internal(
         }),
     };
 
-    let problem_games: HashSet<_> = [
-        // "6809a93e11f35e62dba3c113",
-        "680b4f1d11f35e62dba3ebb2", // TODO Investigate wrong automatic runner here
-        // "680b875f11f35e62dba3f100",
-        // "680bbfaa11f35e62dba3f6a6",
-        // "680f4399555fc84a67b9fe1b",
-        // "680f97f9555fc84a67ba0707",
-        // "681121ba555fc84a67ba2f9e",
-        // "681202b517b36c4c9b40d654",
-        // "6812571817b36c4c9b40dff5",
-        "6812571a17b36c4c9b40e06d", // TODO Investigate wrong automatic runner here
-        // "6813a895fd6202cbe0708df3",
-        // "6813c4b8fd6202cbe07091cd",
-        // "68165729c1a2b1f589cdd2d0",
-    ].into_iter().collect();
-    
-    // ! TEMP
-    let games = games.into_iter()
-        .filter(|game| problem_games.contains(&game.game_id as &str))
-        .collect::<Vec<_>>();
-
     info!(
         "Got games list. Starting ingest of {} total games.",
         games.len()
