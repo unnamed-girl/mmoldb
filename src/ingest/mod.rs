@@ -825,7 +825,6 @@ async fn fetch_games_list_base(client: &ClientWithMiddleware, cache_mode: http_c
 
     // TODO Only request games after the most recently ingested one
     for season in 0.. {
-        info!("Starting fetch for season {season}");
         let mut has_any_games = false;
         let mut next_response: CashewsGamesResponse = client
             .get("https://freecashe.ws/api/games")
@@ -838,16 +837,13 @@ async fn fetch_games_list_base(client: &ClientWithMiddleware, cache_mode: http_c
 
         loop {
             if next_response.items.is_empty() {
-                info!("Exiting loop for season {season} -- no more games");
                 break;
             }
 
-            info!("Got {} games for season {season}", next_response.items.len());
             has_any_games = true;
             games.push(next_response.items);
             
             if let Some(next_page) = next_response.next_page {
-                info!("Fetching next page for season {season}");
                 next_response = client
                     .get("https://freecashe.ws/api/games")
                     .with_extension(cache_mode)
@@ -858,13 +854,11 @@ async fn fetch_games_list_base(client: &ClientWithMiddleware, cache_mode: http_c
                     .json()
                     .await?
             } else {
-                info!("Exiting loop for season {season} -- no next page");
                 break;
             }
         }
         
         if !has_any_games {
-            info!("Finished game list fetch at {season} -- no games for this season");
             break;
         }
     }
