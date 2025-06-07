@@ -5,7 +5,7 @@ use crate::db::{
 use itertools::{EitherOrBoth, Itertools, PeekingNext};
 use log::warn;
 use mmolb_parsing::ParsedEventMessage;
-use mmolb_parsing::enums::{Base, BaseNameVariant, BatterStat, Distance, EventType, FairBallDestination, FairBallType, FoulType, GameOverMessage, HomeAway, NowBattingStats, Position, StrikeType, TopBottom};
+use mmolb_parsing::enums::{Base, BaseNameVariant, BatterStat, Distance, FairBallDestination, FairBallType, FoulType, GameOverMessage, HomeAway, NowBattingStats, Position, StrikeType, TopBottom};
 use mmolb_parsing::parsed_event::{
     BaseSteal, FieldingAttempt, ParsedEventMessageDiscriminants, PositionedPlayer, RunnerAdvance,
     RunnerOut, StartOfInningPitcher,
@@ -1605,14 +1605,28 @@ impl<'g> Game<'g> {
                     // This way they will just show up on base without having an event that put
                     // them there, which I think is the correct interpretation.
                     if *number > 9 && !self.is_postseason() {
-                        let stored_automatic_runner = self.active_automatic_runner()
-                            .ok_or_else(|| SimFatalError::MissingAutomaticRunner {
-                                inning_num: *number
-                            })?;
-
                         // Before a certain point the automatic runner
                         // wasn't announced in the event. You just had
-                        // to figure out who it was based on the lineup
+                        // to figure out who it was based on the
+                        // lineup. There were two events in this period
+                        // where mote timing means we predict the wrong
+                        // automatic runner. Since it's only two, and
+                        // going forward the game will announce the
+                        // automatic runner, we just hard-code fixes
+                        // for the mispredictions.
+                        // It's just a coincidence that they're both
+                        // bottoms of 10ths... or is it...
+                        let stored_automatic_runner = if self.info.game_id == "680b4f1d11f35e62dba3ebb2" && *number == 10 && *side == TopBottom::Bottom {
+                            "Victoria Persson"
+                        } else if self.info.game_id == "6812571a17b36c4c9b40e06d" && *number == 10 && *side == TopBottom::Bottom {
+                            "Hassan Espinosa"
+                        } else {
+                            self.active_automatic_runner()
+                                .ok_or_else(|| SimFatalError::MissingAutomaticRunner {
+                                    inning_num: *number
+                                })?
+                        };
+
                         let runner_name = if let Some(runner_name) = automatic_runner {
                             if *runner_name != stored_automatic_runner {
                                 ingest_logs.warn(format!(
