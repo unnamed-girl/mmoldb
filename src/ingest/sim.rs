@@ -841,6 +841,9 @@ impl<'g> Game<'g> {
             ));
             logs.into_vec()
         });
+        let away_batter_stats = away_lineup.iter()
+            .map(|player| (player.name, BatterStats::new()))
+            .collect();
 
         let home_lineup = extract_next_game_event!(
             events,
@@ -855,6 +858,9 @@ impl<'g> Game<'g> {
             ));
             logs.into_vec()
         });
+        let home_batter_stats = home_lineup.iter()
+            .map(|player| (player.name, BatterStats::new()))
+            .collect();
 
         extract_next_game_event!(
             events,
@@ -874,7 +880,7 @@ impl<'g> Game<'g> {
                     position: Position::StartingPitcher,
                 },
                 automatic_runner: None,
-                batter_stats: HashMap::new(),
+                batter_stats: away_batter_stats,
             },
             home: TeamInGame {
                 team_name: home_team_name,
@@ -884,7 +890,7 @@ impl<'g> Game<'g> {
                     position: Position::StartingPitcher,
                 },
                 automatic_runner: None,
-                batter_stats: HashMap::new(),
+                batter_stats: home_batter_stats,
             },
             state: GameState {
                 prev_event_type: ParsedEventMessageDiscriminants::PlayBall,
@@ -971,6 +977,13 @@ impl<'g> Game<'g> {
         match self.state.inning_half {
             TopBottom::Top => &mut self.away.automatic_runner,
             TopBottom::Bottom => &mut self.home.automatic_runner,
+        }
+    }
+    
+    fn batter_stats(&self, batter_name: &'g str) -> Option<&BatterStats> {
+        match self.state.inning_half {
+            TopBottom::Top => self.away.batter_stats.get(batter_name),
+            TopBottom::Bottom => self.home.batter_stats.get(batter_name),
         }
     }
 
@@ -1794,7 +1807,13 @@ impl<'g> Game<'g> {
                 (previous_event, event),
                 [ParsedEventMessageDiscriminants::NowBatting]
                 ParsedEventMessage::NowBatting { batter, stats } => {
-                    // Need to reborrow for lifetime safety
+                    if self.batter_stats(batter).is_none() {
+                        ingest_logs.info(format!(
+                            "Batter {batter} is new to this game. Assuming they were swapped in \
+                            using a mote.",
+                        ));
+                    }
+                    
                     check_now_batting_stats(&stats, self.batter_stats_mut(batter), ingest_logs);
  
                     self.state.phase = GamePhase::ExpectPitch(batter);
