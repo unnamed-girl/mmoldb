@@ -290,7 +290,7 @@ pub enum GameState {
     InningEnd,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct CashewsGameResponse {
     pub game_id: String,
     pub season: i64,
@@ -963,8 +963,7 @@ async fn ingest_game(
     let (mut game, game_creation_ingest_logs) = {
         let mut parsed_for_game = (&mut parsed).map(|(_, (parsed, _))| parsed);
 
-        let is_postseason = game_info.day > 120;
-        Game::new(&game_info.game_id, is_postseason, &mut parsed_for_game)?
+        Game::new(game_info, &mut parsed_for_game)?
     };
 
     let (detail_events, ingest_logs): (Vec<_>, Vec<_>) = parsed

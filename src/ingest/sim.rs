@@ -5,7 +5,7 @@ use crate::db::{
 use itertools::{EitherOrBoth, Itertools, PeekingNext};
 use log::warn;
 use mmolb_parsing::ParsedEventMessage;
-use mmolb_parsing::enums::{Base, BaseNameVariant, BatterStat, Distance, EventType, FairBallDestination, FairBallType, FoulType, HomeAway, NowBattingStats, Position, StrikeType, TopBottom};
+use mmolb_parsing::enums::{Base, BaseNameVariant, BatterStat, Distance, EventType, FairBallDestination, FairBallType, FoulType, GameOverMessage, HomeAway, NowBattingStats, Position, StrikeType, TopBottom};
 use mmolb_parsing::parsed_event::{
     BaseSteal, FieldingAttempt, ParsedEventMessageDiscriminants, PositionedPlayer, RunnerAdvance,
     RunnerOut, StartOfInningPitcher,
@@ -15,11 +15,9 @@ use std::fmt::{Debug, Formatter};
 use std::fmt::Write;
 use strum::IntoDiscriminant;
 use thiserror::Error;
+use crate::ingest::CashewsGameResponse;
 
-
-// This exists so I can take a reference to it later
-const STATIC_GAME_OVER_EVENT: ParsedEventMessage<&'static str> = ParsedEventMessage::GameOver;
-
+type GameInfo = CashewsGameResponse;
 
 #[derive(Debug, Error)]
 pub enum SimFatalError {
@@ -222,9 +220,7 @@ struct GameState<'g> {
 
 #[derive(Debug)]
 pub struct Game<'g> {
-    // Should never change
-    game_id: &'g str,
-    is_postseason: bool,
+    info: &'g GameInfo,
 
     // Aggregates
     away: TeamInGame<'g>,
@@ -731,8 +727,7 @@ struct RunnerUpdate<'g, 'a> {
 
 impl<'g> Game<'g> {
     pub fn new<'a, IterT>(
-        game_id: &'g str,
-        is_postseason: bool,
+        game_info: &'g GameInfo,
         events: &'a mut IterT,
     ) -> Result<(Game<'g>, Vec<Vec<IngestLog>>), SimFatalError>
     where
@@ -870,8 +865,7 @@ impl<'g> Game<'g> {
         ingest_logs.push(Vec::new());
 
         let game = Self {
-            game_id,
-            is_postseason,
+            info: game_info,
             away: TeamInGame {
                 team_name: away_team_name,
                 team_emoji: away_team_emoji,
@@ -907,6 +901,10 @@ impl<'g> Game<'g> {
             },
         };
         Ok((game, ingest_logs))
+    }
+
+    pub fn is_postseason(&self) -> bool {
+        self.info.day > 120
     }
 
     fn batting_team(&self) -> &TeamInGame<'g> {
@@ -979,7 +977,7 @@ impl<'g> Game<'g> {
             TopBottom::Bottom => &mut self.home.automatic_runner,
         }
     }
-    
+
     fn batter_stats(&self, batter_name: &'g str) -> Option<&BatterStats> {
         match self.state.inning_half {
             TopBottom::Top => self.away.batter_stats.get(batter_name),
@@ -1500,16 +1498,6 @@ impl<'g> Game<'g> {
         let this_event_discriminant = event.discriminant();
 
         let detail_builder = self.detail_builder(self.state.clone(), index);
-        
-        // Some games in season 0 had the text "Game over." instead of 
-        // "GAME OVER.", causing parsing to fail. Overwrite them to be
-        // a GameOver event.
-        if let ParsedEventMessage::ParseError { event_type: EventType::GameOver, message } = event {
-            // Can't match string on str in destructuring, unfortunately
-            if message == "Game over." {
-                event = &STATIC_GAME_OVER_EVENT;
-            }
-        };
 
         let result = match self.state.phase {
             GamePhase::ExpectInningStart => game_event!(
@@ -1525,8 +1513,7 @@ impl<'g> Game<'g> {
                 } => {
                     if *side != self.state.inning_half.flip() {
                         ingest_logs.warn(format!(
-                            "Unexpected inning side in {}: expected {:?}, but saw {side:?}",
-                            self.game_id,
+                            "Unexpected inning side: expected {:?}, but saw {side:?}",
                             self.state.inning_half.flip(),
                         ));
                     }
@@ -1540,8 +1527,7 @@ impl<'g> Game<'g> {
 
                     if *number != expected_number {
                         ingest_logs.warn(format!(
-                            "Unexpected inning number in {}: expected {}, but saw {}",
-                            self.game_id,
+                            "Unexpected inning number: expected {}, but saw {}",
                             expected_number,
                             number,
                         ));
@@ -1618,7 +1604,7 @@ impl<'g> Game<'g> {
                     // Add the automatic runner to our state without emitting a db event for it.
                     // This way they will just show up on base without having an event that put
                     // them there, which I think is the correct interpretation.
-                    if *number > 9 && !self.is_postseason {
+                    if *number > 9 && !self.is_postseason() {
                         let stored_automatic_runner = self.active_automatic_runner()
                             .ok_or_else(|| SimFatalError::MissingAutomaticRunner {
                                 inning_num: *number
@@ -1709,9 +1695,8 @@ impl<'g> Game<'g> {
                     self.check_batter(batter_name, batter, ingest_logs);
                     if self.state.count_strikes < 2 {
                         ingest_logs.warn(format!(
-                            "Unexpected strikeout in {}: expected 2 strikes in the count, but \
+                            "Unexpected strikeout: expected 2 strikes in the count, but \
                             there were {}",
-                            self.game_id,
                             self.state.count_strikes,
                         ));
                     }
@@ -1813,7 +1798,7 @@ impl<'g> Game<'g> {
                             using a mote.",
                         ));
                     }
-                    
+
                     check_now_batting_stats(&stats, self.batter_stats_mut(batter), ingest_logs);
  
                     self.state.phase = GamePhase::ExpectPitch(batter);
@@ -2076,16 +2061,14 @@ impl<'g> Game<'g> {
                 ParsedEventMessage::InningEnd { number, side } => {
                     if *number != self.state.inning_number {
                         ingest_logs.warn(format!(
-                            "Unexpected inning number in {}: expected {}, but saw {number}",
-                            self.game_id,
+                            "Unexpected inning number: expected {}, but saw {number}",
                             self.state.inning_number,
                         ));
                     }
 
                     if *side != self.state.inning_half {
                         ingest_logs.warn(format!(
-                            "Unexpected inning side in {}: expected {:?}, but saw {side:?}",
-                            self.game_id,
+                            "Unexpected inning side: expected {:?}, but saw {side:?}",
                             self.state.inning_half,
                         ));
                     }
@@ -2179,7 +2162,28 @@ impl<'g> Game<'g> {
             GamePhase::ExpectGameEnd => game_event!(
                 (previous_event, event),
                 [ParsedEventMessageDiscriminants::GameOver]
-                ParsedEventMessage::GameOver => {
+                ParsedEventMessage::GameOver { message } => {
+                    match message {
+                        GameOverMessage::GameOver => {
+                            // This only happened in season 0 days 1 and 2
+                            if (self.info.season, self.info.day) > (0, 2) {
+                                ingest_logs.warn(
+                                    "Old-style <em>Game Over.</em> message appeared after s0d2",
+                                );
+                            }
+                        }
+                        GameOverMessage::QuotedGAMEOVER => {
+                            // This has happened since season 0 day 2
+                            if (self.info.season, self.info.day) <= (0, 2) {
+                                ingest_logs.warn(
+                                    "New-style <em>\"GAME OVER.\"</em> message appeared on or \
+                                    before s0d2",
+                                );
+                            }
+
+                        }
+                    }
+
                     // Note: Not setting self.state.game_finished here,
                     // because proper baserunner accounting requires it
                     // be marked as finished before we finish
