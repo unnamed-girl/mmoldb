@@ -2263,6 +2263,11 @@ impl<'g> Game<'g> {
                     self.state.phase = GamePhase::Finished;
                     None
                 },
+                [ParsedEventMessageDiscriminants::WeatherDelivery]
+                ParsedEventMessage::WeatherDelivery { team, team_emoji, player, item_emoji, item } => {
+                    // TODO Don't ignore weather delivery
+                    None
+                }
             ),
             GamePhase::Finished => game_event!((previous_event, event)),
         }?;
