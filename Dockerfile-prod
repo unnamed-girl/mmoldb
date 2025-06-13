@@ -16,7 +16,9 @@ COPY . /code
 
 FROM setup AS builder
 
-RUN cargo build --release --offline
+# this is supposed to also have --offline but for some reason the `cargo fetch`
+# step earlier isn't grabbing mmolb_parsing properly
+RUN cargo build --release
 
 FROM debian:bookworm
 
