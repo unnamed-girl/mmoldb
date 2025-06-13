@@ -1,7 +1,7 @@
-use thiserror::Error;
 use crate::db::taxa::Taxa;
 use crate::ingest::{EventDetail, EventDetailFielder, EventDetailRunner};
 use crate::models::{DbEvent, DbFielder, DbRunner, NewBaserunner, NewEvent, NewFielder};
+use thiserror::Error;
 
 pub fn event_to_row<'e>(
     taxa: &Taxa,
@@ -118,7 +118,8 @@ pub fn row_to_event<'e>(
         outs_after: event.outs_after,
         batter_name: event.batter_name,
         pitcher_name: event.pitcher_name,
-        detail_type: taxa.event_type_from_id(event.event_type)
+        detail_type: taxa
+            .event_type_from_id(event.event_type)
             .ok_or_else(|| RowToEventError::InvalidEventTypeId(event.event_type))?,
         hit_type: event.hit_type.map(|id| taxa.hit_type_from_id(id)),
         fair_ball_type: event

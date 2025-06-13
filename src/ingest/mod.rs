@@ -1,10 +1,6 @@
 mod http;
 mod sim;
 
-pub use sim::{EventDetail, EventDetailFielder, EventDetailRunner, IngestLog};
-use std::mem;
-use std::sync::Arc;
-use std::time::Duration;
 use crate::db::{RowToEventError, Taxa};
 use crate::ingest::sim::{Game, SimFatalError};
 use crate::{Db, db};
@@ -14,18 +10,28 @@ use log::{error, info, warn};
 use mmolb_parsing::ParsedEventMessage;
 use reqwest_middleware::ClientWithMiddleware;
 use rocket::fairing::{Fairing, Info, Kind};
-use rocket::tokio::sync::{RwLock, Notify};
+use rocket::tokio::sync::{Notify, RwLock};
 use rocket::tokio::task::JoinHandle;
 use rocket::{Orbit, Rocket, Shutdown, tokio};
 use rocket_db_pools::Database;
 use rocket_db_pools::diesel::AsyncPgConnection;
 use serde::Deserialize;
+pub use sim::{EventDetail, EventDetailFielder, EventDetailRunner, IngestLog};
+use std::mem;
+use std::sync::Arc;
+use std::time::Duration;
 use thiserror::Error;
 
-fn default_ingest_period() -> u64 { 30 * 60 } // 30 minutes, expressed in seconds
+fn default_ingest_period() -> u64 {
+    30 * 60  // 30 minutes, expressed in seconds
+}
 
-fn default_retries() -> u64 { 3 }
-fn default_fetch_rate_limit() -> u64 { 10 }
+fn default_retries() -> u64 {
+    3
+}
+fn default_fetch_rate_limit() -> u64 {
+    10
+}
 
 #[derive(Deserialize)]
 // Not sure if I need this because I also depend on serde, but it
@@ -66,7 +72,7 @@ pub enum IngestSetupError {
 pub enum FetchGamesListError {
     #[error(transparent)]
     Network(#[from] reqwest_middleware::Error),
-    
+
     #[error(transparent)]
     Deserialize(#[from] reqwest::Error),
 }
@@ -88,7 +94,8 @@ pub enum IngestFatalError {
     #[error("Failed to fetch games list after {retries} retries: {err}")]
     FailedToFetchGamesList {
         retries: u64,
-        #[source] err: FetchGamesListError,
+        #[source]
+        err: FetchGamesListError,
     },
 
     #[error(transparent)]
@@ -306,7 +313,7 @@ struct CashewsGamesResponse {
 }
 
 // This function sets up the ingest task, then returns a JoinHandle for
-// the ingest task. Errors in setup are propagated to the caller. 
+// the ingest task. Errors in setup are propagated to the caller.
 // Errors in the task itself are handled within the task.
 async fn launch_ingest_task(
     pool: Db,
@@ -323,11 +330,12 @@ async fn launch_ingest_task(
             .map_err(|err| IngestSetupError::DbPoolSetupError(err))?;
 
         let taxa = Taxa::new(&mut conn).await?;
-        
+
         let previous_ingest_start_time = if config.start_ingest_every_launch {
-            None 
+            None
         } else {
-            db::latest_ingest_start_time(&mut conn).await?
+            db::latest_ingest_start_time(&mut conn)
+                .await?
                 .map(|t| Utc.from_utc_datetime(&t))
         };
 
@@ -335,7 +343,13 @@ async fn launch_ingest_task(
     };
 
     Ok(tokio::spawn(ingest_task_runner(
-        pool, taxa, client, config, task, previous_ingest_start_time, shutdown,
+        pool,
+        taxa,
+        client,
+        config,
+        task,
+        previous_ingest_start_time,
+        shutdown,
     )))
 }
 
@@ -353,9 +367,9 @@ async fn ingest_task_runner(
         let (tag, ingest_start) = if let Some(prev_start) = previous_ingest_start_time {
             let next_start = prev_start + ingest_period;
             let wait_duration_chrono = next_start - Utc::now();
-            
-            // std::time::Duration can't represent negative durations. 
-            // Conveniently, the conversion from chrono to std also 
+
+            // std::time::Duration can't represent negative durations.
+            // Conveniently, the conversion from chrono to std also
             // performs the negativity check we would be doing anyway.
             match wait_duration_chrono.to_std() {
                 Ok(wait_duration) => {
@@ -364,18 +378,24 @@ async fn ingest_task_runner(
                         _ = tokio::time::sleep(wait_duration) => {},
                         _ = &mut shutdown => { break; }
                     }
-                    
-                    (format!("after waiting {}", HumanTime::from(wait_duration_chrono)), next_start)
+
+                    let tag = format!("after waiting {}", HumanTime::from(wait_duration_chrono));
+                    (tag, next_start)
                 }
                 Err(_) => {
                     // Indicates the wait duration was negative
-                    (format!("immediately (next scheduled ingest was {})", HumanTime::from(next_start)), Utc::now())
+                    let tag = format!(
+                        "immediately (next scheduled ingest was {})",
+                        HumanTime::from(next_start)
+                    );
+                    (tag, Utc::now())
                 }
             }
         } else {
-            ("immediately (this is the first ingest)".to_string(), Utc::now())
+            let tag = "immediately (this is the first ingest)".to_string();
+            (tag, Utc::now())
         };
-        
+
         // I put this outside the `if` cluster intentionally, so the
         // compiler will error if I miss a code path
         info!("Starting ingest {tag}");
@@ -436,14 +456,25 @@ async fn ingest_task_runner(
                 }
             }
         }
-        
+
         // Get a db connection and do the ingest
         match pool.get().await {
             Ok(mut conn) => {
-                let ingest_result = do_ingest(&mut conn, &taxa, &client, &config, &mut shutdown, ingest_start).await;
+                let ingest_result = do_ingest(
+                    &mut conn,
+                    &taxa,
+                    &client,
+                    &config,
+                    &mut shutdown,
+                    ingest_start,
+                )
+                .await;
                 if let Err((err, ingest_id)) = ingest_result {
                     if let Some(ingest_id) = ingest_id {
-                        warn!("Fatal error in game ingest: {}. This ingest is aborted.", err);
+                        warn!(
+                            "Fatal error in game ingest: {}. This ingest is aborted.",
+                            err
+                        );
                         match db::mark_ingest_aborted(&mut conn, ingest_id, Utc::now()).await {
                             Ok(()) => {}
                             Err(err) => {
@@ -453,18 +484,21 @@ async fn ingest_task_runner(
                     } else {
                         warn!(
                             "Fatal error in game ingest before adding ingest to database: {}. \
-                            This ingest is aborted.", 
+                            This ingest is aborted.",
                             err,
                         );
                     }
                 }
-            },
+            }
             Err(err) => {
-                warn!("Ingest task couldn't get a database connection. Skipping ingest. Error message: {err}");
+                warn!(
+                    "Ingest task couldn't get a database connection. Skipping ingest. \
+                    Error message: {err}"
+                );
                 continue;
-            },
+            }
         };
-        
+
         // Try to transition from running to idle, with lots of
         // recovery behaviors
         {
@@ -572,7 +606,27 @@ pub enum FetchGameError {
     FailedJsonDecode(reqwest::Error, FetchGameFromCacheError),
 }
 
-async fn fetch_game_from_server(client: &ClientWithMiddleware, url: &str, cache_mode: http_cache_reqwest::CacheMode) -> Result<mmolb_parsing::Game, FetchGamePartialError> {
+impl FetchGameError {
+    fn from_partial(partial: FetchGamePartialError, cache_err: FetchGameFromCacheError) -> Self {
+        match partial {
+            FetchGamePartialError::RequestError(err) => {
+                FetchGameError::RequestError(err, cache_err)
+            }
+            FetchGamePartialError::NonSuccessStatusCode(err) => {
+                FetchGameError::NonSuccessStatusCode(err, cache_err)
+            }
+            FetchGamePartialError::FailedJsonDecode(err) => {
+                FetchGameError::FailedJsonDecode(err, cache_err)
+            }
+        }
+    }
+}
+
+async fn fetch_game_from_server(
+    client: &ClientWithMiddleware,
+    url: &str,
+    cache_mode: http_cache_reqwest::CacheMode,
+) -> Result<mmolb_parsing::Game, FetchGamePartialError> {
     client
         .get(url)
         .with_extension(cache_mode)
@@ -605,20 +659,19 @@ async fn fetch_game(
         Err(err) => err,
     };
 
-    rate_limiter.throttle(|| async {
-        info!("Fetching game from the server because of cache error: {cache_err}");
+    rate_limiter
+        .throttle(|| async {
+            info!("Fetching game from the server because of cache error: {cache_err}");
 
-        fetch_with_retries(config.cache_games_from_api, config.fetch_games_retries, async |cache_mode| {
-            fetch_game_from_server(client, &url, cache_mode).await
-        })
+            fetch_with_retries(
+                config.cache_games_from_api,
+                config.fetch_games_retries,
+                async |cache_mode| fetch_game_from_server(client, &url, cache_mode).await,
+            )
             .await
-            .map_err(|e| match e {
-                FetchGamePartialError::RequestError(err) => FetchGameError::RequestError(err, cache_err),
-                FetchGamePartialError::NonSuccessStatusCode(err)  => FetchGameError::NonSuccessStatusCode(err, cache_err),
-                FetchGamePartialError::FailedJsonDecode(err) => FetchGameError::FailedJsonDecode(err, cache_err),
-            })
-
-    }).await
+            .map_err(|e| FetchGameError::from_partial(e, cache_err))
+        })
+        .await
 }
 
 async fn do_ingest(
@@ -631,11 +684,21 @@ async fn do_ingest(
 ) -> Result<(), (IngestFatalError, Option<i64>)> {
     info!("Ingest at {ingest_start} started");
 
-    let ingest_id =  db::start_ingest(conn, ingest_start).await
-            .map_err(|e| (e.into(), None))?;
+    let ingest_id = db::start_ingest(conn, ingest_start)
+        .await
+        .map_err(|e| (e.into(), None))?;
 
-    do_ingest_internal(conn, taxa, client, config, shutdown, ingest_id, ingest_start).await
-        .map_err(|e| (e.into(), Some(ingest_id)))
+    do_ingest_internal(
+        conn,
+        taxa,
+        client,
+        config,
+        shutdown,
+        ingest_id,
+        ingest_start,
+    )
+    .await
+    .map_err(|e| (e.into(), Some(ingest_id)))
 }
 async fn do_ingest_internal(
     conn: &mut AsyncPgConnection,
@@ -647,13 +710,15 @@ async fn do_ingest_internal(
     ingest_start: DateTime<Utc>,
 ) -> Result<(), IngestFatalError> {
     info!("Recorded ingest start in database. Requesting games list...");
-    
+
     let games = match fetch_games_list(client, config).await {
         Ok(value) => value,
-        Err(err) => return Err(IngestFatalError::FailedToFetchGamesList {
-            retries: config.fetch_game_list_retries,
-            err,
-        }),
+        Err(err) => {
+            return Err(IngestFatalError::FailedToFetchGamesList {
+                retries: config.fetch_game_list_retries,
+                err,
+            });
+        }
     };
 
     info!(
@@ -677,12 +742,10 @@ async fn do_ingest_internal(
 
         let check_already_ingested_start = Utc::now();
         let already_ingested = if !config.reimport_all_games {
-            db::has_game(conn, &game_info.game_id)
-                .await?
+            db::has_game(conn, &game_info.game_id).await?
         } else {
             info!("Deleting {} if it exists", game_info.game_id);
-            let num_deleted = db::delete_game(conn, &game_info.game_id)
-                .await?;
+            let num_deleted = db::delete_game(conn, &game_info.game_id).await?;
 
             if num_deleted > 0 {
                 info!(
@@ -757,11 +820,15 @@ async fn do_ingest_internal(
     Ok(())
 }
 
-async fn fetch_with_retries<R, E, Fut, InnerFn>(cache: bool, max_retries: u64, mut inner_fn: InnerFn) -> Result<R, E>
+async fn fetch_with_retries<R, E, Fut, InnerFn>(
+    cache: bool,
+    max_retries: u64,
+    mut inner_fn: InnerFn,
+) -> Result<R, E>
 where
     E: std::fmt::Display,
-    Fut: Future<Output=Result<R, E>>,
-    InnerFn: FnMut(http_cache_reqwest::CacheMode) -> Fut
+    Fut: Future<Output = Result<R, E>>,
+    InnerFn: FnMut(http_cache_reqwest::CacheMode) -> Fut,
 {
     let cache_mode = if cache {
         // ForceCache means to ignore staleness, but still go to the
@@ -775,11 +842,14 @@ where
     let mut tries = 0;
     Ok(loop {
         match inner_fn(cache_mode).await {
-            Ok(r) => { break r }
+            Ok(r) => break r,
             Err(err) if tries < max_retries => {
                 tries += 1;
-                let wait_time = std::time::Duration::from_millis(100 * tries * tries);
-                warn!("Retrying request after {}s due to error: {err}", wait_time.as_secs_f64());
+                let wait_time = Duration::from_millis(100 * tries * tries);
+                warn!(
+                    "Retrying request after {}s due to error: {err}",
+                    wait_time.as_secs_f64()
+                );
                 tokio::time::sleep(wait_time).await;
             }
             Err(err) => {
@@ -789,7 +859,10 @@ where
     })
 }
 
-async fn fetch_games_list(client: &ClientWithMiddleware, config: &IngestConfig) -> Result<Vec<CashewsGameResponse>, FetchGamesListError> {
+async fn fetch_games_list(
+    client: &ClientWithMiddleware,
+    config: &IngestConfig,
+) -> Result<Vec<CashewsGameResponse>, FetchGamesListError> {
     let cache_mode = if config.cache_game_list_from_api {
         // ForceCache means to ignore staleness, but still go to the
         // network if it's not found in the cache
@@ -802,11 +875,14 @@ async fn fetch_games_list(client: &ClientWithMiddleware, config: &IngestConfig) 
     let mut tries = 0;
     Ok(loop {
         match fetch_games_list_base(client, cache_mode).await {
-            Ok(r) => { break r }
+            Ok(r) => break r,
             Err(err) if tries < config.fetch_game_list_retries => {
                 tries += 1;
                 let wait_time = Duration::from_millis(100 * tries * tries);
-                warn!("Error fetching games; retrying in {}s. Error: {err}", wait_time.as_secs_f64());
+                warn!(
+                    "Error fetching games; retrying in {}s. Error: {err}",
+                    wait_time.as_secs_f64()
+                );
                 warn!("Error debug: {err:?}");
                 tokio::time::sleep(wait_time).await;
             }
@@ -817,7 +893,10 @@ async fn fetch_games_list(client: &ClientWithMiddleware, config: &IngestConfig) 
     })
 }
 
-async fn fetch_games_list_base(client: &ClientWithMiddleware, cache_mode: http_cache_reqwest::CacheMode) -> Result<Vec<CashewsGameResponse>, FetchGamesListError> {
+async fn fetch_games_list_base(
+    client: &ClientWithMiddleware,
+    cache_mode: http_cache_reqwest::CacheMode,
+) -> Result<Vec<CashewsGameResponse>, FetchGamesListError> {
     // List of list of games, to be flattened later
     let mut games = Vec::new();
 
@@ -840,7 +919,7 @@ async fn fetch_games_list_base(client: &ClientWithMiddleware, cache_mode: http_c
 
             has_any_games = true;
             games.push(next_response.items);
-            
+
             if let Some(next_page) = next_response.next_page {
                 next_response = client
                     .get("https://freecashe.ws/api/games")
@@ -855,7 +934,7 @@ async fn fetch_games_list_base(client: &ClientWithMiddleware, cache_mode: http_c
                 break;
             }
         }
-        
+
         if !has_any_games {
             break;
         }
@@ -986,8 +1065,7 @@ async fn ingest_game(
                     "Round-trip of raw event through ParsedEvent produced a mismatch:\n\
                      Original: <pre>{:?}</pre>\n\
                      Through EventDetail: <pre>{:?}</pre>",
-                    raw.message,
-                    unparsed,
+                    raw.message, unparsed,
                 ));
             }
 
@@ -1028,8 +1106,7 @@ async fn ingest_game(
             game_creation_ingest_logs.into_iter().chain(ingest_logs),
             &detail_events,
         )
-        .await
-        ?;
+        .await?;
         let db_insert_duration = (Utc::now() - db_insert_start).as_seconds_f64();
 
         // We can rebuild them
@@ -1130,12 +1207,9 @@ fn log_if_error<'g, E: std::fmt::Display>(
     log_prefix: &str,
 ) -> Option<ParsedEventMessage<&'g str>> {
     match to_parsed_result {
-        Ok(to_contact_result) => { Some(to_contact_result) }
+        Ok(to_contact_result) => Some(to_contact_result),
         Err(err) => {
-            ingest_logs.error(
-                index,
-                format!("{log_prefix}: {err}"),
-            );
+            ingest_logs.error(index, format!("{log_prefix}: {err}"));
             None
         }
     }
@@ -1157,7 +1231,7 @@ fn check_round_trip(
             index,
             original_detail.to_parsed_contact(),
             "Attempt to round-trip contact event through ParsedEventMessage -> EventDetail -> \
-            ParsedEventMessage failed at the EventDetail -> ParsedEventMessage step with error"
+            ParsedEventMessage failed at the EventDetail -> ParsedEventMessage step with error",
         )
     } else {
         log_if_error(
@@ -1165,7 +1239,7 @@ fn check_round_trip(
             index,
             original_detail.to_parsed(),
             "Attempt to round-trip event through ParsedEventMessage -> EventDetail -> \
-            ParsedEventMessage failed at the EventDetail -> ParsedEventMessage step with error"
+            ParsedEventMessage failed at the EventDetail -> ParsedEventMessage step with error",
         )
     }) else {
         return;
@@ -1178,14 +1252,19 @@ fn check_round_trip(
                 "Round-trip of {} through EventDetail produced a mismatch:\n\
                  Original: <pre>{:?}</pre>\
                  Through EventDetail: <pre>{:?}</pre>",
-                if is_contact_event { "contact event" } else { "event" }, parsed,
+                if is_contact_event {
+                    "contact event"
+                } else {
+                    "event"
+                },
+                parsed,
                 parsed_through_detail,
             ),
         );
     }
 
     let reconstructed_detail = match reconstructed_detail {
-        Ok(reconstructed_detail) => { reconstructed_detail }
+        Ok(reconstructed_detail) => reconstructed_detail,
         Err(err) => {
             ingest_logs.error(
                 index,
@@ -1193,7 +1272,11 @@ fn check_round_trip(
                     "Attempt to round-trip {} ParsedEventMessage -> EventDetail -> database \
                     -> EventDetail -> ParsedEventMessage failed at the database -> EventDetail \
                     step with error: {err}",
-                    if is_contact_event { "contact event" } else { "event" }
+                    if is_contact_event {
+                        "contact event"
+                    } else {
+                        "event"
+                    }
                 ),
             );
             return;
@@ -1216,12 +1299,12 @@ fn check_round_trip(
             reconstructed_detail.to_parsed(),
             "Attempt to round-trip event through ParsedEventMessage -> EventDetail -> database \
             -> EventDetail -> ParsedEventMessage failed at the EventDetail -> ParsedEventMessage \
-            step with error"
+            step with error",
         )
     }) else {
         return;
     };
-    
+
     if parsed != &parsed_through_db {
         ingest_logs.error(
             index,
@@ -1229,7 +1312,11 @@ fn check_round_trip(
                 "Round-trip of {} through database produced a mismatch:\n\
                  Original: <pre>{:?}</pre>\n\
                  Through database: <pre>{:?}</pre>",
-                if is_contact_event { "contact event" } else { "event" }, 
+                if is_contact_event {
+                    "contact event"
+                } else {
+                    "event"
+                },
                 parsed,
                 parsed_through_db,
             ),

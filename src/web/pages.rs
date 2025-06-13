@@ -1,4 +1,3 @@
-
 use rocket::{State, get, uri};
 use rocket_db_pools::Connection;
 use rocket_db_pools::diesel::AsyncConnection;
@@ -7,9 +6,9 @@ use rocket_dyn_templates::{Template, context};
 use serde::Serialize;
 
 use crate::ingest::{IngestStatus, IngestTask};
-use crate::{Db, db};
 use crate::web::error::AppError;
 use crate::web::utility_contexts::{FormattedDateContext, GameContext};
+use crate::{Db, db};
 
 #[get("/game/<game_id>")]
 pub async fn game_page(game_id: i64, mut db: Connection<Db>) -> Result<Template, AppError> {
@@ -77,10 +76,13 @@ pub async fn game_page(game_id: i64, mut db: Connection<Db>) -> Result<Template,
             .collect(),
     };
 
-    Ok(Template::render("game", context! {
-        index_url: uri!(index_page()),
-        game: game,
-    }))
+    Ok(Template::render(
+        "game",
+        context! {
+            index_url: uri!(index_page()),
+            game: game,
+        },
+    ))
 }
 
 #[get("/ingest/<ingest_id>")]
@@ -103,54 +105,67 @@ pub async fn ingest_page(ingest_id: i64, mut db: Connection<Db>) -> Result<Templ
         games: GameContext::from_db(games, |game_id| uri!(game_page(game_id)).to_string()),
     };
 
-    Ok(Template::render("ingest", context! {
-        index_url: uri!(index_page()),
-        ingest: ingest,
-    }))
+    Ok(Template::render(
+        "ingest",
+        context! {
+            index_url: uri!(index_page()),
+            ingest: ingest,
+        },
+    ))
 }
 
 #[get("/games")]
 pub async fn games_page(mut db: Connection<Db>) -> Result<Template, AppError> {
-    let games = db.transaction(|conn| async move {
-        db::all_games(conn).await
-    }.scope_boxed()).await?;
+    let games = db
+        .transaction(|conn| async move { db::all_games(conn).await }.scope_boxed())
+        .await?;
 
-    Ok(Template::render("games", context! {
-        index_url: uri!(index_page()),
-        subhead: "Games",
-        games: GameContext::from_db(games, |game_id| uri!(game_page(game_id)).to_string()),
-    }))
+    Ok(Template::render(
+        "games",
+        context! {
+            index_url: uri!(index_page()),
+            subhead: "Games",
+            games: GameContext::from_db(games, |game_id| uri!(game_page(game_id)).to_string()),
+        },
+    ))
 }
 
 #[get("/games-with-issues")]
 pub async fn games_with_issues_page(mut db: Connection<Db>) -> Result<Template, AppError> {
     // TODO Get rid of this query + filter and replace it with a query
     //   that only returns what I need
-    let games = db.transaction(|conn| async move {
-        db::all_games(conn).await
-    }.scope_boxed()).await?;
+    let games = db
+        .transaction(|conn| async move { db::all_games(conn).await }.scope_boxed())
+        .await?;
 
-    let games = games.into_iter()
+    let games = games
+        .into_iter()
         .filter(|(_, num_warnings, num_errors, num_critical)| {
             *num_warnings != 0 || *num_errors != 0 || *num_critical != 0
         });
 
-    Ok(Template::render("games", context! {
-        index_url: uri!(index_page()),
-        subhead: "Games with issues",
-        games: GameContext::from_db(games, |game_id| uri!(game_page(game_id)).to_string()),
-    }))
+    Ok(Template::render(
+        "games",
+        context! {
+            index_url: uri!(index_page()),
+            subhead: "Games with issues",
+            games: GameContext::from_db(games, |game_id| uri!(game_page(game_id)).to_string()),
+        },
+    ))
 }
 
 #[get("/debug-no-games")]
 pub async fn debug_no_games_page() -> Result<Template, AppError> {
     let games = Vec::new();
 
-    Ok(Template::render("games", context! {
-        index_url: uri!(index_page()),
-        subhead: "[debug] No games",
-        games: GameContext::from_db(games, |game_id| uri!(game_page(game_id)).to_string()),
-    }))
+    Ok(Template::render(
+        "games",
+        context! {
+            index_url: uri!(index_page()),
+            subhead: "[debug] No games",
+            games: GameContext::from_db(games, |game_id| uri!(game_page(game_id)).to_string()),
+        },
+    ))
 }
 
 #[get("/")]
@@ -211,7 +226,12 @@ pub async fn index_page(
 
                 let num_ingests = db::ingest_count(conn).await?;
                 let latest_ingests = db::latest_ingests(conn).await?;
-                Ok((num_games, num_games_with_issues, num_ingests, latest_ingests))
+                Ok((
+                    num_games,
+                    num_games_with_issues,
+                    num_ingests,
+                    latest_ingests,
+                ))
             }
             .scope_boxed()
         })

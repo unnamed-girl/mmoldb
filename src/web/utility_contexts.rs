@@ -1,7 +1,7 @@
+use crate::models::DbGame;
 use chrono::{NaiveDateTime, TimeZone, Utc};
 use chrono_humanize::HumanTime;
 use rocket::serde::Serialize;
-use crate::models::DbGame;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FormattedDateContext {
@@ -36,7 +36,10 @@ pub struct GameContext {
 }
 
 impl GameContext {
-    pub fn from_db(games: impl IntoIterator<Item = (DbGame, i64, i64, i64)>, uri_builder: impl Fn(i64) -> String) -> Vec<Self> {
+    pub fn from_db(
+        games: impl IntoIterator<Item = (DbGame, i64, i64, i64)>,
+        uri_builder: impl Fn(i64) -> String,
+    ) -> Vec<Self> {
         games
             .into_iter()
             .map(

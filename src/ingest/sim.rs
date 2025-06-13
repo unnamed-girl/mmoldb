@@ -2,20 +2,23 @@ use crate::db::{
     TaxaBase, TaxaBaseDescriptionFormat, TaxaBaseWithDescriptionFormat, TaxaEventType,
     TaxaFairBallType, TaxaFieldingErrorType, TaxaHitType, TaxaPosition,
 };
+use crate::ingest::CashewsGameResponse;
 use itertools::{EitherOrBoth, Itertools, PeekingNext};
 use log::warn;
 use mmolb_parsing::ParsedEventMessage;
-use mmolb_parsing::enums::{Base, BaseNameVariant, BatterStat, Distance, FairBallDestination, FairBallType, FoulType, GameOverMessage, HomeAway, NowBattingStats, Position, StrikeType, TopBottom};
+use mmolb_parsing::enums::{
+    Base, BaseNameVariant, BatterStat, Distance, FairBallDestination, FairBallType, FoulType,
+    GameOverMessage, HomeAway, NowBattingStats, Position, StrikeType, TopBottom,
+};
 use mmolb_parsing::parsed_event::{
     BaseSteal, FieldingAttempt, ParsedEventMessageDiscriminants, PositionedPlayer, RunnerAdvance,
     RunnerOut, StartOfInningPitcher,
 };
 use std::collections::{HashMap, VecDeque};
-use std::fmt::{Debug, Formatter};
 use std::fmt::Write;
+use std::fmt::{Debug, Formatter};
 use strum::IntoDiscriminant;
 use thiserror::Error;
-use crate::ingest::CashewsGameResponse;
 
 type GameInfo = CashewsGameResponse;
 
@@ -38,9 +41,7 @@ pub enum SimFatalError {
     },
 
     #[error("Expected the automatic runner to be set by inning {inning_num}")]
-    MissingAutomaticRunner {
-        inning_num: u8,
-    },
+    MissingAutomaticRunner { inning_num: u8 },
 }
 
 #[derive(Debug, Clone)]
@@ -439,12 +440,15 @@ impl<'g> EventDetailBuilder<'g> {
             warn!("EventDetailBuilder overwrote existing fielders");
         }
 
-        self.fielders = fielders.into_iter().map(|f| EventDetailFielder {
-            name: f.name,
-            position: f.position.into(),
-            is_perfect_catch: None,
-        }).collect();
-        
+        self.fielders = fielders
+            .into_iter()
+            .map(|f| EventDetailFielder {
+                name: f.name,
+                position: f.position.into(),
+                is_perfect_catch: None,
+            })
+            .collect();
+
         self
     }
 
@@ -836,7 +840,8 @@ impl<'g> Game<'g> {
             ));
             logs.into_vec()
         });
-        let away_batter_stats = away_lineup.iter()
+        let away_batter_stats = away_lineup
+            .iter()
             .map(|player| (player.name, BatterStats::new()))
             .collect();
 
@@ -853,7 +858,8 @@ impl<'g> Game<'g> {
             ));
             logs.into_vec()
         });
-        let home_batter_stats = home_lineup.iter()
+        let home_batter_stats = home_lineup
+            .iter()
             .map(|player| (player.name, BatterStats::new()))
             .collect();
 
@@ -994,7 +1000,12 @@ impl<'g> Game<'g> {
         entry.or_default()
     }
 
-    fn check_batter(&self, expected_batter_name: &str, observed_batter_name: &str, ingest_logs: &mut IngestLogs) {
+    fn check_batter(
+        &self,
+        expected_batter_name: &str,
+        observed_batter_name: &str,
+        ingest_logs: &mut IngestLogs,
+    ) {
         if expected_batter_name != observed_batter_name {
             ingest_logs.warn(format!(
                 "Unexpected batter name: Expected {}, but saw {}",
@@ -1259,8 +1270,7 @@ impl<'g> Game<'g> {
                 // ever gets added, but it turned out it has to be that
                 // restrictive to properly handle the case when there's
                 // multiple same-named baserunners on the basepaths.
-                s.runner == runner.runner_name
-                    && s.base == runner.base.next_base().into()
+                s.runner == runner.runner_name && s.base == runner.base.next_base().into()
             }) {
                 return if steal.caught {
                     // Caught out: Add an out and remove the runner
@@ -1297,7 +1307,10 @@ impl<'g> Game<'g> {
                 // For an advance, the only thing necessary is to
                 // update the runner's base and the last occupied
                 // base, then retain the runner
-                ingest_logs.debug(format!("{} advanced from {} to {}", runner.runner_name, runner.base, advance.base));
+                ingest_logs.debug(format!(
+                    "{} advanced from {} to {}",
+                    runner.runner_name, runner.base, advance.base
+                ));
                 runner.base = advance.base.into();
                 last_occupied_base = Some(runner.base);
                 return true;
@@ -1334,7 +1347,10 @@ impl<'g> Game<'g> {
 
             // If none of the above applies, the runner must not have moved
             last_occupied_base = Some(runner.base);
-            ingest_logs.debug(format!("{} didn't move from {}", runner.runner_name, runner.base));
+            ingest_logs.debug(format!(
+                "{} didn't move from {}",
+                runner.runner_name, runner.base
+            ));
             true
         });
 
@@ -1639,7 +1655,7 @@ impl<'g> Game<'g> {
                         } else {
                             stored_automatic_runner
                         };
-                        
+
                         ingest_logs.debug(format!("Adding automatic runner {runner_name}"));
 
                         self.state.runners_on.push_back(RunnerOn {
@@ -1718,18 +1734,18 @@ impl<'g> Game<'g> {
                     self.update_runners_steals_only(steals, ingest_logs);
                     self.add_out();
                     self.finish_pa(batter_name);
-                    
+
                     let event_type = match (foul, strike) {
                         (None, StrikeType::Looking) => { TaxaEventType::CalledStrike }
                         (None, StrikeType::Swinging) => { TaxaEventType::SwingingStrike }
-                        (Some(FoulType::Ball), _) => { 
+                        (Some(FoulType::Ball), _) => {
                             ingest_logs.error(
                                 "Can't strike out on a foul ball. \
                                 Recording this as a foul tip instead.",
                             );
                             TaxaEventType::FoulTip
                         }
-                        (Some(FoulType::Tip), StrikeType::Looking) => { 
+                        (Some(FoulType::Tip), StrikeType::Looking) => {
                             ingest_logs.warn("Can't have a foul tip on a called strike.");
                             TaxaEventType::FoulTip
                         }
@@ -1814,7 +1830,7 @@ impl<'g> Game<'g> {
                     }
 
                     check_now_batting_stats(&stats, self.batter_stats_mut(batter), ingest_logs);
- 
+
                     self.state.phase = GamePhase::ExpectPitch(batter);
                     None
                 },
@@ -1826,14 +1842,14 @@ impl<'g> Game<'g> {
                              self.defending_team().team_name,
                          ));
                     }
- 
+
                     if self.defending_team().team_emoji != *emoji {
                          ingest_logs.warn(format!(
                              "Team emoji in MoundVisit doesn't match: Expected {}, but saw {emoji}",
                              self.defending_team().team_emoji,
                          ));
                     }
- 
+
                     self.state.phase = GamePhase::ExpectMoundVisitOutcome;
                     None
                 },
@@ -2387,8 +2403,8 @@ impl std::fmt::Display for MaybeBase {
 impl From<Option<TaxaBase>> for MaybeBase {
     fn from(value: Option<TaxaBase>) -> Self {
         match value {
-            None => { MaybeBase::NoBase }
-            Some(b) => { MaybeBase::Base(b) }
+            None => MaybeBase::NoBase,
+            Some(b) => MaybeBase::Base(b),
         }
     }
 }
@@ -2411,30 +2427,32 @@ pub enum ToParsedError<'g> {
     #[error(transparent)]
     // Note: Can't use #[from] because of the lifetime
     MissingBaseDescriptionFormat(MissingBaseDescriptionFormat<'g>),
-    
+
     #[error("{event_type} must have a fair_ball_type")]
     MissingFairBallType { event_type: TaxaEventType },
-    
+
     #[error("{event_type} must have a fair_ball_direction")]
     MissingFairBallDirection { event_type: TaxaEventType },
-    
-    #[error("{event_type} must have a valid fair_ball_direction, but it had the non-fair-direction position {invalid_direction}")]
-    InvalidFairBallDirection { 
+
+    #[error(
+        "{event_type} must have a valid fair_ball_direction, but it had the non-fair-direction position {invalid_direction}"
+    )]
+    InvalidFairBallDirection {
         event_type: TaxaEventType,
         invalid_direction: TaxaPosition,
     },
 
     #[error("{event_type} must have a fielding_error_type")]
     MissingFieldingErrorType { event_type: TaxaEventType },
-    
+
     #[error("{event_type} must have a hit_type")]
     MissingHitType { event_type: TaxaEventType },
-    
+
     #[error("{event_type} must have Some described_as_sacrifice")]
     MissingDescribedAsSacrifice { event_type: TaxaEventType },
-    
+
     #[error("{event_type} with {runners_out} runners out must have Some described_as_sacrifice")]
-    MissingDescribedAsSacrificeForRunnersOut { 
+    MissingDescribedAsSacrificeForRunnersOut {
         event_type: TaxaEventType,
         runners_out: usize,
     },
@@ -2460,23 +2478,21 @@ pub enum ToParsedError<'g> {
     },
 
     #[error("{event_type} fielder(s) must have a Some() perfect catch")]
-    MissingPerfectCatch {
-        event_type: TaxaEventType,
-    }
+    MissingPerfectCatch { event_type: TaxaEventType },
 }
 
 #[derive(Debug, Error)]
 pub enum ToParsedContactError {
     #[error("Event with a fair_ball_index must have a fair_ball_type")]
     MissingFairBallType,
-    
+
     #[error("Event with a fair_ball_index must have a fair_ball_direction")]
     MissingFairBallDirection,
-    
-    #[error("Event with a fair_ball_index must have a valid fair_ball_direction, but it had the non-fair-direction position {invalid_direction}")]
-    InvalidFairBallDirection { 
-        invalid_direction: TaxaPosition,
-    },
+
+    #[error(
+        "Event with a fair_ball_index must have a valid fair_ball_direction, but it had the non-fair-direction position {invalid_direction}"
+    )]
+    InvalidFairBallDirection { invalid_direction: TaxaPosition },
 }
 
 impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
@@ -2558,17 +2574,20 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
 
     // A runner out is any runner where the final base is None
     // Every such runner must have a base_before of Some
-    fn runners_out_iter(&self) -> impl Iterator<Item = Result<(&str, BaseNameVariant), MissingBaseDescriptionFormat>> {
+    fn runners_out_iter(
+        &self,
+    ) -> impl Iterator<Item = Result<(&str, BaseNameVariant), MissingBaseDescriptionFormat>> {
         self.baserunners
             .iter()
             .filter(|runner| runner.is_out)
             .map(|runner| {
-                let base_format = runner.base_description_format
-                    .ok_or_else(|| MissingBaseDescriptionFormat::Out {
+                let base_format = runner.base_description_format.ok_or_else(|| {
+                    MissingBaseDescriptionFormat::Out {
                         runner_name: runner.name.as_ref(),
                         prev_base: runner.base_before.into(),
                         out_at_base: runner.base_after,
-                    })?;
+                    }
+                })?;
 
                 Ok((
                     runner.name.as_ref(),
@@ -2583,52 +2602,59 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
 
     pub fn to_parsed(&self) -> Result<ParsedEventMessage<&str>, ToParsedError> {
         let exactly_one_runner_out = || {
-            let runners_out = self.runners_out()
+            let runners_out = self
+                .runners_out()
                 .map_err(ToParsedError::MissingBaseDescriptionFormat)?;
-            
+
             match <[_; 1]>::try_from(runners_out) {
                 Ok([runner]) => Ok(runner),
                 Err(runners_out) => Err(ToParsedError::WrongNumberOfRunnersOut {
                     event_type: self.detail_type,
                     required: 1,
                     actual: runners_out.len(),
-                })
+                }),
             }
         };
 
-        let exactly_one_fielder = || {
-            match <[_; 1]>::try_from(self.fielders()) {
-                Ok([fielder]) => Ok(fielder),
-                Err(fielders) => Err(ToParsedError::WrongNumberOfFielders {
-                    event_type: self.detail_type,
-                    required: 1,
-                    actual: fielders.len(),
-                })
-            }
+        let exactly_one_fielder = || match <[_; 1]>::try_from(self.fielders()) {
+            Ok([fielder]) => Ok(fielder),
+            Err(fielders) => Err(ToParsedError::WrongNumberOfFielders {
+                event_type: self.detail_type,
+                required: 1,
+                actual: fielders.len(),
+            }),
         };
-        
+
         let mandatory_fair_ball_type = || {
             Ok(self
                 .fair_ball_type
-                .ok_or_else(|| ToParsedError::MissingFairBallType { event_type: self.detail_type })?
+                .ok_or_else(|| ToParsedError::MissingFairBallType {
+                    event_type: self.detail_type,
+                })?
                 .into())
         };
-        
+
         let mandatory_fair_ball_direction = || {
             Ok(self
                 .fair_ball_direction
-                .ok_or_else(|| ToParsedError::MissingFairBallDirection { event_type: self.detail_type })?
-                .try_into()
-                .map_err(|invalid_direction| ToParsedError::InvalidFairBallDirection { 
+                .ok_or_else(|| ToParsedError::MissingFairBallDirection {
                     event_type: self.detail_type,
-                    invalid_direction
-                })?)
+                })?
+                .try_into()
+                .map_err(
+                    |invalid_direction| ToParsedError::InvalidFairBallDirection {
+                        event_type: self.detail_type,
+                        invalid_direction,
+                    },
+                )?)
         };
 
         let mandatory_fielding_error_type = || {
             Ok(self
                 .fielding_error_type
-                .ok_or_else(|| ToParsedError::MissingFieldingErrorType { event_type: self.detail_type })?
+                .ok_or_else(|| ToParsedError::MissingFieldingErrorType {
+                    event_type: self.detail_type,
+                })?
                 .into())
         };
 
@@ -2696,25 +2722,23 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                 steals: self.steals(),
                 count: self.count(),
             },
-            TaxaEventType::Hit => {
-                ParsedEventMessage::BatterToBase {
-                    batter: self.batter_name.as_ref(),
-                    distance: match self.hit_type {
-                        None => {
-                            return Err(ToParsedError::MissingHitType {
-                                event_type: self.detail_type,
-                            })
-                        }
-                        Some(TaxaHitType::Single) => Distance::Single,
-                        Some(TaxaHitType::Double) => Distance::Double,
-                        Some(TaxaHitType::Triple) => Distance::Triple,
-                    },
-                    fair_ball_type: mandatory_fair_ball_type()?,
-                    fielder: exactly_one_fielder()?,
-                    scores: self.scores(),
-                    advances: self.advances(false),
-                }
-            }
+            TaxaEventType::Hit => ParsedEventMessage::BatterToBase {
+                batter: self.batter_name.as_ref(),
+                distance: match self.hit_type {
+                    None => {
+                        return Err(ToParsedError::MissingHitType {
+                            event_type: self.detail_type,
+                        });
+                    }
+                    Some(TaxaHitType::Single) => Distance::Single,
+                    Some(TaxaHitType::Double) => Distance::Double,
+                    Some(TaxaHitType::Triple) => Distance::Triple,
+                },
+                fair_ball_type: mandatory_fair_ball_type()?,
+                fielder: exactly_one_fielder()?,
+                scores: self.scores(),
+                advances: self.advances(false),
+            },
             TaxaEventType::ForceOut => {
                 let (runner_out_name, runner_out_at_base) = exactly_one_runner_out()?;
 
@@ -2733,23 +2757,27 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
             TaxaEventType::CaughtOut => {
                 let scores = self.scores();
                 let fair_ball_type = mandatory_fair_ball_type()?;
-                let sacrifice = self.described_as_sacrifice
-                    .ok_or_else(|| ToParsedError::MissingDescribedAsSacrifice {
+                let sacrifice = self.described_as_sacrifice.ok_or_else(|| {
+                    ToParsedError::MissingDescribedAsSacrifice {
                         event_type: self.detail_type,
-                    })?;
+                    }
+                })?;
 
-                let fielder = self.fielders.iter().exactly_one()
-                    .map_err(|e| ToParsedError::WrongNumberOfFielders {
+                let fielder = self.fielders.iter().exactly_one().map_err(|e| {
+                    ToParsedError::WrongNumberOfFielders {
                         event_type: self.detail_type,
                         required: 1,
                         actual: e.len(),
-                    })?;
+                    }
+                })?;
 
                 let caught_by = positioned_player_as_ref(&fielder);
-                let perfect = fielder.is_perfect_catch
-                    .ok_or_else(|| ToParsedError::MissingPerfectCatch {
-                        event_type: self.detail_type,
-                    })?;
+                let perfect =
+                    fielder
+                        .is_perfect_catch
+                        .ok_or_else(|| ToParsedError::MissingPerfectCatch {
+                            event_type: self.detail_type,
+                        })?;
 
                 ParsedEventMessage::CaughtOut {
                     batter: self.batter_name.as_ref(),
@@ -2783,15 +2811,13 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                     grand_slam,
                 }
             }
-            TaxaEventType::FieldingError => {
-                ParsedEventMessage::ReachOnFieldingError {
-                    batter: self.batter_name.as_ref(),
-                    fielder: exactly_one_fielder()?,
-                    error: mandatory_fielding_error_type()?,
-                    scores: self.scores(),
-                    advances: self.advances(false),
-                }
-            }
+            TaxaEventType::FieldingError => ParsedEventMessage::ReachOnFieldingError {
+                batter: self.batter_name.as_ref(),
+                fielder: exactly_one_fielder()?,
+                error: mandatory_fielding_error_type()?,
+                scores: self.scores(),
+                advances: self.advances(false),
+            },
             TaxaEventType::HitByPitch => ParsedEventMessage::HitByPitch {
                 batter: self.batter_name.as_ref(),
                 scores: self.scores(),
@@ -2799,7 +2825,9 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
             },
             TaxaEventType::DoublePlay => {
                 let scores = self.scores();
-                let runners_out = self.runners_out().map_err(ToParsedError::MissingBaseDescriptionFormat)?;
+                let runners_out = self
+                    .runners_out()
+                    .map_err(ToParsedError::MissingBaseDescriptionFormat)?;
                 match &runners_out.as_slice() {
                     [(name, at_base)] => ParsedEventMessage::DoublePlayCaught {
                         batter: self.batter_name.as_ref(),
@@ -2813,11 +2841,12 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                         advances: self.advances(false),
                     },
                     [(name_one, base_one), (name_two, base_two)] => {
-                        let sacrifice = self.described_as_sacrifice
-                            .ok_or_else(|| ToParsedError::MissingDescribedAsSacrificeForRunnersOut {
+                        let sacrifice = self.described_as_sacrifice.ok_or_else(|| {
+                            ToParsedError::MissingDescribedAsSacrificeForRunnersOut {
                                 event_type: self.detail_type,
                                 runners_out: 2,
-                            })?;
+                            }
+                        })?;
 
                         ParsedEventMessage::DoublePlayGrounded {
                             batter: self.batter_name.as_ref(),
@@ -2835,10 +2864,12 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                             sacrifice,
                         }
                     }
-                    _ => return Err(ToParsedError::WrongNumberOfRunnersOutInDoublePlay {
-                        event_type: self.detail_type,
-                        actual: runners_out.len(),
-                    }),
+                    _ => {
+                        return Err(ToParsedError::WrongNumberOfRunnersOutInDoublePlay {
+                            event_type: self.detail_type,
+                            actual: runners_out.len(),
+                        });
+                    }
                 }
             }
             TaxaEventType::FieldersChoice => {
@@ -2891,15 +2922,16 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                 .into())
         };
 
-        let mandatory_fair_ball_direction = || {
-            Ok(self
-                .fair_ball_direction
-                .ok_or_else(|| ToParsedContactError::MissingFairBallDirection)?
-                .try_into()
-                .map_err(|invalid_direction| ToParsedContactError::InvalidFairBallDirection {
-                    invalid_direction
-                })?)
-        };
+        let mandatory_fair_ball_direction =
+            || {
+                Ok(self
+                    .fair_ball_direction
+                    .ok_or_else(|| ToParsedContactError::MissingFairBallDirection)?
+                    .try_into()
+                    .map_err(|invalid_direction| {
+                        ToParsedContactError::InvalidFairBallDirection { invalid_direction }
+                    })?)
+            };
 
         // We're going to construct a FairBall for this no matter
         // whether we had the type.

@@ -18,8 +18,8 @@ use crate::models::{
 };
 use chrono::{DateTime, NaiveDateTime, Utc};
 use itertools::PeekingNext;
-use rocket_db_pools::{diesel::AsyncPgConnection, diesel::prelude::*};
 use rocket_db_pools::diesel::scoped_futures::ScopedFutureExt;
+use rocket_db_pools::{diesel::AsyncPgConnection, diesel::prelude::*};
 pub use to_db_format::RowToEventError;
 
 pub async fn ingest_count(conn: &mut AsyncPgConnection) -> QueryResult<i64> {
@@ -42,7 +42,6 @@ pub async fn game_with_issues_count(conn: &mut AsyncPgConnection) -> QueryResult
         pub games_with_issues: i64,
     }
 
-
     diesel::sql_query(
         "
         select count(distinct data.games.id) games_with_issues
@@ -57,7 +56,9 @@ pub async fn game_with_issues_count(conn: &mut AsyncPgConnection) -> QueryResult
     .map(|games_with_issues| games_with_issues.games_with_issues)
 }
 
-pub async fn latest_ingest_start_time(conn: &mut AsyncPgConnection) -> QueryResult<Option<NaiveDateTime>> {
+pub async fn latest_ingest_start_time(
+    conn: &mut AsyncPgConnection,
+) -> QueryResult<Option<NaiveDateTime>> {
     use crate::data_schema::data::ingests::dsl::*;
 
     ingests
@@ -66,7 +67,6 @@ pub async fn latest_ingest_start_time(conn: &mut AsyncPgConnection) -> QueryResu
         .first(conn)
         .await
         .optional()
-
 }
 
 pub async fn latest_ingests(conn: &mut AsyncPgConnection) -> QueryResult<Vec<(Ingest, i64)>> {
@@ -170,7 +170,10 @@ macro_rules! log_only_assert {
     };
 }
 
-async fn add_log_levels_to_games(conn: &mut AsyncPgConnection, games: Vec<DbGame>) -> QueryResult<Vec<(DbGame, i64, i64, i64)>> {
+async fn add_log_levels_to_games(
+    conn: &mut AsyncPgConnection,
+    games: Vec<DbGame>,
+) -> QueryResult<Vec<(DbGame, i64, i64, i64)>> {
     use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
     use crate::info_schema::info::raw_events::dsl as raw_event_dsl;
 
@@ -284,7 +287,7 @@ pub async fn all_games(conn: &mut AsyncPgConnection) -> QueryResult<Vec<(DbGame,
         .order_by(games_dsl::id)
         .get_results::<DbGame>(conn)
         .await?;
-    
+
     add_log_levels_to_games(conn, games).await
 }
 
@@ -302,7 +305,10 @@ pub async fn events_for_game<'e>(
     conn: &mut AsyncPgConnection,
     taxa: &Taxa,
     for_game_id: &str,
-) -> QueryResult<(Vec<Result<EventDetail<String>, RowToEventError>>, EventsForGameTimings)> {
+) -> QueryResult<(
+    Vec<Result<EventDetail<String>, RowToEventError>>,
+    EventsForGameTimings,
+)> {
     use crate::data_schema::data::event_baserunners::dsl as runner_dsl;
     use crate::data_schema::data::event_fielders::dsl as fielder_dsl;
     use crate::data_schema::data::events::dsl as events_dsl;
@@ -388,9 +394,22 @@ pub async fn insert_game<'e>(
     logs: impl IntoIterator<Item = impl IntoIterator<Item = IngestLog>> + Send,
     event_details: &'e [EventDetail<&'e str>],
 ) -> QueryResult<i64> {
-    conn.transaction::<_, _, _>(|conn| async move {
-        insert_game_internal(conn, taxa, ingest_id, mmolb_game_id, game_data, logs, event_details).await
-    }.scope_boxed()).await
+    conn.transaction::<_, _, _>(|conn| {
+        async move {
+            insert_game_internal(
+                conn,
+                taxa,
+                ingest_id,
+                mmolb_game_id,
+                game_data,
+                logs,
+                event_details,
+            )
+            .await
+        }
+        .scope_boxed()
+    })
+    .await
 }
 
 async fn insert_game_internal<'e>(

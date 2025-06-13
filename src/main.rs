@@ -9,29 +9,31 @@ mod ingest;
 mod models;
 mod web;
 
-use std::collections::HashMap;
 use crate::ingest::{IngestFairing, IngestTask};
-use rocket::{launch, Build, Rocket};
+use num_format::{Locale, ToFormattedString};
+use rocket::fairing::AdHoc;
+use rocket::{Build, Rocket, launch};
+use rocket_db_pools::diesel::prelude::*;
 use rocket_db_pools::{Database, diesel::PgPool};
 use rocket_dyn_templates::Template;
 use rocket_dyn_templates::tera::Value;
-use num_format::{Locale, ToFormattedString};
-use rocket::fairing::AdHoc;
-use rocket_db_pools::diesel::prelude::*;
-
+use std::collections::HashMap;
 
 #[derive(Database, Clone)]
 #[database("mmoldb")]
 struct Db(PgPool);
 
-
 struct NumFormat;
 
 impl rocket_dyn_templates::tera::Filter for NumFormat {
-    fn filter(&self, value: &Value, _args: &HashMap<String, Value>) -> rocket_dyn_templates::tera::Result<Value> {
+    fn filter(
+        &self,
+        value: &Value,
+        _args: &HashMap<String, Value>,
+    ) -> rocket_dyn_templates::tera::Result<Value> {
         if let Value::Number(num) = value {
             if let Some(n) = num.as_i64() {
-                return Ok(n.to_formatted_string(&Locale::en).into())
+                return Ok(n.to_formatted_string(&Locale::en).into());
             }
         }
 
@@ -40,7 +42,7 @@ impl rocket_dyn_templates::tera::Filter for NumFormat {
 }
 
 async fn run_migrations(rocket: Rocket<Build>) -> Rocket<Build> {
-    use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
+    use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 
     const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
     let config: rocket_db_pools::Config = rocket
@@ -54,7 +56,8 @@ async fn run_migrations(rocket: Rocket<Build>) -> Rocket<Build> {
             .run_pending_migrations(MIGRATIONS)
             .expect("Failed to apply migrations");
     })
-        .await.expect("Error joining migrations task");
+    .await
+    .expect("Error joining migrations task");
 
     rocket
 }

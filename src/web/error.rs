@@ -1,7 +1,7 @@
 use log::error;
 use rocket::http::Status;
 use rocket::response::Responder;
-use rocket::{uri, Request, Response};
+use rocket::{Request, Response, uri};
 use rocket_dyn_templates::{Template, context};
 use thiserror::Error;
 
@@ -19,7 +19,7 @@ pub enum AppError {
 impl<'r, 'o: 'r> Responder<'r, 'o> for AppError {
     fn respond_to(self, req: &'r Request<'_>) -> rocket::response::Result<'o> {
         error!("{:#?}", self);
-        
+
         let is_debug = req.rocket().config().profile == "debug";
 
         let rendered = Template::show(
