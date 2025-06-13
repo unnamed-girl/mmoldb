@@ -1,7 +1,6 @@
 mod http;
 mod sim;
 
-use std::collections::HashSet;
 pub use sim::{EventDetail, EventDetailFielder, EventDetailRunner, IngestLog};
 use std::mem;
 use std::sync::Arc;
@@ -290,13 +289,12 @@ pub enum GameState {
     InningEnd,
 }
 
+// This is incomplete, there is more data available in this response if necessary
 #[derive(Debug, Deserialize)]
 struct CashewsGameResponse {
     pub game_id: String,
     pub season: i64,
     pub day: i64,
-    pub home_team_id: String,
-    pub away_team_id: String,
     pub state: GameState,
 }
 

@@ -1490,7 +1490,7 @@ impl<'g> Game<'g> {
     pub fn next(
         &mut self,
         index: usize,
-        mut event: &ParsedEventMessage<&'g str>,
+        event: &ParsedEventMessage<&'g str>,
         raw_event: &mmolb_parsing::game::Event,
         ingest_logs: &mut IngestLogs,
     ) -> Result<Option<EventDetail<&'g str>>, SimFatalError> {
