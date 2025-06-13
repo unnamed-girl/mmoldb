@@ -2,6 +2,7 @@ create schema data;
 create schema taxa;
 create schema info;
 
+-- TODO should this be in info instead?
 alter table ingests set schema data;
 
 create table taxa.event_type (

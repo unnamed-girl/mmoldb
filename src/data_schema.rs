@@ -68,6 +68,7 @@ pub mod data {
             started_at -> Timestamp,
             finished_at -> Nullable<Timestamp>,
             aborted_at -> Nullable<Timestamp>,
+            latest_completed_season -> Nullable<Int4>,
         }
     }
 

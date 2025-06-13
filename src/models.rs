@@ -64,6 +64,7 @@ pub struct Ingest {
     pub started_at: NaiveDateTime,
     pub finished_at: Option<NaiveDateTime>,
     pub aborted_at: Option<NaiveDateTime>,
+    pub latest_completed_season: Option<i32>,
 }
 
 #[derive(Insertable)]

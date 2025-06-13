@@ -69,6 +69,21 @@ pub async fn latest_ingest_start_time(
         .optional()
 }
 
+pub async fn latest_completed_season(
+    conn: &mut AsyncPgConnection,
+) -> QueryResult<Option<i32>> {
+    use crate::data_schema::data::ingests::dsl::*;
+
+    ingests
+        .filter(latest_completed_season.is_not_null())
+        .select(latest_completed_season)
+        .order(started_at.desc())
+        .first(conn)
+        .await
+        .optional()
+        .map(Option::flatten)
+}
+
 pub async fn latest_ingests(conn: &mut AsyncPgConnection) -> QueryResult<Vec<(Ingest, i64)>> {
     use diesel::sql_types::*;
     #[derive(QueryableByName)]
@@ -81,6 +96,8 @@ pub async fn latest_ingests(conn: &mut AsyncPgConnection) -> QueryResult<Vec<(In
         pub finished_at: Option<NaiveDateTime>,
         #[diesel(sql_type = Nullable<Timestamp>)]
         pub aborted_at: Option<NaiveDateTime>,
+        #[diesel(sql_type = Nullable<Int4>)]
+        pub latest_completed_season: Option<i32>,
         #[diesel(sql_type = Int8)]
         pub num_games: i64,
     }
@@ -105,6 +122,7 @@ pub async fn latest_ingests(conn: &mut AsyncPgConnection) -> QueryResult<Vec<(In
                      started_at,
                      finished_at,
                      aborted_at,
+                     latest_completed_season,
                      num_games,
                  }| {
                     (
@@ -113,6 +131,7 @@ pub async fn latest_ingests(conn: &mut AsyncPgConnection) -> QueryResult<Vec<(In
                             started_at,
                             finished_at,
                             aborted_at,
+                            latest_completed_season,
                         },
                         num_games,
                     )
@@ -138,16 +157,24 @@ pub async fn mark_ingest_finished(
     conn: &mut AsyncPgConnection,
     ingest_id: i64,
     at: DateTime<Utc>,
+    latest_completed: Option<i64>,
 ) -> QueryResult<()> {
     use crate::data_schema::data::ingests::dsl::*;
 
     diesel::update(ingests.filter(id.eq(ingest_id)))
-        .set(finished_at.eq(at.naive_utc()))
+        .set((
+            finished_at.eq(at.naive_utc()),
+            latest_completed_season.eq(latest_completed.map(|x| x as i32)),
+         ))
         .execute(conn)
         .await
         .map(|_| ())
 }
 
+// It is assumed that an aborted ingest won't have a later 
+// latest_completed_season than the previous ingest. That is not 
+// necessarily true, but it's inconvenient to refactor the code to
+// support it.
 pub async fn mark_ingest_aborted(
     conn: &mut AsyncPgConnection,
     ingest_id: i64,

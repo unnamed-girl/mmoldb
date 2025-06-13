@@ -683,6 +683,13 @@ async fn do_ingest(
     ingest_start: DateTime<Utc>,
 ) -> Result<(), (IngestFatalError, Option<i64>)> {
     info!("Ingest at {ingest_start} started");
+    
+    // Start at the season *after* the latest completed season, or season 0 if there isn't one 
+    let start_at_season = db::latest_completed_season(conn).await
+        .map_err(|e| (e.into(), None))?
+        .map(|i| i + 1)
+        .unwrap_or(0)
+        .into();
 
     let ingest_id = db::start_ingest(conn, ingest_start)
         .await
@@ -696,6 +703,7 @@ async fn do_ingest(
         shutdown,
         ingest_id,
         ingest_start,
+        start_at_season,
     )
     .await
     .map_err(|e| (e.into(), Some(ingest_id)))
@@ -708,10 +716,11 @@ async fn do_ingest_internal(
     shutdown: &mut Shutdown,
     ingest_id: i64,
     ingest_start: DateTime<Utc>,
+    start_at_season: i64,
 ) -> Result<(), IngestFatalError> {
     info!("Recorded ingest start in database. Requesting games list...");
 
-    let games = match fetch_games_list(client, config).await {
+    let fetched_games = match fetch_games_list(client, config, start_at_season).await {
         Ok(value) => value,
         Err(err) => {
             return Err(IngestFatalError::FailedToFetchGamesList {
@@ -720,10 +729,15 @@ async fn do_ingest_internal(
             });
         }
     };
+    
+    info!("Fetched games' latest completed season is {:?}", fetched_games.latest_completed_season);
+    
+    // Stuff that happens in the loop might invalidate this
+    let mut latest_completed_season = fetched_games.latest_completed_season;
 
     info!(
         "Got games list. Starting ingest of {} total games.",
-        games.len()
+        fetched_games.games.len()
     );
 
     let game_api_hit_period = Duration::from_millis(config.fetch_games_rate_limit_ms);
@@ -733,9 +747,22 @@ async fn do_ingest_internal(
     let mut num_already_ingested_games_skipped = 0;
     let mut num_games_imported = 0;
 
-    for game_info in games {
+    for game_info in fetched_games.games {
         let total_start = Utc::now();
         if game_info.state != GameState::Complete {
+            // If this incomplete game is in the supposed latest 
+            // completed season, then the supposed latest completed 
+            // season is not actually completed. Record a None, and
+            // the next ingest will find the same value as this one.
+            if Some(game_info.season) == latest_completed_season {
+                info!(
+                    "Clearing latest completed season because game {} in season {} isn't complete",
+                    game_info.game_id,
+                    game_info.season,
+                );
+                latest_completed_season = None;
+            }
+            
             num_incomplete_games_skipped += 1;
             continue;
         }
@@ -769,6 +796,11 @@ async fn do_ingest_internal(
                 game_data?
             }
             _ = &mut *shutdown => {
+                // If an early shutdown was requested, we might not 
+                // have processed all the games, which invalidates
+                // latest_completed_season
+                info!("Clearing latest completed season because early shutdown is requested");
+                latest_completed_season = None;
                 break;
             }
         };
@@ -800,6 +832,10 @@ async fn do_ingest_internal(
         .await;
 
         if result.is_err() {
+            // If we return early, we might not have processed all the 
+            // games, which invalidates latest_completed_season
+            info!("Clearing latest completed season because there was an error");
+            latest_completed_season = None;
             break;
         }
 
@@ -811,10 +847,10 @@ async fn do_ingest_internal(
     info!("{num_already_ingested_games_skipped} games already ingested");
 
     let ingest_end = Utc::now();
-    db::mark_ingest_finished(conn, ingest_id, ingest_end).await?;
+    db::mark_ingest_finished(conn, ingest_id, ingest_end, latest_completed_season).await?;
     info!(
-        "Marked ingest {ingest_id} finished. Time taken: {:#}.",
-        HumanTime::from(ingest_end - ingest_start)
+        "Marked ingest {ingest_id} finished {:#}. Latest completed season is {:?}",
+        HumanTime::from(ingest_end - ingest_start), latest_completed_season,
     );
 
     Ok(())
@@ -862,7 +898,8 @@ where
 async fn fetch_games_list(
     client: &ClientWithMiddleware,
     config: &IngestConfig,
-) -> Result<Vec<CashewsGameResponse>, FetchGamesListError> {
+    start_at_season: i64,
+) -> Result<FetchedGames, FetchGamesListError> {
     let cache_mode = if config.cache_game_list_from_api {
         // ForceCache means to ignore staleness, but still go to the
         // network if it's not found in the cache
@@ -874,7 +911,7 @@ async fn fetch_games_list(
 
     let mut tries = 0;
     Ok(loop {
-        match fetch_games_list_base(client, cache_mode).await {
+        match fetch_games_list_base(client, cache_mode, start_at_season).await {
             Ok(r) => break r,
             Err(err) if tries < config.fetch_game_list_retries => {
                 tries += 1;
@@ -893,15 +930,24 @@ async fn fetch_games_list(
     })
 }
 
+struct FetchedGames {
+    games: Vec<CashewsGameResponse>,
+    latest_completed_season: Option<i64>,
+}
+
 async fn fetch_games_list_base(
     client: &ClientWithMiddleware,
     cache_mode: http_cache_reqwest::CacheMode,
-) -> Result<Vec<CashewsGameResponse>, FetchGamesListError> {
+    start_at_season: i64,
+) -> Result<FetchedGames, FetchGamesListError> {
     // List of list of games, to be flattened later
     let mut games = Vec::new();
+    let mut latest_season_with_any_games = None;
 
-    // TODO Only request games after the most recently ingested one
-    for season in 0.. {
+    // The cashews API does not conveniently support resuming in the 
+    // middle of a season.
+    // TODO: Ask cashews developers for an API that would allow resuming from where I left off
+    for season in start_at_season.. {
         let mut has_any_games = false;
         let mut next_response: CashewsGamesResponse = client
             .get("https://freecashe.ws/api/games")
@@ -937,10 +983,18 @@ async fn fetch_games_list_base(
 
         if !has_any_games {
             break;
+        } else {
+            latest_season_with_any_games = Some(season);
         }
     }
+    
+    let latest_completed_season = latest_season_with_any_games
+        .and_then(|season| if season == 0 { None } else { Some(season - 1) });
 
-    Ok(games.into_iter().flatten().collect())
+    Ok(FetchedGames {
+        games: games.into_iter().flatten().collect(),
+        latest_completed_season,
+    })
 }
 
 // A utility to more conveniently build a Vec<IngestLog>
