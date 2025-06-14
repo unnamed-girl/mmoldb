@@ -17,16 +17,18 @@ compose directly.
 
 1. Install [docker-compose][docker-compose]. The installation instructions 
    for docker-compose will also install docker for you.
-2. From the root `mmoldb` directory, start the database container: 
+2. Create the file `.db_admin_password` at the root of this repo, with a secure
+   password as the file's contents. 
+3. From the root `mmoldb` directory, start the database container: 
    `docker compose -f docker-compose-prod.yml up -d db`. This command will
    run the database container in the background (remove `-d` if you want it to
    run in the foreground). It will build the container first if necessary.
-3. Once the database is up (you can verify that it's up by running 
+4. Once the database is up (you can verify that it's up by running 
    `docker compose -f docker-compose-prod.yml logs db` and looking for 
    "database system is ready to accept connections"), run the app:
    `docker compose -f docker-compose-prod.yml up -d app`. As before, it will
    be built if necessary and `-d` makes it run in the background.
-4. Visit localhost:42424 to see the MMOLDB status page.
+5. Visit localhost:42424 to see the MMOLDB status page.
 
 Debug
 -----
