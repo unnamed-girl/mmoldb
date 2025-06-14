@@ -7,7 +7,7 @@ mod to_db_format;
 
 pub use crate::db::taxa::{
     Taxa, TaxaBase, TaxaBaseDescriptionFormat, TaxaBaseWithDescriptionFormat, TaxaEventType,
-    TaxaFairBallType, TaxaFieldingErrorType, TaxaHitType, TaxaPosition,
+    TaxaFairBallType, TaxaFieldingErrorType, TaxaHitType, TaxaPitchType, TaxaPosition,
 };
 use std::collections::HashMap;
 

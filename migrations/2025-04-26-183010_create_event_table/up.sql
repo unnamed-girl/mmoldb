@@ -54,6 +54,13 @@ create table taxa.fielding_error_type (
     unique (name)
 );
 
+create table taxa.pitch_type (
+    id bigserial primary key not null,
+    name text not null,
+    display_name text not null,
+    unique (name)
+);
+
 create table data.games (
     -- bookkeeping
     id bigserial primary key not null,
@@ -139,6 +146,9 @@ create table data.events (
     fair_ball_direction bigint references taxa.position,
     -- populated when there's a fielding error
     fielding_error_type bigint references taxa.fielding_error_type,
+    -- populated when event_type is in [Ball, CalledStrike, SwingingStrike, FoulTip, FoulBall, Hit, Walk, HitByPitch]
+    -- i.e. when the event is a pitch.
+    pitch_type bigint references taxa.pitch_type,
     -- this is specifically *described* as sacrifice, because there is
     -- or was a bug that caused plays to incorrectly be called
     -- sacrifices. The bug is as yet unconfirmed, so it might be

@@ -51,6 +51,13 @@ pub struct NewFieldingErrorType<'a> {
 }
 
 #[derive(Insertable)]
+#[diesel(table_name = crate::taxa_schema::taxa::pitch_type)]
+pub struct NewPitchType<'a> {
+    pub name: &'a str,
+    pub display_name: &'a str,
+}
+
+#[derive(Insertable)]
 #[diesel(table_name = crate::data_schema::data::ingests)]
 pub struct NewIngest {
     pub started_at: NaiveDateTime,
@@ -109,6 +116,7 @@ pub struct NewEvent<'a> {
     pub fair_ball_type: Option<i64>,
     pub fair_ball_direction: Option<i64>,
     pub fielding_error_type: Option<i64>,
+    pub pitch_type: Option<i64>,
     pub described_as_sacrifice: Option<bool>,
     pub count_balls: i32,
     pub count_strikes: i32,
@@ -132,6 +140,7 @@ pub struct DbEvent {
     pub fair_ball_type: Option<i64>,
     pub fair_ball_direction: Option<i64>,
     pub fielding_error_type: Option<i64>,
+    pub pitch_type: Option<i64>,
     pub described_as_sacrifice: Option<bool>,
     pub count_balls: i32,
     pub count_strikes: i32,

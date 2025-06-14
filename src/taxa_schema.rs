@@ -50,6 +50,14 @@ pub mod taxa {
     }
 
     diesel::table! {
+        taxa.pitch_type (id) {
+            id -> Int8,
+            name -> Text,
+            display_name -> Text,
+        }
+    }
+
+    diesel::table! {
         taxa.position (id) {
             id -> Int8,
             name -> Text,
@@ -64,6 +72,7 @@ pub mod taxa {
         fair_ball_type,
         fielding_error_type,
         hit_type,
+        pitch_type,
         position,
     );
 }
