@@ -1,6 +1,6 @@
 use crate::models::{
     NewBase, NewBaseDescriptionFormat, NewEventType, NewFairBallType, NewFieldingErrorType,
-    NewHitType, NewPosition,
+    NewHitType, NewPitchType, NewPosition,
 };
 use diesel::{ExpressionMethods, QueryResult};
 use enum_map::EnumMap;
@@ -476,6 +476,66 @@ impl From<mmolb_parsing::enums::FieldingErrorType> for TaxaFieldingErrorType {
     }
 }
 
+#[derive(
+    Debug, enum_map::Enum, Eq, PartialEq, Hash, Copy, Clone, strum::Display, strum::EnumMessage,
+)]
+pub enum TaxaPitchType {
+    Fastball,
+    Sinker,
+    Slider,
+    Changeup,
+    Curveball,
+    Cutter,
+    Sweeper,
+    KnuckleCurve,
+    Splitter,
+}
+
+impl<'a> AsInsertable<'a> for TaxaPitchType {
+    type Insertable = NewPitchType<'a>;
+
+    fn as_insertable(&self, code_friendly_name: &'a str) -> Self::Insertable {
+        let human_friendly_name = self.get_message().unwrap_or_else(|| &code_friendly_name);
+
+        NewPitchType {
+            name: &code_friendly_name,
+            display_name: &human_friendly_name,
+        }
+    }
+}
+
+impl Into<mmolb_parsing::enums::PitchType> for TaxaPitchType {
+    fn into(self) -> mmolb_parsing::enums::PitchType {
+        match self {
+            Self::Changeup => mmolb_parsing::enums::PitchType::Changeup,
+            Self::Sinker => mmolb_parsing::enums::PitchType::Sinker,
+            Self::Slider => mmolb_parsing::enums::PitchType::Slider,
+            Self::Curveball => mmolb_parsing::enums::PitchType::Curveball,
+            Self::Cutter => mmolb_parsing::enums::PitchType::Cutter,
+            Self::Sweeper => mmolb_parsing::enums::PitchType::Sweeper,
+            Self::KnuckleCurve => mmolb_parsing::enums::PitchType::KnuckleCurve,
+            Self::Splitter => mmolb_parsing::enums::PitchType::Splitter,
+            Self::Fastball => mmolb_parsing::enums::PitchType::Fastball,
+        }
+    }
+}
+
+impl From<mmolb_parsing::enums::PitchType> for TaxaPitchType {
+    fn from(value: mmolb_parsing::enums::PitchType) -> Self {
+        match value {
+            mmolb_parsing::enums::PitchType::Changeup => Self::Changeup,
+            mmolb_parsing::enums::PitchType::Sinker => Self::Sinker,
+            mmolb_parsing::enums::PitchType::Slider => Self::Slider,
+            mmolb_parsing::enums::PitchType::Curveball => Self::Curveball,
+            mmolb_parsing::enums::PitchType::Cutter => Self::Cutter,
+            mmolb_parsing::enums::PitchType::Sweeper => Self::Sweeper,
+            mmolb_parsing::enums::PitchType::KnuckleCurve => Self::KnuckleCurve,
+            mmolb_parsing::enums::PitchType::Splitter => Self::Splitter,
+            mmolb_parsing::enums::PitchType::Fastball => Self::Fastball,
+        }
+    }
+}
+
 pub struct Taxa {
     event_type_mapping: EnumMap<TaxaEventType, i64>,
     hit_type_mapping: EnumMap<TaxaHitType, i64>,
@@ -484,6 +544,7 @@ pub struct Taxa {
     base_mapping: EnumMap<TaxaBase, i64>,
     base_description_format_mapping: EnumMap<TaxaBaseDescriptionFormat, i64>,
     fielding_error_type_mapping: EnumMap<TaxaFieldingErrorType, i64>,
+    pitch_type_mapping: EnumMap<TaxaPitchType, i64>,
 }
 
 macro_rules! make_mapping {
@@ -591,6 +652,14 @@ impl Taxa {
                 crate::taxa_schema::taxa::fielding_error_type::dsl::id,
                 conn,
             },
+            pitch_type_mapping: make_mapping! {
+                TaxaPitchType,
+                crate::taxa_schema::taxa::pitch_type::dsl::pitch_type,
+                crate::taxa_schema::taxa::pitch_type::dsl::name,
+                crate::taxa_schema::taxa::pitch_type::dsl::display_name,
+                crate::taxa_schema::taxa::pitch_type::dsl::id,
+                conn,
+            },
         })
     }
 
@@ -620,6 +689,10 @@ impl Taxa {
 
     pub fn fielding_error_type_id(&self, ty: TaxaFieldingErrorType) -> i64 {
         self.fielding_error_type_mapping[ty]
+    }
+
+    pub fn pitch_type_id(&self, ty: TaxaPitchType) -> i64 {
+        self.pitch_type_mapping[ty]
     }
 
     pub fn event_type_from_id(&self, id: i64) -> Option<TaxaEventType> {
@@ -674,6 +747,14 @@ impl Taxa {
             .iter()
             .find(|(_, ty_id)| id == **ty_id)
             .expect("TODO Handle unknown base description format")
+            .0
+    }
+
+    pub fn pitch_type_from_id(&self, id: i64) -> TaxaPitchType {
+        self.pitch_type_mapping
+            .iter()
+            .find(|(_, ty_id)| id == **ty_id)
+            .expect("TODO Handle unknown pitch type")
             .0
     }
 }

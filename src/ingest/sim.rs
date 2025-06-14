@@ -1,6 +1,6 @@
 use crate::db::{
     TaxaBase, TaxaBaseDescriptionFormat, TaxaBaseWithDescriptionFormat, TaxaEventType,
-    TaxaFairBallType, TaxaFieldingErrorType, TaxaHitType, TaxaPosition,
+    TaxaFairBallType, TaxaFieldingErrorType, TaxaHitType, TaxaPitchType, TaxaPosition,
 };
 use crate::ingest::CashewsGameResponse;
 use itertools::{EitherOrBoth, Itertools, PeekingNext};
@@ -80,6 +80,7 @@ pub struct EventDetail<StrT: Clone> {
     pub fair_ball_type: Option<TaxaFairBallType>,
     pub fair_ball_direction: Option<TaxaPosition>,
     pub fielding_error_type: Option<TaxaFieldingErrorType>,
+    pub pitch_type: Option<TaxaPitchType>,
     pub described_as_sacrifice: Option<bool>,
 
     pub baserunners: Vec<EventDetailRunner<StrT>>,
@@ -376,6 +377,7 @@ struct EventDetailBuilder<'g> {
     fair_ball_direction: Option<TaxaPosition>,
     hit_type: Option<TaxaHitType>,
     fielding_error_type: Option<TaxaFieldingErrorType>,
+    pitch_type: Option<TaxaPitchType>,
     described_as_sacrifice: Option<bool>,
     fielders: Vec<EventDetailFielder<&'g str>>,
     advances: Vec<RunnerAdvance<&'g str>>,
@@ -710,6 +712,7 @@ impl<'g> EventDetailBuilder<'g> {
             fair_ball_type: self.fair_ball_type,
             fair_ball_direction: self.fair_ball_direction,
             fielding_error_type: self.fielding_error_type,
+            pitch_type: self.pitch_type,
             described_as_sacrifice: self.described_as_sacrifice,
             baserunners,
         }
@@ -1060,6 +1063,7 @@ impl<'g> Game<'g> {
             fair_ball_type: None,
             fair_ball_direction: None,
             fielding_error_type: None,
+            pitch_type: None,
             described_as_sacrifice: None,
             scores: Vec::new(),
             steals: Vec::new(),
@@ -1691,133 +1695,142 @@ impl<'g> Game<'g> {
                     None
                 },
             ),
-            GamePhase::ExpectPitch(batter_name) => game_event!(
-                (previous_event, event),
-                [ParsedEventMessageDiscriminants::Ball]
-                ParsedEventMessage::Ball { count, steals } => {
-                    self.state.count_balls += 1;
-                    self.check_count(*count, ingest_logs);
-                    self.update_runners(RunnerUpdate {
-                        steals,
-                        ..Default::default()
-                    }, ingest_logs);
+            GamePhase::ExpectPitch(batter_name) => {
+                let pitch_type = raw_event.pitch.map(|p| p.pitch_type.into());
+                let mut detail_builder = detail_builder;
+                detail_builder.pitch_type = pitch_type;
+                if pitch_type.is_none() {
+                    ingest_logs.error(format!("Expected a pitch type"));
+                }
 
-                    detail_builder
-                        .steals(steals.clone())
-                        .build_some(self, batter_name, ingest_logs, TaxaEventType::Ball)
-                },
-                [ParsedEventMessageDiscriminants::Strike]
-                ParsedEventMessage::Strike { strike, count, steals } => {
-                    self.state.count_strikes += 1;
-                    self.check_count(*count, ingest_logs);
+                game_event!(
+                    (previous_event, event),
+                    [ParsedEventMessageDiscriminants::Ball]
+                    ParsedEventMessage::Ball { count, steals } => {
+                        self.state.count_balls += 1;
+                        self.check_count(*count, ingest_logs);
+                        self.update_runners(RunnerUpdate {
+                            steals,
+                            ..Default::default()
+                        }, ingest_logs);
 
-                    self.update_runners_steals_only(steals, ingest_logs);
-
-                    detail_builder
-                        .steals(steals.clone())
-                        .build_some(self, batter_name, ingest_logs, match strike {
-                            StrikeType::Looking => { TaxaEventType::CalledStrike }
-                            StrikeType::Swinging => { TaxaEventType::SwingingStrike }
-                        })
-                },
-                [ParsedEventMessageDiscriminants::StrikeOut]
-                ParsedEventMessage::StrikeOut { foul, batter, strike, steals } => {
-                    self.check_batter(batter_name, batter, ingest_logs);
-                    if self.state.count_strikes < 2 {
-                        ingest_logs.warn(format!(
-                            "Unexpected strikeout: expected 2 strikes in the count, but \
-                            there were {}",
-                            self.state.count_strikes,
-                        ));
-                    }
-
-                    self.update_runners_steals_only(steals, ingest_logs);
-                    self.add_out();
-                    self.finish_pa(batter_name);
-
-                    let event_type = match (foul, strike) {
-                        (None, StrikeType::Looking) => { TaxaEventType::CalledStrike }
-                        (None, StrikeType::Swinging) => { TaxaEventType::SwingingStrike }
-                        (Some(FoulType::Ball), _) => {
-                            ingest_logs.error(
-                                "Can't strike out on a foul ball. \
-                                Recording this as a foul tip instead.",
-                            );
-                            TaxaEventType::FoulTip
-                        }
-                        (Some(FoulType::Tip), StrikeType::Looking) => {
-                            ingest_logs.warn("Can't have a foul tip on a called strike.");
-                            TaxaEventType::FoulTip
-                        }
-                        (Some(FoulType::Tip), StrikeType::Swinging) => { TaxaEventType::FoulTip }
-                    };
-
-                    detail_builder
-                        .steals(steals.clone())
-                        .build_some(self, batter_name, ingest_logs, event_type)
-                },
-                [ParsedEventMessageDiscriminants::Foul]
-                ParsedEventMessage::Foul { foul, steals, count } => {
-                    // Falsehoods...
-                    if !(*foul == FoulType::Ball && self.state.count_strikes >= 2) {
+                        detail_builder
+                            .steals(steals.clone())
+                            .build_some(self, batter_name, ingest_logs, TaxaEventType::Ball)
+                    },
+                    [ParsedEventMessageDiscriminants::Strike]
+                    ParsedEventMessage::Strike { strike, count, steals } => {
                         self.state.count_strikes += 1;
-                    }
-                    self.check_count(*count, ingest_logs);
+                        self.check_count(*count, ingest_logs);
 
-                    self.update_runners_steals_only(steals, ingest_logs);
+                        self.update_runners_steals_only(steals, ingest_logs);
 
-                    detail_builder
-                        .steals(steals.clone())
-                        .build_some(self, batter_name, ingest_logs, match foul {
-                            FoulType::Tip => TaxaEventType::FoulTip,
-                            FoulType::Ball => TaxaEventType::FoulBall,
-                        })
-                },
-                [ParsedEventMessageDiscriminants::FairBall]
-                ParsedEventMessage::FairBall { batter, fair_ball_type, destination } => {
-                    self.check_batter(batter_name, batter, ingest_logs);
+                        detail_builder
+                            .steals(steals.clone())
+                            .build_some(self, batter_name, ingest_logs, match strike {
+                                StrikeType::Looking => { TaxaEventType::CalledStrike }
+                                StrikeType::Swinging => { TaxaEventType::SwingingStrike }
+                            })
+                    },
+                    [ParsedEventMessageDiscriminants::StrikeOut]
+                    ParsedEventMessage::StrikeOut { foul, batter, strike, steals } => {
+                        self.check_batter(batter_name, batter, ingest_logs);
+                        if self.state.count_strikes < 2 {
+                            ingest_logs.warn(format!(
+                                "Unexpected strikeout: expected 2 strikes in the count, but \
+                                there were {}",
+                                self.state.count_strikes,
+                            ));
+                        }
 
-                    self.state.phase = GamePhase::ExpectFairBallOutcome(batter_name, FairBall {
-                        index,
-                        fair_ball_type: *fair_ball_type,
-                        fair_ball_destination: *destination,
-                    });
-                    None
-                },
-                [ParsedEventMessageDiscriminants::Walk]
-                ParsedEventMessage::Walk { batter, advances, scores } => {
-                    self.check_batter(batter_name, batter, ingest_logs);
+                        self.update_runners_steals_only(steals, ingest_logs);
+                        self.add_out();
+                        self.finish_pa(batter_name);
 
-                    self.update_runners(RunnerUpdate {
-                        scores,
-                        advances,
-                        runner_added: Some((batter, TaxaBase::First)),
-                        ..Default::default()
-                    }, ingest_logs);
-                    self.finish_pa(batter_name);
+                        let event_type = match (foul, strike) {
+                            (None, StrikeType::Looking) => { TaxaEventType::CalledStrike }
+                            (None, StrikeType::Swinging) => { TaxaEventType::SwingingStrike }
+                            (Some(FoulType::Ball), _) => {
+                                ingest_logs.error(
+                                    "Can't strike out on a foul ball. \
+                                    Recording this as a foul tip instead.",
+                                );
+                                TaxaEventType::FoulTip
+                            }
+                            (Some(FoulType::Tip), StrikeType::Looking) => {
+                                ingest_logs.warn("Can't have a foul tip on a called strike.");
+                                TaxaEventType::FoulTip
+                            }
+                            (Some(FoulType::Tip), StrikeType::Swinging) => { TaxaEventType::FoulTip }
+                        };
 
-                    detail_builder
-                        .runner_changes(advances.clone(), scores.clone())
-                        .add_runner(batter, TaxaBase::First)
-                        .build_some(self, batter_name, ingest_logs, TaxaEventType::Walk)
-                },
-                [ParsedEventMessageDiscriminants::HitByPitch]
-                ParsedEventMessage::HitByPitch { batter, advances, scores } => {
-                    self.check_batter(batter_name, batter, ingest_logs);
+                        detail_builder
+                            .steals(steals.clone())
+                            .build_some(self, batter_name, ingest_logs, event_type)
+                    },
+                    [ParsedEventMessageDiscriminants::Foul]
+                    ParsedEventMessage::Foul { foul, steals, count } => {
+                        // Falsehoods...
+                        if !(*foul == FoulType::Ball && self.state.count_strikes >= 2) {
+                            self.state.count_strikes += 1;
+                        }
+                        self.check_count(*count, ingest_logs);
 
-                    self.update_runners(RunnerUpdate {
-                        scores,
-                        advances,
-                        runner_added: Some((batter, TaxaBase::First)),
-                        ..Default::default()
-                    }, ingest_logs);
-                    self.finish_pa(batter_name);
+                        self.update_runners_steals_only(steals, ingest_logs);
 
-                    detail_builder
-                        .runner_changes(advances.clone(), scores.clone())
-                        .build_some(self, batter_name, ingest_logs, TaxaEventType::HitByPitch)
-                },
-            ),
+                        detail_builder
+                            .steals(steals.clone())
+                            .build_some(self, batter_name, ingest_logs, match foul {
+                                FoulType::Tip => TaxaEventType::FoulTip,
+                                FoulType::Ball => TaxaEventType::FoulBall,
+                            })
+                    },
+                    [ParsedEventMessageDiscriminants::FairBall]
+                    ParsedEventMessage::FairBall { batter, fair_ball_type, destination } => {
+                        self.check_batter(batter_name, batter, ingest_logs);
+
+                        self.state.phase = GamePhase::ExpectFairBallOutcome(batter_name, FairBall {
+                            index,
+                            fair_ball_type: *fair_ball_type,
+                            fair_ball_destination: *destination,
+                        });
+                        None
+                    },
+                    [ParsedEventMessageDiscriminants::Walk]
+                    ParsedEventMessage::Walk { batter, advances, scores } => {
+                        self.check_batter(batter_name, batter, ingest_logs);
+
+                        self.update_runners(RunnerUpdate {
+                            scores,
+                            advances,
+                            runner_added: Some((batter, TaxaBase::First)),
+                            ..Default::default()
+                        }, ingest_logs);
+                        self.finish_pa(batter_name);
+
+                        detail_builder
+                            .runner_changes(advances.clone(), scores.clone())
+                            .add_runner(batter, TaxaBase::First)
+                            .build_some(self, batter_name, ingest_logs, TaxaEventType::Walk)
+                    },
+                    [ParsedEventMessageDiscriminants::HitByPitch]
+                    ParsedEventMessage::HitByPitch { batter, advances, scores } => {
+                        self.check_batter(batter_name, batter, ingest_logs);
+
+                        self.update_runners(RunnerUpdate {
+                            scores,
+                            advances,
+                            runner_added: Some((batter, TaxaBase::First)),
+                            ..Default::default()
+                        }, ingest_logs);
+                        self.finish_pa(batter_name);
+
+                        detail_builder
+                            .runner_changes(advances.clone(), scores.clone())
+                            .build_some(self, batter_name, ingest_logs, TaxaEventType::HitByPitch)
+                    },
+                )
+            }
             GamePhase::ExpectNowBatting => game_event!(
                 (previous_event, event),
                 [ParsedEventMessageDiscriminants::NowBatting]
