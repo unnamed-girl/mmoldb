@@ -688,7 +688,7 @@ async fn do_ingest(
     let start_at_season = db::latest_completed_season(conn).await
         .map_err(|e| (e.into(), None))?
         .map(|i| i + 1)
-        .unwrap_or(0)
+        .unwrap_or(1)
         .into();
 
     let ingest_id = db::start_ingest(conn, ingest_start)
