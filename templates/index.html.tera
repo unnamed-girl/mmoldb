@@ -37,11 +37,12 @@
     <section class="card">
         <h2 class="about-heading">About</h2>
         <p class="about">
-            <strong>MMOLDB</strong> plans to be a publicly queryable database for
+            <strong>MMOLDB</strong> is a publicly queryable database for
             <a href="https://mmolb.com/">MMOLB</a> games inspired by the
-            Blaseball datablase. It's still in early development. Right now
-            there's no way to query it, but I'm working on it. In the meantime,
-            check out the games status at the links in the card above.
+            Blaseball datablase. It's still in early development. You can
+            connect to the Postgres database on port 42416 using the username
+            "guest" and password "moldybees".
+            {# TODO Before deploying, add more connection information #}
         </p>
     </section>
 
