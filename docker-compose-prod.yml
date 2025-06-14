@@ -24,5 +24,6 @@ services:
     secrets:
       - db_admin_password
     env_file:
-        # Ensure that the variables in .env-prod match the same variables in devcontainer.json
         - .env-prod
+    ports:
+      - "42416:5432"
