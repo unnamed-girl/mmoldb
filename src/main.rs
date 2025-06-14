@@ -12,12 +12,15 @@ mod web;
 use crate::ingest::{IngestFairing, IngestTask};
 use num_format::{Locale, ToFormattedString};
 use rocket::fairing::AdHoc;
-use rocket::{Build, Rocket, launch};
+use rocket::{Build, Rocket, launch, figment};
 use rocket_db_pools::diesel::prelude::*;
 use rocket_db_pools::{Database, diesel::PgPool};
 use rocket_dyn_templates::Template;
 use rocket_dyn_templates::tera::Value;
 use std::collections::HashMap;
+use std::path::PathBuf;
+use rocket::figment::map;
+use serde::Deserialize;
 
 #[derive(Database, Clone)]
 #[database("mmoldb")]
@@ -62,9 +65,29 @@ async fn run_migrations(rocket: Rocket<Build>) -> Rocket<Build> {
     rocket
 }
 
+fn get_figment_with_constructed_db_url() -> figment::Figment {
+    #[derive(Debug, PartialEq, Deserialize)]
+    struct PostgresConfig {
+        user: String,
+        password_file: PathBuf,
+        db: String,
+    }
+    let provider = figment::providers::Env::prefixed("POSTGRES_");
+    let postgres_config: PostgresConfig = figment::Figment::from(provider)
+        .extract()
+        .expect("Postgres configuration environment variable(s) missing or invalid");
+    
+    let password = std::fs::read_to_string(postgres_config.password_file)
+        .expect("Failed to read postgres password file");
+
+    let url = format!("postgres://{}:{}@db/{}", postgres_config.user, password, postgres_config.db);
+    rocket::Config::figment()
+        .merge(("databases", map!["mmoldb" => map!["url" => url]]))
+}
+
 #[launch]
 fn rocket() -> _ {
-    rocket::build()
+    rocket::custom(get_figment_with_constructed_db_url())
         .mount("/", web::routes())
         .mount("/static", rocket::fs::FileServer::from("static"))
         .manage(IngestTask::new())
