@@ -392,6 +392,7 @@ struct EventDetailBuilder<'g> {
 
 impl<'g> EventDetailBuilder<'g> {
     fn fair_ball(mut self, fair_ball: FairBall) -> Self {
+        self = self.pitch(fair_ball.pitch);
         self.fair_ball_event_index = Some(fair_ball.index);
         self.fair_ball_type = Some(fair_ball.fair_ball_type.into());
         self.fair_ball_direction = Some(fair_ball.fair_ball_destination.into());
@@ -1904,7 +1905,6 @@ impl<'g> Game<'g> {
                     self.finish_pa(batter_name);
 
                     detail_builder
-                        .pitch(fair_ball.pitch)
                         .fair_ball(fair_ball)
                         .described_as_sacrifice(*sacrifice)
                         .catch_fielder(*caught_by, *perfect)
