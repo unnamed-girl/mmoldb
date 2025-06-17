@@ -69,7 +69,8 @@ fn get_figment_with_constructed_db_url() -> figment::Figment {
     #[derive(Debug, PartialEq, Deserialize)]
     struct PostgresConfig {
         user: String,
-        password_file: PathBuf,
+        password: Option<String>,
+        password_file: Option<PathBuf>,
         db: String,
     }
     let provider = figment::providers::Env::prefixed("POSTGRES_");
@@ -77,8 +78,14 @@ fn get_figment_with_constructed_db_url() -> figment::Figment {
         .extract()
         .expect("Postgres configuration environment variable(s) missing or invalid");
     
-    let password = std::fs::read_to_string(postgres_config.password_file)
-        .expect("Failed to read postgres password file");
+    let password = if let Some(password) = postgres_config.password {
+        password
+    } else if let Some(password_file) = postgres_config.password_file {
+        std::fs::read_to_string(password_file)
+            .expect("Failed to read postgres password file")
+    } else {
+        panic!("One of POSTGRES_PASSWORD or POSTGRES_PASSWORD_FILE must be provided");
+    };
 
     let url = format!("postgres://{}:{}@db/{}", postgres_config.user, password, postgres_config.db);
     rocket::Config::figment()
