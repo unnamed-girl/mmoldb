@@ -152,6 +152,8 @@ create table data.events (
     pitch_type bigint references taxa.pitch_type,
     -- should always be populated for current list of events
     pitch_speed float8,
+    -- should always be populated for current list of events
+    pitch_zone int,
     -- this is specifically *described* as sacrifice, because there is
     -- or was a bug that caused plays to incorrectly be called
     -- sacrifices. The bug is as yet unconfirmed, so it might be
