@@ -459,6 +459,25 @@ impl<'g> EventDetailBuilder<'g> {
         self
     }
 
+    fn fielders_with_perfect_catch(
+        self, 
+        fielders: impl IntoIterator<Item = PositionedPlayer<&'g str>>, 
+        perfect_catch: bool,
+        ingest_logs: &mut IngestLogs,
+    ) -> Self {
+        let mut me = self.fielders(fielders);
+
+        // I believe a perfect catch means a catch of the batted ball and therefore
+        // will always be the first listed fielder's catch
+        if let Some(first_fielder) = me.fielders.first_mut() {
+            first_fielder.is_perfect_catch = Some(perfect_catch);
+        } else {
+            ingest_logs.error("There were no fielders on an event with a perfect catch");
+        }
+
+        me
+    }
+
     fn runner_changes(
         mut self,
         advances: Vec<RunnerAdvance<&'g str>>,
@@ -1914,7 +1933,7 @@ impl<'g> Game<'g> {
                         .build_some(self, batter_name, ingest_logs, TaxaEventType::CaughtOut)
                 },
                 [ParsedEventMessageDiscriminants::GroundedOut]
-                ParsedEventMessage::GroundedOut { batter, fielders, scores, advances } => {
+                ParsedEventMessage::GroundedOut { batter, fielders, scores, advances, perfect } => {
                     self.check_batter(batter_name, batter, ingest_logs);
 
                     self.update_runners(RunnerUpdate {
@@ -1924,10 +1943,10 @@ impl<'g> Game<'g> {
                     }, ingest_logs);
                     self.add_out();
                     self.finish_pa(batter_name);
-
+                    
                     detail_builder
                         .fair_ball(fair_ball)
-                        .fielders(fielders.clone())
+                        .fielders_with_perfect_catch(fielders.clone(), *perfect, ingest_logs)
                         .runner_changes(advances.clone(), scores.clone())
                         .build_some(self, batter_name, ingest_logs, TaxaEventType::GroundedOut)
                 },
@@ -2831,11 +2850,24 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                     perfect,
                 }
             }
-            TaxaEventType::GroundedOut => ParsedEventMessage::GroundedOut {
-                batter: self.batter_name.as_ref(),
-                fielders: self.fielders(),
-                scores: self.scores(),
-                advances: self.advances(false),
+            TaxaEventType::GroundedOut => {
+                let fielders = self.fielders();
+                let perfect = if let Some(first_fielder) = self.fielders.first() {
+                    first_fielder.is_perfect_catch
+                        .ok_or_else(|| ToParsedError::MissingPerfectCatch {
+                            event_type: self.detail_type,
+                        })?
+                } else {
+                    false
+                };
+                
+                ParsedEventMessage::GroundedOut {
+                    batter: self.batter_name.as_ref(),
+                    fielders,
+                    scores: self.scores(),
+                    advances: self.advances(false),
+                    perfect,
+                }
             },
             TaxaEventType::Walk => ParsedEventMessage::Walk {
                 batter: self.batter_name.as_ref(),
