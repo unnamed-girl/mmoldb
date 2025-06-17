@@ -82,6 +82,7 @@ pub struct EventDetail<StrT: Clone> {
     pub fielding_error_type: Option<TaxaFieldingErrorType>,
     pub pitch_type: Option<TaxaPitchType>,
     pub pitch_speed: Option<f64>,
+    pub pitch_zone: Option<i32>,
     pub described_as_sacrifice: Option<bool>,
 
     pub baserunners: Vec<EventDetailRunner<StrT>>,
@@ -727,6 +728,7 @@ impl<'g> EventDetailBuilder<'g> {
             fielding_error_type: self.fielding_error_type,
             pitch_type: self.pitch.map(|pitch| pitch.pitch_type.into()),
             pitch_speed: self.pitch.map(|pitch| pitch.speed as f64),
+            pitch_zone: self.pitch.map(|pitch| pitch.zone as i32),
             described_as_sacrifice: self.described_as_sacrifice,
             baserunners,
         }

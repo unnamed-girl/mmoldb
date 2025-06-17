@@ -40,6 +40,7 @@ pub mod data {
             fielding_error_type -> Nullable<Int8>,
             pitch_type -> Nullable<Int8>,
             pitch_speed -> Nullable<Float8>,
+            pitch_zone -> Nullable<Int4>,
             described_as_sacrifice -> Nullable<Bool>,
             count_balls -> Int4,
             count_strikes -> Int4,
