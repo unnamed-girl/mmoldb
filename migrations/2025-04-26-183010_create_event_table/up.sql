@@ -9,7 +9,6 @@ create table taxa.event_type (
     id bigserial primary key not null,
     name text not null,
     display_name text not null,
-    ends_pa boolean not null,
     unique (name)
 );
 

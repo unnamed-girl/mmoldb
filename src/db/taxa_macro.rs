@@ -18,13 +18,10 @@ macro_rules! taxa_main_enum {
 
         impl $enum_name {
             pub async fn make_id_mapping(conn: &mut AsyncPgConnection) -> QueryResult<EnumMap<Self, i64>> {
-                log::info!("Creating ID mapping for {}", stringify!($enum_name));
                 let mut mapping: EnumMap<Self, i64> = EnumMap::default();
 
                 for (taxa, key) in mapping.iter_mut() {
                     let new_taxa = taxa.as_insertable();
-                    
-                    log::info!("Ensuring {}", new_taxa.name);
 
                     *key = diesel::insert_into($table)
                         .values(&new_taxa)
@@ -34,8 +31,6 @@ macro_rules! taxa_main_enum {
                         .returning($id_column)
                         .get_result(conn)
                         .await?;
-                    
-                    log::info!("Ensured {}", new_taxa.name);
                 }
 
                 // Final safety check: Mapping should hold all distinct values
@@ -52,8 +47,6 @@ macro_rules! taxa_main_enum {
                         .collect::<HashSet<_>>()
                         .len(),
                 );
-                
-                log::info!("Created ID mapping for {}", stringify!($enum_name));
 
                 Ok(mapping)
             }

@@ -14,37 +14,37 @@ taxa! {
         id_column = crate::taxa_schema::taxa::event_type::dsl::id,
     ]
     pub enum TaxaEventType {
-        #[display_name: str = "ball", ends_pa: bool = false]
+        #[display_name: str = "ball"]
         Ball = 0,
-        #[display_name: str = "called strike", ends_pa: bool = false]
+        #[display_name: str = "called strike"]
         CalledStrike = 1,
-        #[display_name: str = "swinging strike", ends_pa: bool = false]
+        #[display_name: str = "swinging strike"]
         SwingingStrike = 2,
-        #[display_name: str = "foul tip", ends_pa: bool = false]
+        #[display_name: str = "foul tip"]
         FoulTip = 3,
-        #[display_name: str = "foul ball", ends_pa: bool = false]
+        #[display_name: str = "foul ball"]
         FoulBall = 4,
-        #[display_name: str = "hit", ends_pa: bool = true]
+        #[display_name: str = "hit"]
         Hit = 5,
-        #[display_name: str = "force out", ends_pa: bool = true]
+        #[display_name: str = "force out"]
         ForceOut = 6,
-        #[display_name: str = "caught out", ends_pa: bool = true]
+        #[display_name: str = "caught out"]
         CaughtOut = 7,
-        #[display_name: str = "grounded out", ends_pa: bool = true]
+        #[display_name: str = "grounded out"]
         GroundedOut = 8,
-        #[display_name: str = "walk", ends_pa: bool = true]
+        #[display_name: str = "walk"]
         Walk = 9,
-        #[display_name: str = "home run", ends_pa: bool = true]
+        #[display_name: str = "home run"]
         HomeRun = 10,
-        #[display_name: str = "fielding error", ends_pa: bool = true]
+        #[display_name: str = "fielding error"]
         FieldingError = 11,
-        #[display_name: str = "hit by pitch", ends_pa: bool = true]
+        #[display_name: str = "hit by pitch"]
         HitByPitch = 12,
-        #[display_name: str = "double play", ends_pa: bool = true]
+        #[display_name: str = "double play"]
         DoublePlay = 13,
-        #[display_name: str = "fielder's choice", ends_pa: bool = true]
+        #[display_name: str = "fielder's choice"]
         FieldersChoice = 14,
-        #[display_name: str = "error on fielder's choice", ends_pa: bool = true]
+        #[display_name: str = "error on fielder's choice"]
         ErrorOnFieldersChoice = 15,
     }
 }
