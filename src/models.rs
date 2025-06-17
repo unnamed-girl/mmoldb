@@ -2,62 +2,6 @@ use chrono::NaiveDateTime;
 use rocket_db_pools::diesel::prelude::*;
 
 #[derive(Insertable)]
-#[diesel(table_name = crate::taxa_schema::taxa::event_type)]
-pub struct NewEventType<'a> {
-    pub name: &'a str,
-    pub display_name: &'a str,
-}
-
-#[derive(Insertable)]
-#[diesel(table_name = crate::taxa_schema::taxa::hit_type)]
-pub struct NewHitType<'a> {
-    pub name: &'a str,
-    pub display_name: &'a str,
-}
-
-#[derive(Insertable)]
-#[diesel(table_name = crate::taxa_schema::taxa::position)]
-pub struct NewPosition<'a> {
-    pub name: &'a str,
-    pub display_name: &'a str,
-}
-
-#[derive(Insertable)]
-#[diesel(table_name = crate::taxa_schema::taxa::fair_ball_type)]
-pub struct NewFairBallType<'a> {
-    pub name: &'a str,
-    pub display_name: &'a str,
-}
-
-#[derive(Insertable)]
-#[diesel(table_name = crate::taxa_schema::taxa::base)]
-pub struct NewBase<'a> {
-    pub name: &'a str,
-    pub display_name: &'a str,
-}
-
-#[derive(Insertable)]
-#[diesel(table_name = crate::taxa_schema::taxa::base_description_format)]
-pub struct NewBaseDescriptionFormat<'a> {
-    pub name: &'a str,
-    pub display_name: &'a str,
-}
-
-#[derive(Insertable)]
-#[diesel(table_name = crate::taxa_schema::taxa::fielding_error_type)]
-pub struct NewFieldingErrorType<'a> {
-    pub name: &'a str,
-    pub display_name: &'a str,
-}
-
-#[derive(Insertable)]
-#[diesel(table_name = crate::taxa_schema::taxa::pitch_type)]
-pub struct NewPitchType<'a> {
-    pub name: &'a str,
-    pub display_name: &'a str,
-}
-
-#[derive(Insertable)]
 #[diesel(table_name = crate::data_schema::data::ingests)]
 pub struct NewIngest {
     pub started_at: NaiveDateTime,

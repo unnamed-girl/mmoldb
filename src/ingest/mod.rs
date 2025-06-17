@@ -245,6 +245,7 @@ impl Fairing for IngestFairing {
                 notify.notify_waiters();
             }
             Err(err) => {
+                log::error!("Failed to launch ingest task: {}", err);
                 *task.state.write().await = IngestTaskState::FailedToStart(err);
             }
         };

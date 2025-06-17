@@ -9,13 +9,14 @@ create table taxa.event_type (
     id bigserial primary key not null,
     name text not null,
     display_name text not null,
+    ends_pa boolean not null,
     unique (name)
 );
 
 create table taxa.hit_type (
     id bigserial primary key not null,
     name text not null,
-    display_name text not null,
+    base_number bigint not null,
     unique (name)
 );
 
@@ -23,6 +24,7 @@ create table taxa.position (
     id bigserial primary key not null,
     name text not null,
     display_name text not null,
+    abbreviation text not null,
     unique (name)
 );
 
@@ -36,21 +38,19 @@ create table taxa.fair_ball_type (
 create table taxa.base (
     id bigserial primary key not null,
     name text not null,
-    display_name text not null,
+    bases_achieved bigint not null,
     unique (name)
 );
 
 create table taxa.base_description_format (
     id bigserial primary key not null,
     name text not null,
-    display_name text not null,
     unique (name)
 );
 
 create table taxa.fielding_error_type (
     id bigserial primary key not null,
     name text not null,
-    display_name text not null,
     unique (name)
 );
 

@@ -5,7 +5,7 @@ pub mod taxa {
         taxa.base (id) {
             id -> Int8,
             name -> Text,
-            display_name -> Text,
+            bases_achieved -> Int8,
         }
     }
 
@@ -13,7 +13,6 @@ pub mod taxa {
         taxa.base_description_format (id) {
             id -> Int8,
             name -> Text,
-            display_name -> Text,
         }
     }
 
@@ -22,6 +21,7 @@ pub mod taxa {
             id -> Int8,
             name -> Text,
             display_name -> Text,
+            ends_pa -> Bool,
         }
     }
 
@@ -37,7 +37,6 @@ pub mod taxa {
         taxa.fielding_error_type (id) {
             id -> Int8,
             name -> Text,
-            display_name -> Text,
         }
     }
 
@@ -45,7 +44,7 @@ pub mod taxa {
         taxa.hit_type (id) {
             id -> Int8,
             name -> Text,
-            display_name -> Text,
+            base_number -> Int8,
         }
     }
 
@@ -62,6 +61,7 @@ pub mod taxa {
             id -> Int8,
             name -> Text,
             display_name -> Text,
+            abbreviation -> Text,
         }
     }
 

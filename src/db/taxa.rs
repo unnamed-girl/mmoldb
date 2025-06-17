@@ -1,91 +1,67 @@
-use crate::models::{
-    NewBase, NewBaseDescriptionFormat, NewEventType, NewFairBallType, NewFieldingErrorType,
-    NewHitType, NewPitchType, NewPosition,
-};
-use diesel::{ExpressionMethods, QueryResult};
+use paste::paste;
+
+use diesel::QueryResult;
 use enum_map::EnumMap;
 use rocket_db_pools::diesel::{AsyncPgConnection, RunQueryDsl};
 use std::collections::HashSet;
-use strum::EnumMessage;
+use super::taxa_macro::*;
+use rocket_db_pools::diesel::prelude::*;
 
-trait AsInsertable<'a> {
-    type Insertable;
-
-    fn as_insertable(&self, code_friendly_name: &'a str) -> Self::Insertable;
-}
-
-// strum's Display is used as the code-friendly name and EnumMessage as
-// the human-friendly name (with fallback to Display)
-#[derive(
-    Debug, enum_map::Enum, Eq, PartialEq, Hash, Copy, Clone, strum::Display, strum::EnumMessage,
-)]
-pub enum TaxaEventType {
-    #[strum(message = "ball")]
-    Ball,
-    #[strum(message = "called strike")]
-    CalledStrike,
-    #[strum(message = "swinging strike")]
-    SwingingStrike,
-    #[strum(message = "foul tip")]
-    FoulTip,
-    #[strum(message = "foul ball")]
-    FoulBall,
-    #[strum(message = "hit")]
-    Hit,
-    #[strum(message = "force out")]
-    ForceOut,
-    #[strum(message = "caught out")]
-    CaughtOut,
-    #[strum(message = "grounded out")]
-    GroundedOut,
-    #[strum(message = "walk")]
-    Walk,
-    #[strum(message = "home run")]
-    HomeRun,
-    #[strum(message = "fielding error")]
-    FieldingError,
-    #[strum(message = "hit by pitch")]
-    HitByPitch,
-    #[strum(message = "double play")]
-    DoublePlay,
-    #[strum(message = "fielder's choice")]
-    FieldersChoice,
-    #[strum(message = "error on fielder's choice")]
-    ErrorOnFieldersChoice,
-}
-
-impl<'a> AsInsertable<'a> for TaxaEventType {
-    type Insertable = NewEventType<'a>;
-
-    fn as_insertable(&self, code_friendly_name: &'a str) -> Self::Insertable {
-        let human_friendly_name = self.get_message().unwrap_or_else(|| &code_friendly_name);
-
-        NewEventType {
-            name: &code_friendly_name,
-            display_name: &human_friendly_name,
-        }
+taxa! {
+    #[
+        schema = crate::taxa_schema::taxa::event_type,
+        table = crate::taxa_schema::taxa::event_type::dsl::event_type,
+        id_column = crate::taxa_schema::taxa::event_type::dsl::id,
+    ]
+    pub enum TaxaEventType {
+        #[display_name: str = "ball", ends_pa: bool = false]
+        Ball = 0,
+        #[display_name: str = "called strike", ends_pa: bool = false]
+        CalledStrike = 1,
+        #[display_name: str = "swinging strike", ends_pa: bool = false]
+        SwingingStrike = 2,
+        #[display_name: str = "foul tip", ends_pa: bool = false]
+        FoulTip = 3,
+        #[display_name: str = "foul ball", ends_pa: bool = false]
+        FoulBall = 4,
+        #[display_name: str = "hit", ends_pa: bool = true]
+        Hit = 5,
+        #[display_name: str = "force out", ends_pa: bool = true]
+        ForceOut = 6,
+        #[display_name: str = "caught out", ends_pa: bool = true]
+        CaughtOut = 7,
+        #[display_name: str = "grounded out", ends_pa: bool = true]
+        GroundedOut = 8,
+        #[display_name: str = "walk", ends_pa: bool = true]
+        Walk = 9,
+        #[display_name: str = "home run", ends_pa: bool = true]
+        HomeRun = 10,
+        #[display_name: str = "fielding error", ends_pa: bool = true]
+        FieldingError = 11,
+        #[display_name: str = "hit by pitch", ends_pa: bool = true]
+        HitByPitch = 12,
+        #[display_name: str = "double play", ends_pa: bool = true]
+        DoublePlay = 13,
+        #[display_name: str = "fielder's choice", ends_pa: bool = true]
+        FieldersChoice = 14,
+        #[display_name: str = "error on fielder's choice", ends_pa: bool = true]
+        ErrorOnFieldersChoice = 15,
     }
 }
 
-#[derive(
-    Debug, enum_map::Enum, Eq, PartialEq, Hash, Copy, Clone, strum::Display, strum::EnumMessage,
-)]
-pub enum TaxaHitType {
-    Single,
-    Double,
-    Triple,
-}
-
-impl<'a> AsInsertable<'a> for TaxaHitType {
-    type Insertable = NewHitType<'a>;
-
-    fn as_insertable(&self, code_friendly_name: &'a str) -> Self::Insertable {
-        let human_friendly_name = self.get_message().unwrap_or_else(|| &code_friendly_name);
-
-        NewHitType {
-            name: &code_friendly_name,
-            display_name: &human_friendly_name,
-        }
+taxa! {
+    #[
+        schema = crate::taxa_schema::taxa::hit_type,
+        table = crate::taxa_schema::taxa::hit_type::dsl::hit_type,
+        id_column = crate::taxa_schema::taxa::hit_type::dsl::id,
+    ]
+    pub enum TaxaHitType {
+        #[base_number: i64 = 1]
+        Single = 1,
+        #[base_number: i64 = 2]
+        Double = 2,
+        #[base_number: i64 = 3]
+        Triple = 3,
     }
 }
 
@@ -109,35 +85,40 @@ impl From<mmolb_parsing::enums::Distance> for TaxaHitType {
     }
 }
 
-#[derive(
-    Debug, enum_map::Enum, Eq, PartialEq, Hash, Copy, Clone, strum::Display, strum::EnumMessage,
-)]
-pub enum TaxaPosition {
-    Pitcher,
-    Catcher,
-    FirstBase,
-    SecondBase,
-    ThirdBase,
-    Shortstop,
-    LeftField,
-    CenterField,
-    RightField,
-    StartingPitcher,
-    ReliefPitcher,
-    Closer,
-    DesignatedHitter,
-}
-
-impl<'a> AsInsertable<'a> for TaxaPosition {
-    type Insertable = NewPosition<'a>;
-
-    fn as_insertable(&self, code_friendly_name: &'a str) -> Self::Insertable {
-        let human_friendly_name = self.get_message().unwrap_or_else(|| &code_friendly_name);
-
-        NewPosition {
-            name: &code_friendly_name,
-            display_name: &human_friendly_name,
-        }
+taxa! {
+    #[
+        schema = crate::taxa_schema::taxa::position,
+        table = crate::taxa_schema::taxa::position::dsl::position,
+        id_column = crate::taxa_schema::taxa::position::dsl::id,
+    ]
+    pub enum TaxaPosition {
+        #[display_name: str = "Pitcher", abbreviation: str = "P"]
+        Pitcher = 1,
+        #[display_name: str = "Catcher", abbreviation: str = "C"]
+        Catcher = 2,
+        #[display_name: str = "First base", abbreviation: str = "1B"]
+        FirstBase = 3,
+        #[display_name: str = "Second base", abbreviation: str = "2B"]
+        SecondBase = 4,
+        #[display_name: str = "Third base", abbreviation: str = "3B"]
+        ThirdBase = 5,
+        #[display_name: str = "Shortstop", abbreviation: str = "SS"]
+        Shortstop = 6,
+        #[display_name: str = "Left fielder", abbreviation: str = "LF"]
+        LeftField = 7,
+        #[display_name: str = "Center fielder", abbreviation: str = "CF"]
+        CenterField = 8,
+        #[display_name: str = "Right fielder", abbreviation: str = "RF"]
+        RightField = 9,
+        // TODO The following are roles, not positions
+        #[display_name: str = "Starting pitcher", abbreviation: str = "SP"]
+        StartingPitcher = 10,
+        #[display_name: str = "Relief pitcher", abbreviation: str = "RP"]
+        ReliefPitcher = 11,
+        #[display_name: str = "Closer", abbreviation: str = "CL"]
+        Closer = 12,
+        #[display_name: str = "Designated hitter", abbreviation: str = "DH"]
+        DesignatedHitter = 13,
     }
 }
 
@@ -219,26 +200,21 @@ impl From<mmolb_parsing::enums::FairBallDestination> for TaxaPosition {
     }
 }
 
-#[derive(
-    Debug, enum_map::Enum, Eq, PartialEq, Hash, Copy, Clone, strum::Display, strum::EnumMessage,
-)]
-pub enum TaxaFairBallType {
-    GroundBall,
-    FlyBall,
-    LineDrive,
-    Popup,
-}
-
-impl<'a> AsInsertable<'a> for TaxaFairBallType {
-    type Insertable = NewFairBallType<'a>;
-
-    fn as_insertable(&self, code_friendly_name: &'a str) -> Self::Insertable {
-        let human_friendly_name = self.get_message().unwrap_or_else(|| &code_friendly_name);
-
-        NewFairBallType {
-            name: &code_friendly_name,
-            display_name: &human_friendly_name,
-        }
+taxa! {
+    #[
+        schema = crate::taxa_schema::taxa::fair_ball_type,
+        table = crate::taxa_schema::taxa::fair_ball_type::dsl::fair_ball_type,
+        id_column = crate::taxa_schema::taxa::fair_ball_type::dsl::id,
+    ]
+    pub enum TaxaFairBallType {
+        #[display_name: str = "Ground ball"]
+        GroundBall = 1,
+        #[display_name: str = "Fly ball"]
+        FlyBall = 2,
+        #[display_name: str = "Line drive"]
+        LineDrive = 3,
+        #[display_name: str = "Popup"]
+        Popup = 4,
     }
 }
 
@@ -264,25 +240,23 @@ impl From<mmolb_parsing::enums::FairBallType> for TaxaFairBallType {
     }
 }
 
-#[derive(
-    Debug,
-    enum_map::Enum,
-    Eq,
-    PartialEq,
-    Hash,
-    Copy,
-    Clone,
-    strum::Display,
-    strum::EnumMessage,
-    Ord,
-    PartialOrd,
-)]
-#[repr(i32)]
-pub enum TaxaBase {
-    Home = 0,
-    First = 1,
-    Second = 2,
-    Third = 3,
+taxa! {
+    #[
+        schema = crate::taxa_schema::taxa::base,
+        table = crate::taxa_schema::taxa::base::dsl::base,
+        id_column = crate::taxa_schema::taxa::base::dsl::id,
+        derive = (PartialOrd,)
+    ]
+    pub enum TaxaBase {
+        #[bases_achieved: i64 = 4]
+        Home = 0,
+        #[bases_achieved: i64 = 1]
+        First = 1,
+        #[bases_achieved: i64 = 2]
+        Second = 2,
+        #[bases_achieved: i64 = 3]
+        Third = 3,
+    }
 }
 
 impl TaxaBase {
@@ -292,19 +266,6 @@ impl TaxaBase {
             TaxaBase::First => TaxaBase::Second,
             TaxaBase::Second => TaxaBase::Third,
             TaxaBase::Third => TaxaBase::Home,
-        }
-    }
-}
-
-impl<'a> AsInsertable<'a> for TaxaBase {
-    type Insertable = NewBase<'a>;
-
-    fn as_insertable(&self, code_friendly_name: &'a str) -> Self::Insertable {
-        let human_friendly_name = self.get_message().unwrap_or_else(|| &code_friendly_name);
-
-        NewBase {
-            name: &code_friendly_name,
-            display_name: &human_friendly_name,
         }
     }
 }
@@ -358,25 +319,16 @@ impl From<mmolb_parsing::enums::BaseNameVariant> for TaxaBase {
     }
 }
 
-#[derive(
-    Debug, enum_map::Enum, Eq, PartialEq, Hash, Copy, Clone, strum::Display, strum::EnumMessage,
-)]
-pub enum TaxaBaseDescriptionFormat {
-    NumberB,  // e.g. "1B"
-    Name,     // e.g. "first"
-    NameBase, // e.g. "first base"
-}
-
-impl<'a> AsInsertable<'a> for TaxaBaseDescriptionFormat {
-    type Insertable = NewBaseDescriptionFormat<'a>;
-
-    fn as_insertable(&self, code_friendly_name: &'a str) -> Self::Insertable {
-        let human_friendly_name = self.get_message().unwrap_or_else(|| &code_friendly_name);
-
-        NewBaseDescriptionFormat {
-            name: &code_friendly_name,
-            display_name: &human_friendly_name,
-        }
+taxa! {
+    #[
+        schema = crate::taxa_schema::taxa::base_description_format,
+        table = crate::taxa_schema::taxa::base_description_format::dsl::base_description_format,
+        id_column = crate::taxa_schema::taxa::base_description_format::dsl::id,
+    ]
+    pub enum TaxaBaseDescriptionFormat {
+        NumberB = 1,  // e.g. "1B"
+        Name = 2,     // e.g. "first"
+        NameBase = 3, // e.g. "first base"
     }
 }
 
@@ -437,24 +389,15 @@ impl From<mmolb_parsing::enums::BaseNameVariant> for TaxaBaseDescriptionFormat {
     }
 }
 
-#[derive(
-    Debug, enum_map::Enum, Eq, PartialEq, Hash, Copy, Clone, strum::Display, strum::EnumMessage,
-)]
-pub enum TaxaFieldingErrorType {
-    Fielding,
-    Throwing,
-}
-
-impl<'a> AsInsertable<'a> for TaxaFieldingErrorType {
-    type Insertable = NewFieldingErrorType<'a>;
-
-    fn as_insertable(&self, code_friendly_name: &'a str) -> Self::Insertable {
-        let human_friendly_name = self.get_message().unwrap_or_else(|| &code_friendly_name);
-
-        NewFieldingErrorType {
-            name: &code_friendly_name,
-            display_name: &human_friendly_name,
-        }
+taxa! {
+    #[
+        schema = crate::taxa_schema::taxa::fielding_error_type,
+        table = crate::taxa_schema::taxa::fielding_error_type::dsl::fielding_error_type,
+        id_column = crate::taxa_schema::taxa::fielding_error_type::dsl::id,
+    ]
+    pub enum TaxaFieldingErrorType {
+        Fielding = 1,
+        Throwing = 2,
     }
 }
 
@@ -476,31 +419,31 @@ impl From<mmolb_parsing::enums::FieldingErrorType> for TaxaFieldingErrorType {
     }
 }
 
-#[derive(
-    Debug, enum_map::Enum, Eq, PartialEq, Hash, Copy, Clone, strum::Display, strum::EnumMessage,
-)]
-pub enum TaxaPitchType {
-    Fastball,
-    Sinker,
-    Slider,
-    Changeup,
-    Curveball,
-    Cutter,
-    Sweeper,
-    KnuckleCurve,
-    Splitter,
-}
-
-impl<'a> AsInsertable<'a> for TaxaPitchType {
-    type Insertable = NewPitchType<'a>;
-
-    fn as_insertable(&self, code_friendly_name: &'a str) -> Self::Insertable {
-        let human_friendly_name = self.get_message().unwrap_or_else(|| &code_friendly_name);
-
-        NewPitchType {
-            name: &code_friendly_name,
-            display_name: &human_friendly_name,
-        }
+taxa! {
+    #[
+        schema = crate::taxa_schema::taxa::pitch_type,
+        table = crate::taxa_schema::taxa::pitch_type::dsl::pitch_type,
+        id_column = crate::taxa_schema::taxa::pitch_type::dsl::id,
+    ]
+    pub enum TaxaPitchType {
+        #[display_name: str = "Fastball"]
+        Fastball = 1,
+        #[display_name: str = "Sinker"]
+        Sinker = 2,
+        #[display_name: str = "Slider"]
+        Slider = 3,
+        #[display_name: str = "Changeup"]
+        Changeup = 4,
+        #[display_name: str = "Curveball"]
+        Curveball = 5,
+        #[display_name: str = "Cutter"]
+        Cutter = 6,
+        #[display_name: str = "Sweeper"]
+        Sweeper = 7,
+        #[display_name: str = "Knuckle curve"]
+        KnuckleCurve = 8,
+        #[display_name: str = "Splitter"]
+        Splitter = 9,
     }
 }
 
@@ -547,119 +490,17 @@ pub struct Taxa {
     pitch_type_mapping: EnumMap<TaxaPitchType, i64>,
 }
 
-macro_rules! make_mapping {
-    {
-        $taxa_enum:ty,
-        $table_name:path,
-        $name_field:path,
-        $display_name_field:path,
-        $id_field:path,
-        $conn:expr,
-    } => {{
-        {
-            let mut mapping: EnumMap<$taxa_enum, i64> = EnumMap::default();
-
-            for (taxa, key) in mapping.iter_mut() {
-                let code_friendly_name = format!("{}", taxa);
-                let new_taxa = taxa.as_insertable(&code_friendly_name);
-
-                *key = diesel::insert_into($table_name)
-                    .values(&new_taxa)
-                    .on_conflict($name_field)
-                    .do_update()
-                    .set($display_name_field.eq(&new_taxa.display_name))
-                    .returning($id_field)
-                    .get_result($conn)
-                    .await?;
-            }
-
-            // Final safety check: Mapping should hold all distinct values
-            // Implemented as # of unique keys == # of unique values
-            assert_eq!(
-                mapping
-                    .iter()
-                    .map(|(key, _)| key)
-                    .collect::<HashSet<_>>()
-                    .len(),
-                mapping
-                    .iter()
-                    .map(|(_, value)| value)
-                    .collect::<HashSet<_>>()
-                    .len(),
-            );
-
-            mapping
-        }
-    }};
-}
-
 impl Taxa {
     pub async fn new(conn: &mut AsyncPgConnection) -> QueryResult<Self> {
         Ok(Self {
-            event_type_mapping: make_mapping! {
-                TaxaEventType,
-                crate::taxa_schema::taxa::event_type::dsl::event_type,
-                crate::taxa_schema::taxa::event_type::dsl::name,
-                crate::taxa_schema::taxa::event_type::dsl::display_name,
-                crate::taxa_schema::taxa::event_type::dsl::id,
-                conn,
-            },
-            hit_type_mapping: make_mapping! {
-                TaxaHitType,
-                crate::taxa_schema::taxa::hit_type::dsl::hit_type,
-                crate::taxa_schema::taxa::hit_type::dsl::name,
-                crate::taxa_schema::taxa::hit_type::dsl::display_name,
-                crate::taxa_schema::taxa::hit_type::dsl::id,
-                conn,
-            },
-            position_mapping: make_mapping! {
-                TaxaPosition,
-                crate::taxa_schema::taxa::position::dsl::position,
-                crate::taxa_schema::taxa::position::dsl::name,
-                crate::taxa_schema::taxa::position::dsl::display_name,
-                crate::taxa_schema::taxa::position::dsl::id,
-                conn,
-            },
-            fair_ball_type_mapping: make_mapping! {
-                TaxaFairBallType,
-                crate::taxa_schema::taxa::fair_ball_type::dsl::fair_ball_type,
-                crate::taxa_schema::taxa::fair_ball_type::dsl::name,
-                crate::taxa_schema::taxa::fair_ball_type::dsl::display_name,
-                crate::taxa_schema::taxa::fair_ball_type::dsl::id,
-                conn,
-            },
-            base_mapping: make_mapping! {
-                TaxaBase,
-                crate::taxa_schema::taxa::base::dsl::base,
-                crate::taxa_schema::taxa::base::dsl::name,
-                crate::taxa_schema::taxa::base::dsl::display_name,
-                crate::taxa_schema::taxa::base::dsl::id,
-                conn,
-            },
-            base_description_format_mapping: make_mapping! {
-                TaxaBaseDescriptionFormat,
-                crate::taxa_schema::taxa::base_description_format::dsl::base_description_format,
-                crate::taxa_schema::taxa::base_description_format::dsl::name,
-                crate::taxa_schema::taxa::base_description_format::dsl::display_name,
-                crate::taxa_schema::taxa::base_description_format::dsl::id,
-                conn,
-            },
-            fielding_error_type_mapping: make_mapping! {
-                TaxaFieldingErrorType,
-                crate::taxa_schema::taxa::fielding_error_type::dsl::fielding_error_type,
-                crate::taxa_schema::taxa::fielding_error_type::dsl::name,
-                crate::taxa_schema::taxa::fielding_error_type::dsl::display_name,
-                crate::taxa_schema::taxa::fielding_error_type::dsl::id,
-                conn,
-            },
-            pitch_type_mapping: make_mapping! {
-                TaxaPitchType,
-                crate::taxa_schema::taxa::pitch_type::dsl::pitch_type,
-                crate::taxa_schema::taxa::pitch_type::dsl::name,
-                crate::taxa_schema::taxa::pitch_type::dsl::display_name,
-                crate::taxa_schema::taxa::pitch_type::dsl::id,
-                conn,
-            },
+            event_type_mapping: TaxaEventType::make_id_mapping(conn).await?,
+            hit_type_mapping: TaxaHitType::make_id_mapping(conn).await?,
+            position_mapping: TaxaPosition::make_id_mapping(conn).await?,
+            fair_ball_type_mapping: TaxaFairBallType::make_id_mapping(conn).await?,
+            base_mapping: TaxaBase::make_id_mapping(conn).await?,
+            base_description_format_mapping: TaxaBaseDescriptionFormat::make_id_mapping(conn).await?,
+            fielding_error_type_mapping: TaxaFieldingErrorType::make_id_mapping(conn).await?,
+            pitch_type_mapping: TaxaPitchType::make_id_mapping(conn).await?,
         })
     }
 

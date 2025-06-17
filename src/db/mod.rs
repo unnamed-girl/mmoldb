@@ -4,6 +4,7 @@
 
 mod taxa;
 mod to_db_format;
+mod taxa_macro;
 
 pub use crate::db::taxa::{
     Taxa, TaxaBase, TaxaBaseDescriptionFormat, TaxaBaseWithDescriptionFormat, TaxaEventType,
