@@ -951,7 +951,14 @@ impl<'g> Game<'g> {
     }
 
     pub fn is_postseason(&self) -> bool {
-        self.info.day > 120
+        if self.info.season == 0 {
+            // s0 was 120 days of every team playing every day
+            self.info.day > 120
+        } else {
+            // s1 and onwards will be 240 days of teams playing every even (lesser league) or odd
+            // (greater league) day
+            self.info.day > 240
+        }
     }
 
     fn batting_team(&self) -> &TeamInGame<'g> {
