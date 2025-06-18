@@ -168,8 +168,17 @@ create table data.events (
     -- note: runs scored, outs on play, steal info, etc. are all computed from data.event_baserunners
 
     -- player info
+    pitcher_name text not null,
     batter_name text not null,
-    pitcher_name text not null
+    -- a number that starts at 0 and is incremented whenever the *next* batter steps up to the plate.
+    -- each team has a separate batter_count. this can be used to distinguish the boundary
+    -- between batter appearances, in combination with batter_subcount.
+    batter_count int not null,
+    -- a number that starts as 0 and is incremented whenever the *same* batter steps up to the plate.
+    -- this only happens the inning after an inning-ending CS (for now).
+    -- each batter_count has a separate batter_subcount. this number will usually
+    -- be 0, sometimes be 1, and as of season 1 there is no way for it to ever be higher than 1
+    batter_subcount int not null
     -- note: more data is in data.event_baserunners and data.event_fielders
 
     -- fair_ball_event_index, fair_ball_type, and fair_ball_direction should in sync w/r/t null-ness

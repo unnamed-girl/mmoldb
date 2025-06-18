@@ -31,6 +31,8 @@ pub fn event_to_row<'e>(
         outs_after: event.outs_after,
         batter_name: event.batter_name,
         pitcher_name: event.pitcher_name,
+        batter_count: event.batter_count,
+        batter_subcount: event.batter_subcount,
     }
 }
 
@@ -140,5 +142,7 @@ pub fn row_to_event<'e>(
         described_as_sacrifice: event.described_as_sacrifice,
         fielders,
         baserunners,
+        batter_count: event.batter_count,
+        batter_subcount: event.batter_subcount,
     })
 }

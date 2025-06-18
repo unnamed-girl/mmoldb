@@ -46,8 +46,10 @@ pub mod data {
             count_strikes -> Int4,
             outs_before -> Int4,
             outs_after -> Int4,
-            batter_name -> Text,
             pitcher_name -> Text,
+            batter_name -> Text,
+            batter_count -> Int4,
+            batter_subcount -> Int4,
         }
     }
 

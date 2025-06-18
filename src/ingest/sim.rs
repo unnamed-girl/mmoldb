@@ -72,8 +72,8 @@ pub struct EventDetail<StrT: Clone> {
     pub count_strikes: u8,
     pub outs_before: i32,
     pub outs_after: i32,
-    pub batter_name: StrT,
     pub pitcher_name: StrT,
+    pub batter_name: StrT,
     pub fielders: Vec<EventDetailFielder<StrT>>,
 
     pub detail_type: TaxaEventType,
@@ -87,6 +87,8 @@ pub struct EventDetail<StrT: Clone> {
     pub described_as_sacrifice: Option<bool>,
 
     pub baserunners: Vec<EventDetailRunner<StrT>>,
+    pub batter_count: i32,
+    pub batter_subcount: i32,
 }
 
 #[derive(Debug)]
@@ -201,6 +203,10 @@ pub struct TeamInGame<'g> {
     // of automatic runners after an inning-ending CS
     automatic_runner: Option<&'g str>,
     batter_stats: HashMap<&'g str, BatterStats>,
+    batter_count: i32,
+    batter_subcount: i32,
+    advance_to_next_batter: bool,
+    has_seen_first_batter: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -746,7 +752,7 @@ impl<'g> EventDetailBuilder<'g> {
             },
             pitcher_name: if let MaybePlayer::Player(pitcher) = &self.raw_event.pitcher {
                 pitcher
-            } else { 
+            } else {
                 // TODO Correct error handling
                 panic!("Must have a pitcher when building an EventDetail");
             },
@@ -761,6 +767,8 @@ impl<'g> EventDetailBuilder<'g> {
             pitch_zone: self.pitch.map(|pitch| pitch.zone as i32),
             described_as_sacrifice: self.described_as_sacrifice,
             baserunners,
+            batter_count: game.batting_team().batter_count,
+            batter_subcount: game.batting_team().batter_subcount,
         }
     }
 }
@@ -928,6 +936,10 @@ impl<'g> Game<'g> {
                 team_id: game_data.away_team_id.as_str(),
                 automatic_runner: None,
                 batter_stats: away_batter_stats,
+                batter_count: 0,
+                batter_subcount: 0,
+                advance_to_next_batter: false,
+                has_seen_first_batter: false,
             },
             home: TeamInGame {
                 team_name: home_team_name,
@@ -935,6 +947,10 @@ impl<'g> Game<'g> {
                 team_id: game_data.home_team_id.as_str(),
                 automatic_runner: None,
                 batter_stats: home_batter_stats,
+                batter_count: 0,
+                batter_subcount: 0,
+                advance_to_next_batter: false,
+                has_seen_first_batter: false,
             },
             state: GameState {
                 prev_event_type: ParsedEventMessageDiscriminants::PlayBall,
@@ -1119,6 +1135,7 @@ impl<'g> Game<'g> {
 
         self.state.count_strikes = 0;
         self.state.count_balls = 0;
+        self.batting_team_mut().advance_to_next_batter = true;
 
         if self.is_walkoff() {
             // If it's the bottom of a 9th or later, and the score is
@@ -1606,7 +1623,7 @@ impl<'g> Game<'g> {
                         ));
                         self.batting_team_mut().team_emoji = batting_team_emoji;
                     }
-                    
+
                     // Add the automatic runner to our state without emitting a db event for it.
                     // This way they will just show up on base without having an event that put
                     // them there, which I think is the correct interpretation.
@@ -1831,6 +1848,19 @@ impl<'g> Game<'g> {
                             "Batter {batter} is new to this game. Assuming they were swapped in \
                             using a mote.",
                         ));
+                    }
+
+                    let team = self.batting_team_mut();
+                    if team.advance_to_next_batter {
+                        team.batter_count += 1;
+                        team.batter_subcount = 0;
+                        team.advance_to_next_batter = false;
+                    } else if team.has_seen_first_batter {
+                        team.batter_subcount += 1;
+                    } else {
+                        team.batter_count = 0;
+                        team.batter_subcount = 0;
+                        team.has_seen_first_batter = true;
                     }
 
                     check_now_batting_stats(&stats, self.batter_stats_mut(batter), ingest_logs);
