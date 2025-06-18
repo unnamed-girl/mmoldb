@@ -8,15 +8,16 @@ use log::warn;
 use mmolb_parsing::ParsedEventMessage;
 use mmolb_parsing::enums::{
     Base, BaseNameVariant, BatterStat, Distance, FairBallDestination, FairBallType, FoulType,
-    GameOverMessage, HomeAway, NowBattingStats, Position, StrikeType, TopBottom,
+    GameOverMessage, HomeAway, NowBattingStats, StrikeType, TopBottom,
 };
 use mmolb_parsing::parsed_event::{
     BaseSteal, FieldingAttempt, ParsedEventMessageDiscriminants, PositionedPlayer, RunnerAdvance,
-    RunnerOut, StartOfInningPitcher,
+    RunnerOut,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Write;
 use std::fmt::{Debug, Formatter};
+use mmolb_parsing::game::MaybePlayer;
 use strum::IntoDiscriminant;
 use thiserror::Error;
 
@@ -195,7 +196,6 @@ pub struct TeamInGame<'g> {
     team_name: &'g str,
     team_emoji: &'g str,
     team_id: &'g str,
-    pitcher: PositionedPlayer<&'g str>,
     // I need another field to store the automatic runner because it's
     // not always the batter who most recently stepped up, in the case
     // of automatic runners after an inning-ending CS
@@ -374,6 +374,7 @@ fn is_matching_steal<'g>(prev_runner: &RunnerOn<'g>, steal: &BaseSteal<&'g str>)
 }
 
 struct EventDetailBuilder<'g> {
+    raw_event: &'g mmolb_parsing::game::Event,
     prev_game_state: GameState<'g>,
     game_event_index: usize,
     fair_ball_event_index: Option<usize>,
@@ -737,8 +738,18 @@ impl<'g> EventDetailBuilder<'g> {
             count_strikes: game.state.count_strikes,
             outs_before: self.prev_game_state.outs,
             outs_after: game.state.outs,
-            batter_name,
-            pitcher_name: game.active_pitcher().name,
+            batter_name: if let MaybePlayer::Player(batter) = &self.raw_event.batter {
+                batter
+            } else {
+                // TODO Correct error handling
+                panic!("Must have a batter when building an EventDetail");
+            },
+            pitcher_name: if let MaybePlayer::Player(pitcher) = &self.raw_event.pitcher {
+                pitcher
+            } else { 
+                // TODO Correct error handling
+                panic!("Must have a pitcher when building an EventDetail");
+            },
             fielders: self.fielders,
             detail_type: type_detail,
             hit_type: self.hit_type,
@@ -915,10 +926,6 @@ impl<'g> Game<'g> {
                 team_name: away_team_name,
                 team_emoji: away_team_emoji,
                 team_id: game_data.away_team_id.as_str(),
-                pitcher: PositionedPlayer {
-                    name: away_pitcher_name,
-                    position: Position::StartingPitcher,
-                },
                 automatic_runner: None,
                 batter_stats: away_batter_stats,
             },
@@ -926,10 +933,6 @@ impl<'g> Game<'g> {
                 team_name: home_team_name,
                 team_emoji: home_team_emoji,
                 team_id: game_data.home_team_id.as_str(),
-                pitcher: PositionedPlayer {
-                    name: home_pitcher_name,
-                    position: Position::StartingPitcher,
-                },
                 automatic_runner: None,
                 batter_stats: home_batter_stats,
             },
@@ -1001,20 +1004,6 @@ impl<'g> Game<'g> {
                 "Unexpected number of strikes: expected {}, but saw {strikes}",
                 self.state.count_strikes
             ));
-        }
-    }
-
-    fn active_pitcher(&self) -> &PositionedPlayer<&'g str> {
-        match self.state.inning_half {
-            TopBottom::Top => &self.home.pitcher,
-            TopBottom::Bottom => &self.away.pitcher,
-        }
-    }
-
-    fn active_pitcher_mut(&mut self) -> &mut PositionedPlayer<&'g str> {
-        match self.state.inning_half {
-            TopBottom::Top => &mut self.home.pitcher,
-            TopBottom::Bottom => &mut self.away.pitcher,
         }
     }
 
@@ -1097,8 +1086,10 @@ impl<'g> Game<'g> {
         &self,
         prev_game_state: GameState<'g>,
         game_event_index: usize,
+        raw_event: &'g mmolb_parsing::game::Event,
     ) -> EventDetailBuilder<'g> {
         EventDetailBuilder {
+            raw_event,
             prev_game_state,
             fair_ball_event_index: None,
             game_event_index,
@@ -1556,13 +1547,13 @@ impl<'g> Game<'g> {
         &mut self,
         index: usize,
         event: &ParsedEventMessage<&'g str>,
-        raw_event: &mmolb_parsing::game::Event,
+        raw_event: &'g mmolb_parsing::game::Event,
         ingest_logs: &mut IngestLogs,
     ) -> Result<Option<EventDetail<&'g str>>, SimFatalError> {
         let previous_event = self.state.prev_event_type;
         let this_event_discriminant = event.discriminant();
 
-        let detail_builder = self.detail_builder(self.state.clone(), index);
+        let detail_builder = self.detail_builder(self.state.clone(), index, raw_event);
 
         let result = match self.state.phase {
             GamePhase::ExpectInningStart => game_event!(
@@ -1573,7 +1564,7 @@ impl<'g> Game<'g> {
                     side,
                     batting_team_emoji,
                     batting_team_name,
-                    pitcher_status,
+                    pitcher_status: _,
                     automatic_runner,
                 } => {
                     if *side != self.state.inning_half.flip() {
@@ -1615,57 +1606,7 @@ impl<'g> Game<'g> {
                         ));
                         self.batting_team_mut().team_emoji = batting_team_emoji;
                     }
-
-                    match pitcher_status {
-                        StartOfInningPitcher::Same { name, emoji } => {
-                            if *name != self.active_pitcher().name {
-                                ingest_logs.info(format!(
-                                    "At {} of {}, the message indicated there was no pitcher swap \
-                                    but the named pitcher ({name}) did not match the previously \
-                                    active pitcher ({}). Assuming a mote was used.",
-                                    self.state.inning_half,
-                                    self.state.inning_number,
-                                    self.active_pitcher().name,
-                                ));
-                            } else {
-                                ingest_logs.info(format!(
-                                    "Started {} of {} with same pitcher {emoji} {name}",
-                                    self.state.inning_half,
-                                    self.state.inning_number,
-                                ));
-                            }
-                        }
-                        StartOfInningPitcher::Different { arriving_pitcher, arriving_position, leaving_pitcher, leaving_position } => {
-                            if *leaving_pitcher != self.active_pitcher().name {
-                                ingest_logs.info(format!(
-                                    "The pitcher who left ({}) did not match the previously active \
-                                    pitcher ({}). Assuming a mote was used.",
-                                    leaving_pitcher, self.active_pitcher().name,
-                                ));
-                            }
-
-                            if *leaving_position != self.active_pitcher().position {
-                                ingest_logs.info(format!(
-                                    "The position of the pitcher who left ({}) did not match the \
-                                    previously active pitcher's position ({}). Assuming a mote was \
-                                    used.",
-                                    leaving_position, self.active_pitcher().position,
-                                ));
-                            }
-
-                            ingest_logs.info(format!(
-                                "Started {} of {} with new pitcher {arriving_position} {arriving_pitcher}",
-                                self.state.inning_half,
-                                self.state.inning_number,
-                            ));
-
-                            *self.active_pitcher_mut() = PositionedPlayer {
-                                name: arriving_pitcher,
-                                position: *arriving_position,
-                            };
-                        }
-                    }
-
+                    
                     // Add the automatic runner to our state without emitting a db event for it.
                     // This way they will just show up on base without having an event that put
                     // them there, which I think is the correct interpretation.
@@ -2204,50 +2145,12 @@ impl<'g> Game<'g> {
             GamePhase::ExpectMoundVisitOutcome => game_event!(
                 (previous_event, event),
                 [ParsedEventMessageDiscriminants::PitcherRemains]
-                ParsedEventMessage::PitcherRemains { remaining_pitcher } => {
-                    if remaining_pitcher.name != self.active_pitcher().name {
-                        ingest_logs.warn(format!(
-                            "In a PitcherRemains event, the pitcher who remained ({}) did not \
-                            match the active pitcher ({})",
-                            remaining_pitcher.name, self.active_pitcher().name,
-                        ));
-                    }
-
-                    if remaining_pitcher.position != self.active_pitcher().position {
-                        ingest_logs.warn(format!(
-                            "In a PitcherRemains event, the position of the pitcher who remained \
-                            ({}) did not match the active pitcher's position ({})",
-                            remaining_pitcher.position, self.active_pitcher().position,
-                        ));
-                    }
-
+                ParsedEventMessage::PitcherRemains { .. } => {
                     self.state.phase = GamePhase::ExpectNowBatting;
                     None
                 },
                 [ParsedEventMessageDiscriminants::PitcherSwap]
-                ParsedEventMessage::PitcherSwap { arriving_pitcher, arriving_position, leaving_pitcher, leaving_position } => {
-                    if *leaving_pitcher != self.active_pitcher().name {
-                        ingest_logs.info(format!(
-                            "In a PitcherSwap event, the pitcher who left ({}) did not match the \
-                            previously active pitcher ({}). Assuming a mote was used.",
-                            leaving_pitcher, self.active_pitcher().name,
-                        ));
-                    }
-
-                    if *leaving_position != self.active_pitcher().position {
-                        ingest_logs.info(format!(
-                            "In a PitcherSwap event, the position of the pitcher who left ({}) \
-                            did not match the previously active pitcher's position ({}). Assuming \
-                            a mote was used",
-                            leaving_position, self.active_pitcher().position,
-                        ));
-                    }
-
-                    *self.active_pitcher_mut() = PositionedPlayer {
-                        name: arriving_pitcher,
-                        position: *arriving_position,
-                    };
-
+                ParsedEventMessage::PitcherSwap { .. } => {
                     self.state.phase = GamePhase::ExpectNowBatting;
                     None
                 },
