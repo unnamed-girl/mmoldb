@@ -156,11 +156,18 @@ impl IngestLogs {
 }
 
 #[derive(Debug, Copy, Clone)]
+struct Pitch {
+    pitch_type: mmolb_parsing::enums::PitchType,
+    pitch_speed: f32,
+    pitch_zone: u8,
+}
+
+#[derive(Debug, Copy, Clone)]
 struct FairBall {
     index: usize,
     fair_ball_type: FairBallType,
     fair_ball_destination: FairBallDestination,
-    pitch: Option<mmolb_parsing::game::Pitch>
+    pitch: Option<Pitch>
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -388,7 +395,7 @@ struct EventDetailBuilder<'g> {
     fair_ball_direction: Option<TaxaPosition>,
     hit_type: Option<TaxaHitType>,
     fielding_error_type: Option<TaxaFieldingErrorType>,
-    pitch: Option<mmolb_parsing::game::Pitch>,
+    pitch: Option<Pitch>,
     described_as_sacrifice: Option<bool>,
     fielders: Vec<EventDetailFielder<&'g str>>,
     advances: Vec<RunnerAdvance<&'g str>>,
@@ -534,7 +541,7 @@ impl<'g> EventDetailBuilder<'g> {
         self
     }
 
-    fn pitch(mut self, pitch: Option<mmolb_parsing::game::Pitch>) -> Self {
+    fn pitch(mut self, pitch: Option<Pitch>) -> Self {
         self.pitch = pitch;
         self
     }
@@ -763,8 +770,8 @@ impl<'g> EventDetailBuilder<'g> {
             fair_ball_direction: self.fair_ball_direction,
             fielding_error_type: self.fielding_error_type,
             pitch_type: self.pitch.map(|pitch| pitch.pitch_type.into()),
-            pitch_speed: self.pitch.map(|pitch| pitch.speed as f64),
-            pitch_zone: self.pitch.map(|pitch| pitch.zone as i32),
+            pitch_speed: self.pitch.map(|pitch| pitch.pitch_speed as f64),
+            pitch_zone: self.pitch.map(|pitch| pitch.pitch_zone as i32),
             described_as_sacrifice: self.described_as_sacrifice,
             baserunners,
             batter_count: game.batting_team().batter_count,
@@ -1699,9 +1706,16 @@ impl<'g> Game<'g> {
                 },
             ),
             GamePhase::ExpectPitch(batter_name) => {
-                let pitch = raw_event.pitch.map(|p| p);
-                if pitch.is_none() {
-                    ingest_logs.error(format!("Expected event to have a pitch"));
+                let pitch = raw_event.pitch.as_ref().and_then(|p| Some(Pitch {
+                    pitch_speed: p.speed,
+                    pitch_type: *p.pitch_type.inner()?,
+                    pitch_zone: p.zone
+                }));
+
+                if raw_event.pitch.is_none() {
+                    ingest_logs.error(format!("Event is mising a pitch"));
+                } else if pitch.is_none() {
+                    ingest_logs.error(format!("Pitch type wasn't recognized"));
                 }
 
                 game_event!(
