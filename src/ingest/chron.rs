@@ -14,28 +14,28 @@ pub enum ChronError {
     Deserialize(#[from] reqwest::Error),
 }
 
-#[derive(Deserialize)]
+// This is exactly like ChronEntities except it contains its own page 
+// token instead of the next page's token. The first page's token is
+// None
+#[derive(Debug, Deserialize)]
+pub struct ChronPage<EntityT> {
+    pub items: Vec<ChronEntity<EntityT>>,
+    pub page_token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct ChronEntities<EntityT> {
     pub items: Vec<ChronEntity<EntityT>>,
     pub next_page: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct ChronEntity<EntityT> {
     pub kind: String,
     pub entity_id: String,
     pub valid_from: DateTime<Utc>,
     pub valid_until: Option<DateTime<Utc>>,
     pub data: EntityT,
-}
-
-pub enum StreamItem<EntityT> {
-    Entity(ChronEntity<EntityT>),
-    // This is emitted after every entity from its page has been emitted. The idea is that you can
-    // store the most recent page token from CompletedPage and use it to pick up where you left off
-    // in a subsequent call to entities_with_page_breaks. Note that if you do this you'll still
-    // see duplicates unless you stop processing exactly on a page boundary.
-    CompletedPage(String),
 }
 
 async fn get_entities_page<EntityT: for<'a> Deserialize<'a>>(
@@ -61,13 +61,13 @@ async fn get_entities_page<EntityT: for<'a> Deserialize<'a>>(
     Ok(response)
 }
 
-pub fn entities_with_page_breaks<EntityT: for<'a> Deserialize<'a>>(
+pub fn entity_pages<EntityT: for<'a> Deserialize<'a>>(
     client: &ClientWithMiddleware,
     cache_mode: http_cache_reqwest::CacheMode,
     kind: &str,
     count: usize,
     first_page: Option<String>,
-) -> impl Stream<Item = Result<StreamItem<EntityT>, ChronError>> {
+) -> impl Stream<Item = Result<ChronPage<EntityT>, ChronError>> {
     enum State {
         Continue(Option<String>),
         End,
@@ -81,14 +81,17 @@ pub fn entities_with_page_breaks<EntityT: for<'a> Deserialize<'a>>(
                 State::Continue(this_page) => {
                     match get_entities_page(client, cache_mode, kind, &count, this_page.as_deref()).await {
                         Ok(response) => {
+                            let page = ChronPage {
+                                items: response.items,
+                                page_token: this_page,
+                            };
+                            
                             if let Some(next_page) = response.next_page {
-                                Some((Ok((response.items, this_page)), State::Continue(Some(next_page))))
+                                Some((Ok(page), State::Continue(Some(next_page))))
                             } else {
                                 // No next token means it's the end of the stream, but we still have
-                                // to return the item we have. Also, don't pass through this_page 
-                                // because that means a completed page. This page might not be 
-                                // completed.
-                                Some((Ok((response.items, None)), State::End))
+                                // to return the item we have.
+                                Some((Ok(page), State::End))
                             }
                         }
                         Err(err) => {
@@ -103,12 +106,4 @@ pub fn entities_with_page_breaks<EntityT: for<'a> Deserialize<'a>>(
             }
         }
     })
-        .map_ok(|(entities, this_page)| {
-            stream::iter(
-                entities.into_iter()
-                    .map(|entity| Ok(StreamItem::Entity(entity)))
-                    .chain(this_page.map(|page| Ok(StreamItem::CompletedPage(page))))
-            )
-        })
-        .try_flatten()
 }

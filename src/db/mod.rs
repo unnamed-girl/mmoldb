@@ -135,12 +135,12 @@ pub async fn mark_ingest_finished(
     at: DateTime<Utc>,
     last_completed_page: Option<&str>,
 ) -> QueryResult<()> {
-    use crate::data_schema::data::ingests::dsl::*;
+    use crate::data_schema::data::ingests::dsl;
 
-    diesel::update(ingests.filter(id.eq(ingest_id)))
+    diesel::update(dsl::ingests.filter(dsl::id.eq(ingest_id)))
         .set((
-            finished_at.eq(at.naive_utc()),
-            last_completed_page.eq(last_completed_page),
+            dsl::finished_at.eq(at.naive_utc()),
+            dsl::last_completed_page.eq(last_completed_page),
          ))
         .execute(conn)
         .await
