@@ -2297,6 +2297,11 @@ impl<'g> Game<'g> {
                 ParsedEventMessage::WeatherDelivery { team, team_emoji, player, item_emoji, item } => {
                     // TODO Don't ignore weather delivery
                     None
+                },
+                [ParsedEventMessageDiscriminants::WeatherDeliveryDiscard]
+                ParsedEventMessage::WeatherDeliveryDiscard { item_emoji, item } => {
+                    // TODO Don't ignore weather delivery discard
+                    None
                 }
             ),
             GamePhase::Finished => game_event!((previous_event, event)),
