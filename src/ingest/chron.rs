@@ -1,6 +1,5 @@
 use chrono::{DateTime, Utc};
-use futures::{stream, Stream, TryStreamExt};
-use itertools::Itertools;
+use futures::{stream, Stream};
 use reqwest_middleware::ClientWithMiddleware;
 use serde::Deserialize;
 use thiserror::Error;
@@ -19,7 +18,7 @@ pub enum ChronError {
 // None
 #[derive(Debug, Deserialize)]
 pub struct ChronPage<EntityT> {
-    pub items: Vec<ChronEntity<EntityT>>,
+    pub items: Vec<ChronEntity<EntityT >>,
     pub page_token: Option<String>,
 }
 

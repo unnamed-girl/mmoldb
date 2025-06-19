@@ -2,7 +2,6 @@ use crate::db::{
     TaxaBase, TaxaBaseDescriptionFormat, TaxaBaseWithDescriptionFormat, TaxaEventType,
     TaxaFairBallType, TaxaFieldingErrorType, TaxaHitType, TaxaPitchType, TaxaPosition,
 };
-use crate::ingest::CashewsGameResponse;
 use itertools::{EitherOrBoth, Itertools, PeekingNext};
 use log::warn;
 use mmolb_parsing::ParsedEventMessage;
@@ -12,13 +11,11 @@ use mmolb_parsing::enums::{
 };
 use mmolb_parsing::parsed_event::{BaseSteal, FieldingAttempt, ParsedEventMessageDiscriminants, PositionedPlayer, RunnerAdvance, RunnerOut, StartOfInningPitcher};
 use std::collections::{HashMap, VecDeque};
-use std::fmt::{Display, Write};
+use std::fmt::{Write};
 use std::fmt::{Debug, Formatter};
 use mmolb_parsing::game::MaybePlayer;
 use strum::IntoDiscriminant;
 use thiserror::Error;
-
-type GameInfo = CashewsGameResponse;
 
 #[derive(Debug, Error)]
 pub enum SimFatalError {
@@ -2299,12 +2296,12 @@ impl<'g> Game<'g> {
                     None
                 },
                 [ParsedEventMessageDiscriminants::WeatherDelivery]
-                ParsedEventMessage::WeatherDelivery { team, team_emoji, player, item_emoji, item } => {
+                ParsedEventMessage::WeatherDelivery { .. } => {
                     // TODO Don't ignore weather delivery
                     None
                 },
                 [ParsedEventMessageDiscriminants::WeatherDeliveryDiscard]
-                ParsedEventMessage::WeatherDeliveryDiscard { item_emoji, item } => {
+                ParsedEventMessage::WeatherDeliveryDiscard { .. } => {
                     // TODO Don't ignore weather delivery discard
                     None
                 }

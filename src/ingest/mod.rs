@@ -461,45 +461,64 @@ async fn ingest_task_runner(
             }
         }
 
-        // Get a db connection and do the ingest
+        let ingest_result = do_ingest(
+            &pool,
+            &taxa,
+            &client,
+            &config,
+            &mut shutdown,
+            ingest_start,
+        )
+        .await;
+
         match pool.get().await {
             Ok(mut conn) => {
-                let ingest_result = do_ingest(
-                    &mut conn,
-                    &taxa,
-                    &client,
-                    &config,
-                    &mut shutdown,
-                    ingest_start,
-                )
-                .await;
-                if let Err((err, ingest_id)) = ingest_result {
-                    if let Some(ingest_id) = ingest_id {
-                        warn!(
-                            "Fatal error in game ingest: {}. This ingest is aborted.",
-                            err
-                        );
-                        match db::mark_ingest_aborted(&mut conn, ingest_id, Utc::now()).await {
-                            Ok(()) => {}
+                match ingest_result {
+                    Ok((ingest_id, last_completed_page)) => {
+                        let ingest_end = Utc::now();
+                        match db::mark_ingest_finished(&mut conn, ingest_id, ingest_end, last_completed_page.as_deref()).await {
+                            Ok(()) => {
+                                info!(
+                                    "Marked ingest {ingest_id} finished {:#}.",
+                                    HumanTime::from(ingest_end - ingest_start),
+                                );
+                            }
                             Err(err) => {
-                                warn!("Failed to mark game ingest as aborted: {}", err);
+                                warn!("Failed to mark game ingest as finished: {}", err);
                             }
                         }
-                    } else {
-                        warn!(
-                            "Fatal error in game ingest before adding ingest to database: {}. \
-                            This ingest is aborted.",
-                            err,
-                        );
+                    }
+                    Err((err, ingest_id)) => {
+                        if let Some(ingest_id) = ingest_id {
+                            warn!(
+                                "Fatal error in game ingest: {}. This ingest is aborted.",
+                                err
+                            );
+                            match db::mark_ingest_aborted(&mut conn, ingest_id, Utc::now()).await {
+                                Ok(()) => {}
+                                Err(err) => {
+                                    warn!("Failed to mark game ingest as aborted: {}", err);
+                                }
+                            }
+                        } else {
+                            warn!(
+                                "Fatal error in game ingest before adding ingest to database: {}. \
+                                This ingest is aborted.",
+                                err,
+                            );
+                        }
                     }
                 }
             }
             Err(err) => {
-                warn!(
-                    "Ingest task couldn't get a database connection. Skipping ingest. \
-                    Error message: {err}"
-                );
-                continue;
+                match ingest_result {
+                    Ok(_) => {
+                        warn!("Failed to mark game ingest as finished: {}", err);
+                    }
+                    Err(_) => {
+                        warn!("Failed to mark game ingest as aborted: {}", err);
+                    }
+                }
             }
         };
 
@@ -679,30 +698,37 @@ async fn fetch_game(
 }
 
 async fn do_ingest(
-    conn: &mut AsyncPgConnection,
+    pool: &Db,
     taxa: &Taxa,
     client: &ClientWithMiddleware,
     config: &IngestConfig,
     shutdown: &mut Shutdown,
     ingest_start: DateTime<Utc>,
-) -> Result<(), (IngestFatalError, Option<i64>)> {
+) -> Result<(i64, Option<String>), (IngestFatalError, Option<i64>)> {
     info!("Ingest at {ingest_start} started");
-    
+
+    let mut setup_conn = match pool.get().await {
+        Ok(conn) => conn,
+        Err(pool_err) => {
+            return Err((IngestFatalError::PoolError(pool_err), None))
+        }
+    };
+
     let start_page = if config.reimport_all_games {
         None
     } else {
         // TODO I think I'm storing the wrong page (but it'll just cause one redundant
         //   request, and not lose data, so it's not high priority to fix)
-        db::last_completed_page(conn).await
+        db::last_completed_page(&mut setup_conn).await
             .map_err(|e| (e.into(), None))?
     };
 
-    let ingest_id = db::start_ingest(conn, ingest_start)
+    let ingest_id = db::start_ingest(&mut setup_conn, ingest_start)
         .await
         .map_err(|e| (e.into(), None))?;
 
     do_ingest_internal(
-        conn,
+        pool,
         taxa,
         client,
         config,
@@ -729,7 +755,7 @@ impl IngestStats {
             num_games_imported: 0,
         }
     }
-    
+
     pub fn add(&mut self, other: &IngestStats) {
         self.num_incomplete_games_skipped += other.num_incomplete_games_skipped;
         self.num_already_ingested_games_skipped += other.num_already_ingested_games_skipped;
@@ -738,7 +764,7 @@ impl IngestStats {
 }
 
 async fn do_ingest_internal(
-    conn: &mut AsyncPgConnection,
+    pool: &Db,
     taxa: &Taxa,
     client: &ClientWithMiddleware,
     config: &IngestConfig,
@@ -746,7 +772,7 @@ async fn do_ingest_internal(
     ingest_id: i64,
     ingest_start: DateTime<Utc>,
     start_page: Option<String>,
-) -> Result<(), IngestFatalError> {
+) -> Result<(i64, Option<String>), IngestFatalError> {
     info!("Recorded ingest start in database. Starting ingest...");
 
     // TODO Update last_completed_page
@@ -801,7 +827,7 @@ async fn do_ingest_internal(
                 }
             }
         };
-        
+
         match page {
             None => {
                 // Ingest finished successfully
@@ -813,38 +839,29 @@ async fn do_ingest_internal(
                 break;
             }
             Some(Ok(page)) => {
-                page_ingest_fut = Some(ingest_page_of_games(todo!("conn needs to be protected by a mutex or a pool"), taxa, config, ingest_id, page));
+                page_ingest_fut = Some(ingest_page_of_games(pool, taxa, config, ingest_id, page));
                 next_page_fut = Some(games_pages.next());
             }
         }
     }
-    
+
     info!("{} games ingested", stats.num_games_imported);
     info!("{} incomplete games skipped", stats.num_incomplete_games_skipped);
     info!("{} games already ingested", stats.num_already_ingested_games_skipped);
 
-    let ingest_end = Utc::now();
-    db::mark_ingest_finished(conn, ingest_id, ingest_end, last_completed_page.as_deref()).await?;
-    info!(
-        "Marked ingest {ingest_id} finished {:#}.",
-        HumanTime::from(ingest_end - ingest_start),
-    );
-
-    Ok(())
+    Ok((ingest_id, last_completed_page))
 }
 
 async fn ingest_page_of_games(
-    conn: &mut AsyncPgConnection,
+    pool: &Db,
     taxa: &Taxa,
     config: &IngestConfig,
     ingest_id: i64,
     page: ChronPage<mmolb_parsing::Game>,
 ) -> Result<IngestStats, IngestFatalError> {
-    let mut stats = IngestStats {
-        num_incomplete_games_skipped: 0,
-        num_already_ingested_games_skipped: 0,
-        num_games_imported: 0,
-    };
+    let mut conn = pool.get().await?;
+    
+    let mut stats = IngestStats::new();
 
     for entity in page.items {
         let game_description = format!(
@@ -869,10 +886,10 @@ async fn ingest_page_of_games(
 
             let check_already_ingested_start = Utc::now();
             let already_ingested = if !config.reimport_all_games {
-                db::has_game(conn, &entity.entity_id).await?
+                db::has_game(&mut conn, &entity.entity_id).await?
             } else {
                 info!("Deleting {game_description} if it exists");
-                let num_deleted = db::delete_game(conn, &entity.entity_id).await?;
+                let num_deleted = db::delete_game(&mut conn, &entity.entity_id).await?;
 
                 if num_deleted > 0 {
                     info!(
@@ -898,7 +915,7 @@ async fn ingest_page_of_games(
             info!("Ingesting {game_description}");
 
             let result = ingest_game(
-                conn,
+                &mut conn,
                 &taxa,
                 ingest_id,
                 &entity.entity_id,
