@@ -10,12 +10,9 @@ use mmolb_parsing::enums::{
     Base, BaseNameVariant, BatterStat, Distance, FairBallDestination, FairBallType, FoulType,
     GameOverMessage, HomeAway, NowBattingStats, StrikeType, TopBottom,
 };
-use mmolb_parsing::parsed_event::{
-    BaseSteal, FieldingAttempt, ParsedEventMessageDiscriminants, PositionedPlayer, RunnerAdvance,
-    RunnerOut,
-};
+use mmolb_parsing::parsed_event::{BaseSteal, FieldingAttempt, ParsedEventMessageDiscriminants, PositionedPlayer, RunnerAdvance, RunnerOut, StartOfInningPitcher};
 use std::collections::{HashMap, VecDeque};
-use std::fmt::Write;
+use std::fmt::{Display, Write};
 use std::fmt::{Debug, Formatter};
 use mmolb_parsing::game::MaybePlayer;
 use strum::IntoDiscriminant;
@@ -87,6 +84,7 @@ pub struct EventDetail<StrT: Clone> {
     pub described_as_sacrifice: Option<bool>,
 
     pub baserunners: Vec<EventDetailRunner<StrT>>,
+    pub pitcher_count: i32,
     pub batter_count: i32,
     pub batter_subcount: i32,
 }
@@ -210,6 +208,7 @@ pub struct TeamInGame<'g> {
     // of automatic runners after an inning-ending CS
     automatic_runner: Option<&'g str>,
     batter_stats: HashMap<&'g str, BatterStats>,
+    pitcher_count: i32,
     batter_count: i32,
     batter_subcount: i32,
     advance_to_next_batter: bool,
@@ -774,6 +773,7 @@ impl<'g> EventDetailBuilder<'g> {
             pitch_zone: self.pitch.map(|pitch| pitch.pitch_zone as i32),
             described_as_sacrifice: self.described_as_sacrifice,
             baserunners,
+            pitcher_count: game.defending_team().pitcher_count,
             batter_count: game.batting_team().batter_count,
             batter_subcount: game.batting_team().batter_subcount,
         }
@@ -943,6 +943,7 @@ impl<'g> Game<'g> {
                 team_id: game_data.away_team_id.as_str(),
                 automatic_runner: None,
                 batter_stats: away_batter_stats,
+                pitcher_count: 0,
                 batter_count: 0,
                 batter_subcount: 0,
                 advance_to_next_batter: false,
@@ -954,6 +955,7 @@ impl<'g> Game<'g> {
                 team_id: game_data.home_team_id.as_str(),
                 automatic_runner: None,
                 batter_stats: home_batter_stats,
+                pitcher_count: 0,
                 batter_count: 0,
                 batter_subcount: 0,
                 advance_to_next_batter: false,
@@ -1588,7 +1590,7 @@ impl<'g> Game<'g> {
                     side,
                     batting_team_emoji,
                     batting_team_name,
-                    pitcher_status: _,
+                    pitcher_status,
                     automatic_runner,
                 } => {
                     if *side != self.state.inning_half.flip() {
@@ -1629,6 +1631,16 @@ impl<'g> Game<'g> {
                             self.batting_team().team_emoji,
                         ));
                         self.batting_team_mut().team_emoji = batting_team_emoji;
+                    }
+
+                    match pitcher_status {
+                        StartOfInningPitcher::Same { emoji, name } => {
+                            ingest_logs.info(format!("Not incrementing pitcher_count on returning pitcher {emoji} {name}"));
+                        }
+                        StartOfInningPitcher::Different { arriving_pitcher, arriving_position, leaving_pitcher, leaving_position } => {
+                            self.defending_team_mut().pitcher_count += 1;
+                            ingest_logs.info(format!("Incrementing pitcher_count as {leaving_position} {leaving_pitcher} is replaced by {arriving_position} {arriving_pitcher}."));
+                        }
                     }
 
                     // Add the automatic runner to our state without emitting a db event for it.
@@ -1718,9 +1730,9 @@ impl<'g> Game<'g> {
                 }));
 
                 if raw_event.pitch.is_none() {
-                    ingest_logs.error(format!("Event is mising a pitch"));
+                    ingest_logs.error("Event is mising a pitch");
                 } else if pitch.is_none() {
-                    ingest_logs.error(format!("Pitch type wasn't recognized"));
+                    ingest_logs.error("Pitch type wasn't recognized");
                 }
 
                 game_event!(
@@ -2194,12 +2206,15 @@ impl<'g> Game<'g> {
             GamePhase::ExpectMoundVisitOutcome => game_event!(
                 (previous_event, event),
                 [ParsedEventMessageDiscriminants::PitcherRemains]
-                ParsedEventMessage::PitcherRemains { .. } => {
+                ParsedEventMessage::PitcherRemains { remaining_pitcher } => {
+                    ingest_logs.info(format!("Not incrementing pitcher_count on remaining pitcher {remaining_pitcher}"));
                     self.state.phase = GamePhase::ExpectNowBatting;
                     None
                 },
                 [ParsedEventMessageDiscriminants::PitcherSwap]
-                ParsedEventMessage::PitcherSwap { .. } => {
+                ParsedEventMessage::PitcherSwap { leaving_position, leaving_pitcher, arriving_position, arriving_pitcher } => {
+                    self.defending_team_mut().pitcher_count += 1;
+                    ingest_logs.info(format!("Incrementing pitcher_count as {leaving_position} {leaving_pitcher} is replaced by {arriving_position} {arriving_pitcher}."));
                     self.state.phase = GamePhase::ExpectNowBatting;
                     None
                 },

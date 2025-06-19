@@ -169,6 +169,9 @@ create table data.events (
 
     -- player info
     pitcher_name text not null,
+    -- a number that starts at 0 and is incremented whenever a new pitcher takes the mound.
+    -- each team has a separate pitcher_count.
+    pitcher_count int not null,
     batter_name text not null,
     -- a number that starts at 0 and is incremented whenever the *next* batter steps up to the plate.
     -- each team has a separate batter_count. this can be used to distinguish the boundary

@@ -47,6 +47,7 @@ pub mod data {
             outs_before -> Int4,
             outs_after -> Int4,
             pitcher_name -> Text,
+            pitcher_count -> Int4,
             batter_name -> Text,
             batter_count -> Int4,
             batter_subcount -> Int4,
