@@ -15,7 +15,7 @@ pub struct Ingest {
     pub started_at: NaiveDateTime,
     pub finished_at: Option<NaiveDateTime>,
     pub aborted_at: Option<NaiveDateTime>,
-    pub latest_completed_season: Option<i32>,
+    pub last_completed_page: Option<String>,
 }
 
 #[derive(Insertable)]
@@ -156,7 +156,6 @@ pub struct DbEventIngestLog {
 pub struct NewGameIngestTimings {
     pub game_id: i64,
     pub check_already_ingested_duration: f64,
-    pub network_duration: f64,
     pub parse_duration: f64,
     pub sim_duration: f64,
     pub db_insert_duration: f64,
@@ -182,7 +181,6 @@ pub struct DbGameIngestTimings {
     pub id: i64,
     pub game_id: i64,
     pub check_already_ingested_duration: f64,
-    pub network_duration: f64,
     pub parse_duration: f64,
     pub sim_duration: f64,
     pub db_insert_duration: f64,

@@ -109,7 +109,6 @@ create table info.game_ingest_timing (
     game_id bigserial references data.games on delete cascade not null,
 
     check_already_ingested_duration float8 not null,
-    network_duration float8 not null,
     parse_duration float8 not null,
     sim_duration float8 not null,
     db_insert_duration float8 not null,

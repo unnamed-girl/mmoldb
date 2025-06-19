@@ -238,7 +238,10 @@ struct GameState<'g> {
 
 #[derive(Debug)]
 pub struct Game<'g> {
-    info: &'g GameInfo,
+    // Does not change
+    game_id: &'g str,
+    season: i64,
+    day: i64,
 
     // Aggregates
     away: TeamInGame<'g>,
@@ -795,7 +798,7 @@ struct RunnerUpdate<'g, 'a> {
 
 impl<'g> Game<'g> {
     pub fn new<'a, IterT>(
-        game_info: &'g GameInfo,
+        game_id: &'g str,
         game_data: &'g mmolb_parsing::Game,
         events: &'a mut IterT,
     ) -> Result<(Game<'g>, Vec<Vec<IngestLog>>), SimFatalError>
@@ -936,7 +939,9 @@ impl<'g> Game<'g> {
         ingest_logs.push(Vec::new());
 
         let game = Self {
-            info: game_info,
+            game_id,
+            season: game_data.season.into(),
+            day: game_data.day.into(),
             away: TeamInGame {
                 team_name: away_team_name,
                 team_emoji: away_team_emoji,
@@ -979,13 +984,13 @@ impl<'g> Game<'g> {
     }
 
     pub fn is_postseason(&self) -> bool {
-        if self.info.season == 0 {
+        if self.season == 0 {
             // s0 was 120 days of every team playing every day
-            self.info.day > 120
+            self.day > 120
         } else {
             // s1 and onwards will be 240 days of teams playing every even (lesser league) or odd
             // (greater league) day
-            self.info.day > 240
+            self.day > 240
         }
     }
 
@@ -1658,9 +1663,9 @@ impl<'g> Game<'g> {
                         // for the mispredictions.
                         // It's just a coincidence that they're both
                         // bottoms of 10ths... or is it...
-                        let stored_automatic_runner = if self.info.game_id == "680b4f1d11f35e62dba3ebb2" && *number == 10 && *side == TopBottom::Bottom {
+                        let stored_automatic_runner = if self.game_id == "680b4f1d11f35e62dba3ebb2" && *number == 10 && *side == TopBottom::Bottom {
                             "Victoria Persson"
-                        } else if self.info.game_id == "6812571a17b36c4c9b40e06d" && *number == 10 && *side == TopBottom::Bottom {
+                        } else if self.game_id == "6812571a17b36c4c9b40e06d" && *number == 10 && *side == TopBottom::Bottom {
                             "Hassan Espinosa"
                         } else {
                             self.active_automatic_runner()
@@ -1675,7 +1680,7 @@ impl<'g> Game<'g> {
                             // lineup abruptly reversed order, causing a lot of automatic runner
                             // warnings. MMOLDB still uses the correct runners, though, so it's
                             // sufficient to just silence the warnings for this day.
-                            if *runner_name != stored_automatic_runner && (self.info.season, self.info.day) != (1, 2) {
+                            if *runner_name != stored_automatic_runner && (self.season, self.day) != (1, 2) {
                                 ingest_logs.warn(format!(
                                     "Unexpected automatic runner: expected {}, but saw {}",
                                     stored_automatic_runner, runner_name,
@@ -2226,7 +2231,7 @@ impl<'g> Game<'g> {
                     match message {
                         GameOverMessage::GameOver => {
                             // This only happened in season 0 days 1 and 2
-                            if (self.info.season, self.info.day) > (0, 2) {
+                            if (self.season, self.day) > (0, 2) {
                                 ingest_logs.warn(
                                     "Old-style <em>Game Over.</em> message appeared after s0d2",
                                 );
@@ -2234,7 +2239,7 @@ impl<'g> Game<'g> {
                         }
                         GameOverMessage::QuotedGAMEOVER => {
                             // This has happened since season 0 day 2
-                            if (self.info.season, self.info.day) <= (0, 2) {
+                            if (self.season, self.day) <= (0, 2) {
                                 ingest_logs.warn(
                                     "New-style <em>\"GAME OVER.\"</em> message appeared on or \
                                     before s0d2",

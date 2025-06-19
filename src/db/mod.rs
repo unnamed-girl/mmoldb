@@ -6,6 +6,9 @@ mod taxa;
 mod to_db_format;
 mod taxa_macro;
 
+
+use diesel::sql_types::*;
+
 pub use crate::db::taxa::{
     Taxa, TaxaBase, TaxaBaseDescriptionFormat, TaxaBaseWithDescriptionFormat, TaxaEventType,
     TaxaFairBallType, TaxaFieldingErrorType, TaxaHitType, TaxaPitchType, TaxaPosition,
@@ -70,14 +73,14 @@ pub async fn latest_ingest_start_time(
         .optional()
 }
 
-pub async fn latest_completed_season(
+pub async fn last_completed_page(
     conn: &mut AsyncPgConnection,
-) -> QueryResult<Option<i32>> {
+) -> QueryResult<Option<String>> {
     use crate::data_schema::data::ingests::dsl::*;
 
     ingests
-        .filter(latest_completed_season.is_not_null())
-        .select(latest_completed_season)
+        .filter(last_completed_page.is_not_null())
+        .select(last_completed_page)
         .order(started_at.desc())
         .first(conn)
         .await
@@ -85,27 +88,24 @@ pub async fn latest_completed_season(
         .map(Option::flatten)
 }
 
-pub async fn latest_ingests(conn: &mut AsyncPgConnection) -> QueryResult<Vec<(Ingest, i64)>> {
-    use diesel::sql_types::*;
-    #[derive(QueryableByName)]
-    struct IngestWithGameCount {
-        #[diesel(sql_type = Int8)]
-        pub id: i64,
-        #[diesel(sql_type = Timestamp)]
-        pub started_at: NaiveDateTime,
-        #[diesel(sql_type = Nullable<Timestamp>)]
-        pub finished_at: Option<NaiveDateTime>,
-        #[diesel(sql_type = Nullable<Timestamp>)]
-        pub aborted_at: Option<NaiveDateTime>,
-        #[diesel(sql_type = Nullable<Int4>)]
-        pub latest_completed_season: Option<i32>,
-        #[diesel(sql_type = Int8)]
-        pub num_games: i64,
-    }
+#[derive(QueryableByName)]
+pub struct IngestWithGameCount {
+    #[diesel(sql_type = Int8)]
+    pub id: i64,
+    #[diesel(sql_type = Timestamp)]
+    pub started_at: NaiveDateTime,
+    #[diesel(sql_type = Nullable<Timestamp>)]
+    pub finished_at: Option<NaiveDateTime>,
+    #[diesel(sql_type = Nullable<Timestamp>)]
+    pub aborted_at: Option<NaiveDateTime>,
+    #[diesel(sql_type = Int8)]
+    pub num_games: i64,
+}
 
+pub async fn latest_ingests(conn: &mut AsyncPgConnection) -> QueryResult<Vec<IngestWithGameCount>> {
     diesel::sql_query(
         "
-        select i.*, count(g.mmolb_game_id) as num_games
+        select i.id, i.started_at, i.finished_at, i.aborted_at, count(g.mmolb_game_id) as num_games
         from data.ingests i
              left join data.games g on g.ingest = i.id
         group by i.id, i.started_at
@@ -115,31 +115,6 @@ pub async fn latest_ingests(conn: &mut AsyncPgConnection) -> QueryResult<Vec<(In
     )
     .load::<IngestWithGameCount>(conn)
     .await
-    .map(|ok| {
-        ok.into_iter()
-            .map(
-                |IngestWithGameCount {
-                     id,
-                     started_at,
-                     finished_at,
-                     aborted_at,
-                     latest_completed_season,
-                     num_games,
-                 }| {
-                    (
-                        Ingest {
-                            id,
-                            started_at,
-                            finished_at,
-                            aborted_at,
-                            latest_completed_season,
-                        },
-                        num_games,
-                    )
-                },
-            )
-            .collect()
-    })
 }
 
 pub async fn start_ingest(conn: &mut AsyncPgConnection, at: DateTime<Utc>) -> QueryResult<i64> {
@@ -158,14 +133,14 @@ pub async fn mark_ingest_finished(
     conn: &mut AsyncPgConnection,
     ingest_id: i64,
     at: DateTime<Utc>,
-    latest_completed: Option<i64>,
+    last_completed_page: Option<&str>,
 ) -> QueryResult<()> {
     use crate::data_schema::data::ingests::dsl::*;
 
     diesel::update(ingests.filter(id.eq(ingest_id)))
         .set((
             finished_at.eq(at.naive_utc()),
-            latest_completed_season.eq(latest_completed.map(|x| x as i32)),
+            last_completed_page.eq(last_completed_page),
          ))
         .execute(conn)
         .await
@@ -655,7 +630,6 @@ pub async fn game_and_raw_events(
 
 pub struct Timings {
     pub check_already_ingested_duration: f64,
-    pub network_duration: f64,
     pub parse_duration: f64,
     pub sim_duration: f64,
     pub db_insert_duration: f64,
@@ -675,7 +649,6 @@ pub async fn insert_timings(
     NewGameIngestTimings {
         game_id: for_game_id,
         check_already_ingested_duration: timings.check_already_ingested_duration,
-        network_duration: timings.network_duration,
         parse_duration: timings.parse_duration,
         sim_duration: timings.sim_duration,
         db_fetch_for_check_get_game_id_duration: timings

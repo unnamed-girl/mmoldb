@@ -1,5 +1,6 @@
 mod http;
 mod sim;
+mod chron;
 
 use crate::db::{RowToEventError, Taxa};
 use crate::ingest::sim::{Game, SimFatalError};
@@ -20,7 +21,9 @@ pub use sim::{EventDetail, EventDetailFielder, EventDetailRunner, IngestLog};
 use std::mem;
 use std::sync::Arc;
 use std::time::Duration;
+use futures::{pin_mut, Stream, StreamExt};
 use thiserror::Error;
+use crate::ingest::chron::{ChronEntity, ChronError, StreamItem};
 
 fn default_ingest_period() -> u64 {
     30 * 60  // 30 minutes, expressed in seconds
@@ -685,12 +688,14 @@ async fn do_ingest(
 ) -> Result<(), (IngestFatalError, Option<i64>)> {
     info!("Ingest at {ingest_start} started");
     
-    // Start at the season *after* the latest completed season, or season 0 if there isn't one 
-    let start_at_season = db::latest_completed_season(conn).await
-        .map_err(|e| (e.into(), None))?
-        .map(|i| i + 1)
-        .unwrap_or(0)
-        .into();
+    let start_page = if config.reimport_all_games {
+        None
+    } else {
+        // TODO I think I'm storing the wrong page (but it'll just cause one redundant
+        //   request, and not lose data, so it's not high priority to fix)
+        db::last_completed_page(conn).await
+            .map_err(|e| (e.into(), None))?
+    };
 
     let ingest_id = db::start_ingest(conn, ingest_start)
         .await
@@ -704,11 +709,12 @@ async fn do_ingest(
         shutdown,
         ingest_id,
         ingest_start,
-        start_at_season,
+        start_page,
     )
     .await
     .map_err(|e| (e.into(), Some(ingest_id)))
 }
+
 async fn do_ingest_internal(
     conn: &mut AsyncPgConnection,
     taxa: &Taxa,
@@ -717,130 +723,110 @@ async fn do_ingest_internal(
     shutdown: &mut Shutdown,
     ingest_id: i64,
     ingest_start: DateTime<Utc>,
-    start_at_season: i64,
+    start_page: Option<String>,
 ) -> Result<(), IngestFatalError> {
-    info!("Recorded ingest start in database. Requesting games list...");
+    info!("Recorded ingest start in database. Starting ingest...");
 
-    let fetched_games = match fetch_games_list(client, config, start_at_season).await {
-        Ok(value) => value,
-        Err(err) => {
-            return Err(IngestFatalError::FailedToFetchGamesList {
-                retries: config.fetch_game_list_retries,
-                err,
-            });
-        }
-    };
-    
-    info!("Fetched games' latest completed season is {:?}", fetched_games.latest_completed_season);
-    
-    // Stuff that happens in the loop might invalidate this
-    let mut latest_completed_season = fetched_games.latest_completed_season;
+    let mut last_completed_page = start_page.clone();
 
-    info!(
-        "Got games list. Starting ingest of {} total games.",
-        fetched_games.games.len()
-    );
-
-    let game_api_hit_period = Duration::from_millis(config.fetch_games_rate_limit_ms);
-    let rate_limiter = tokio_utils::RateLimiter::new(game_api_hit_period);
+    let games_stream = fetch_games_list(client, config, start_page);
+    pin_mut!(games_stream);
 
     let mut num_incomplete_games_skipped = 0;
     let mut num_already_ingested_games_skipped = 0;
     let mut num_games_imported = 0;
 
-    for game_info in fetched_games.games {
-        let total_start = Utc::now();
-        if game_info.state != GameState::Complete {
-            // If this incomplete game is in the supposed latest 
-            // completed season, then the supposed latest completed 
-            // season is not actually completed. Record a None, and
-            // the next ingest will find the same value as this one.
-            if Some(game_info.season) == latest_completed_season {
-                info!(
-                    "Clearing latest completed season because game {} in season {} isn't complete",
-                    game_info.game_id,
-                    game_info.season,
+    info!("Recorded ingest start in database. Starting ingest...");
+
+    // TODO tokio_select on the games_stream.next() future and shutdown
+    while let Some(stream_item) = games_stream.next().await {
+        match stream_item {
+            Ok(StreamItem::CompletedPage(completed_page)) => {
+                // If we see a non-completed game we must stop updating last_completed_page,
+                // because we need to see this game again once it's complete
+                if num_incomplete_games_skipped == 0 {
+                    last_completed_page = Some(completed_page);
+                }
+            }
+            Ok(StreamItem::Entity(entity)) => {
+                let game_description = format!(
+                    "{} {} @ {} {} s{}d{}",
+                    entity.data.away_team_emoji,
+                    entity.data.away_team_name,
+                    entity.data.home_team_emoji,
+                    entity.data.home_team_name,
+                    entity.data.season,
+                    entity.data.day,
                 );
-                latest_completed_season = None;
+
+                if entity.data.state != "Complete" {
+                    info!(
+                        "Skipping non-complete ({}) game {game_description}: {}",
+                        entity.data.state,
+                        format!("https://mmolb.com/watch/{}", entity.entity_id),
+                    );
+                    num_incomplete_games_skipped += 1;
+                } else {
+                    let total_start = Utc::now();
+
+                    let check_already_ingested_start = Utc::now();
+                    let already_ingested = if !config.reimport_all_games {
+                        db::has_game(conn, &entity.entity_id).await?
+                    } else {
+                        info!("Deleting {game_description} if it exists");
+                        let num_deleted = db::delete_game(conn, &entity.entity_id).await?;
+
+                        if num_deleted > 0 {
+                            info!(
+                                "In debug mode, deleted {game_description} and all its events",
+                            );
+                        }
+                        false
+                    };
+
+                    if already_ingested {
+                        num_already_ingested_games_skipped += 1;
+                        if num_already_ingested_games_skipped % 1000 == 0 {
+                            info!(
+                                "Skipped {} already-ingested games so far",
+                                num_already_ingested_games_skipped,
+                            );
+                        }
+                        continue;
+                    }
+                    let check_already_ingested_duration =
+                        (Utc::now() - check_already_ingested_start).as_seconds_f64();
+
+                    info!("Ingesting {game_description}");
+
+                    let result = ingest_game(
+                        conn,
+                        &taxa,
+                        ingest_id,
+                        &entity.entity_id,
+                        entity.data,
+                        PreIngestTimings {
+                            total_start,
+                            check_already_ingested_duration,
+                        },
+                    )
+                        .await;
+
+                    if let Err(fatal_error) = result {
+                        warn!("Ingest of {game_description} failed with error {fatal_error}");
+                    }
+
+                    num_games_imported += 1;
+                }
             }
-            
-            num_incomplete_games_skipped += 1;
-            continue;
-        }
-
-        let check_already_ingested_start = Utc::now();
-        let already_ingested = if !config.reimport_all_games {
-            db::has_game(conn, &game_info.game_id).await?
-        } else {
-            info!("Deleting {} if it exists", game_info.game_id);
-            let num_deleted = db::delete_game(conn, &game_info.game_id).await?;
-
-            if num_deleted > 0 {
-                info!(
-                    "In debug mode, deleted game {} and all its events",
-                    game_info.game_id
-                );
-            }
-            false
-        };
-
-        if already_ingested {
-            num_already_ingested_games_skipped += 1;
-            continue;
-        }
-        let check_already_ingested_duration =
-            (Utc::now() - check_already_ingested_start).as_seconds_f64();
-
-        let network_start = Utc::now();
-        let game_data = tokio::select! {
-            game_data = fetch_game(&game_info.game_id, client, config, &rate_limiter) => {
-                game_data?
-            }
-            _ = &mut *shutdown => {
-                // If an early shutdown was requested, we might not 
-                // have processed all the games, which invalidates
-                // latest_completed_season
-                info!("Clearing latest completed season because early shutdown is requested");
-                latest_completed_season = None;
+            Err(chron_error) => {
+                warn!("Stopping ingest early because of network error: {chron_error}");
                 break;
             }
-        };
-        let network_duration = (Utc::now() - network_start).as_seconds_f64();
-
-        info!(
-            "Fetched {} {} @ {} {} s{}d{}: {}",
-            game_data.away_team_emoji,
-            game_data.away_team_name,
-            game_data.home_team_emoji,
-            game_data.home_team_name,
-            game_data.season,
-            game_data.day,
-            format!("https://mmolb.com/watch/{}", game_info.game_id),
-        );
-
-        let result = ingest_game(
-            conn,
-            &taxa,
-            ingest_id,
-            &game_info,
-            game_data,
-            PreIngestTimings {
-                total_start,
-                check_already_ingested_duration,
-                network_duration,
-            },
-        )
-        .await;
-
-        if result.is_err() {
-            // If we return early, we might not have processed all the 
-            // games, which invalidates latest_completed_season
-            info!("Clearing latest completed season because there was an error");
-            latest_completed_season = None;
-            break;
         }
-
-        num_games_imported += 1;
+        // If you add any code between the end of the match and
+        // the end of the loop, remember that there's a `continue`
+        // in the match statement.
     }
 
     info!("{num_games_imported} games ingested");
@@ -848,10 +834,10 @@ async fn do_ingest_internal(
     info!("{num_already_ingested_games_skipped} games already ingested");
 
     let ingest_end = Utc::now();
-    db::mark_ingest_finished(conn, ingest_id, ingest_end, latest_completed_season).await?;
+    db::mark_ingest_finished(conn, ingest_id, ingest_end, last_completed_page.as_deref()).await?;
     info!(
-        "Marked ingest {ingest_id} finished {:#}. Latest completed season is {:?}",
-        HumanTime::from(ingest_end - ingest_start), latest_completed_season,
+        "Marked ingest {ingest_id} finished {:#}.",
+        HumanTime::from(ingest_end - ingest_start),
     );
 
     Ok(())
@@ -896,11 +882,11 @@ where
     })
 }
 
-async fn fetch_games_list(
+fn fetch_games_list(
     client: &ClientWithMiddleware,
     config: &IngestConfig,
-    start_at_season: i64,
-) -> Result<FetchedGames, FetchGamesListError> {
+    start_page: Option<String>,
+) -> impl Stream<Item = Result<StreamItem<mmolb_parsing::Game>, ChronError>> {
     let cache_mode = if config.cache_game_list_from_api {
         // ForceCache means to ignore staleness, but still go to the
         // network if it's not found in the cache
@@ -910,25 +896,7 @@ async fn fetch_games_list(
         http_cache_reqwest::CacheMode::NoStore
     };
 
-    let mut tries = 0;
-    Ok(loop {
-        match fetch_games_list_base(client, cache_mode, start_at_season).await {
-            Ok(r) => break r,
-            Err(err) if tries < config.fetch_game_list_retries => {
-                tries += 1;
-                let wait_time = Duration::from_millis(100 * tries * tries);
-                warn!(
-                    "Error fetching games; retrying in {}s. Error: {err}",
-                    wait_time.as_secs_f64()
-                );
-                warn!("Error debug: {err:?}");
-                tokio::time::sleep(wait_time).await;
-            }
-            Err(err) => {
-                return Err(err);
-            }
-        }
-    })
+    chron::entities_with_page_breaks(client, cache_mode, "game", 1000, start_page)
 }
 
 struct FetchedGames {
@@ -936,67 +904,6 @@ struct FetchedGames {
     latest_completed_season: Option<i64>,
 }
 
-async fn fetch_games_list_base(
-    client: &ClientWithMiddleware,
-    cache_mode: http_cache_reqwest::CacheMode,
-    start_at_season: i64,
-) -> Result<FetchedGames, FetchGamesListError> {
-    // List of list of games, to be flattened later
-    let mut games = Vec::new();
-    let mut latest_season_with_any_games = None;
-
-    // The cashews API does not conveniently support resuming in the 
-    // middle of a season.
-    // TODO: Ask cashews developers for an API that would allow resuming from where I left off
-    for season in start_at_season.. {
-        let mut has_any_games = false;
-        let mut next_response: CashewsGamesResponse = client
-            .get("https://freecashe.ws/api/games")
-            .with_extension(cache_mode)
-            .query(&[("season", season.to_string())])
-            .send()
-            .await?
-            .json()
-            .await?;
-
-        loop {
-            if next_response.items.is_empty() {
-                break;
-            }
-
-            has_any_games = true;
-            games.push(next_response.items);
-
-            if let Some(next_page) = next_response.next_page {
-                next_response = client
-                    .get("https://freecashe.ws/api/games")
-                    .with_extension(cache_mode)
-                    .query(&[("season", season.to_string())])
-                    .query(&[("page", next_page)])
-                    .send()
-                    .await?
-                    .json()
-                    .await?
-            } else {
-                break;
-            }
-        }
-
-        if !has_any_games {
-            break;
-        } else {
-            latest_season_with_any_games = Some(season);
-        }
-    }
-    
-    let latest_completed_season = latest_season_with_any_games
-        .and_then(|season| if season == 0 { None } else { Some(season - 1) });
-
-    Ok(FetchedGames {
-        games: games.into_iter().flatten().collect(),
-        latest_completed_season,
-    })
-}
 
 // A utility to more conveniently build a Vec<IngestLog>
 pub struct IngestLogs {
@@ -1081,14 +988,13 @@ impl IngestLogs {
 struct PreIngestTimings {
     pub total_start: DateTime<Utc>,
     pub check_already_ingested_duration: f64,
-    pub network_duration: f64,
 }
 
 async fn ingest_game(
     conn: &mut AsyncPgConnection,
     taxa: &Taxa,
     ingest_id: i64,
-    game_info: &CashewsGameResponse,
+    mmolb_game_id: &str,
     game_data: mmolb_parsing::Game,
     pre_ingest_timings: PreIngestTimings,
 ) -> Result<(), GameIngestFatalError> {
@@ -1106,7 +1012,7 @@ async fn ingest_game(
     let (mut game, game_creation_ingest_logs) = {
         let mut parsed_for_game = (&mut parsed).map(|(_, (parsed, _))| parsed);
 
-        Game::new(game_info, &game_data, &mut parsed_for_game)?
+        Game::new(mmolb_game_id, &game_data, &mut parsed_for_game)?
     };
 
     let (detail_events, ingest_logs): (Vec<_>, Vec<_>) = parsed
@@ -1152,11 +1058,11 @@ async fn ingest_game(
         db_fetch_for_check_duration,
     ) = {
         let db_insert_start = Utc::now();
-        let game_id = db::insert_game(
+        let db_game_id = db::insert_game(
             conn,
             &taxa,
             ingest_id,
-            &game_info.game_id,
+            &mmolb_game_id,
             &game_data,
             game_creation_ingest_logs.into_iter().chain(ingest_logs),
             &detail_events,
@@ -1166,11 +1072,11 @@ async fn ingest_game(
 
         // We can rebuild them
         let db_fetch_for_check_start = Utc::now();
-        let inserted_events = db::events_for_game(conn, &taxa, &game_info.game_id).await?;
+        let inserted_events = db::events_for_game(conn, &taxa, mmolb_game_id).await?;
         let db_fetch_for_check_duration = (Utc::now() - db_fetch_for_check_start).as_seconds_f64();
 
         (
-            game_id,
+            db_game_id,
             inserted_events,
             db_insert_duration,
             db_fetch_for_check_duration,
@@ -1227,7 +1133,6 @@ async fn ingest_game(
             game_id,
             db::Timings {
                 check_already_ingested_duration: pre_ingest_timings.check_already_ingested_duration,
-                network_duration: pre_ingest_timings.network_duration,
                 parse_duration,
                 sim_duration,
                 db_insert_duration,

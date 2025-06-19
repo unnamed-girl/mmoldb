@@ -16,7 +16,6 @@ pub mod info {
             id -> Int8,
             game_id -> Int8,
             check_already_ingested_duration -> Float8,
-            network_duration -> Float8,
             parse_duration -> Float8,
             sim_duration -> Float8,
             db_insert_duration -> Float8,

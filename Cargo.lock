@@ -1677,6 +1677,7 @@ dependencies = [
  "diesel",
  "diesel_migrations",
  "enum-map",
+ "futures",
  "http-cache-reqwest",
  "itertools",
  "log",

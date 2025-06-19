@@ -7,10 +7,9 @@ create table ingests (
     -- crashed in a way that prevented the database from being updated
     aborted_at timestamp without time zone,
 
-    -- The season number of the latest season that we know we don't
-    -- ever need to ingest more games for. If this is null it may mean
-    -- that there is no such season, or it may mean this ingest crashed
-    -- in a way that prevented the database from being updated. The
-    -- proper use of this value is to select the most recent non-null.
-    latest_completed_season int
+    -- The page token for the latest Chronicler page that we've fully
+    -- ingested. This is the token to use for the first API call in the
+    -- next ingest. Null indicates that we didn't make it through the
+    -- first page.
+    last_completed_page text
 )

@@ -10,6 +10,7 @@ use crate::web::error::AppError;
 use crate::web::utility_contexts::{FormattedDateContext, GameContext};
 use crate::{Db, db};
 
+// TODO: Parameterize on MMOLB id, not my db id
 #[get("/game/<game_id>")]
 pub async fn game_page(game_id: i64, mut db: Connection<Db>) -> Result<Template, AppError> {
     #[derive(Serialize)]
@@ -244,9 +245,9 @@ pub async fn index_page(
     let number_of_ingests_not_shown = total_num_ingests - displayed_ingests.len() as i64;
     let ingests: Vec<_> = displayed_ingests
         .into_iter()
-        .map(|(ingest, num_games)| IngestContext {
+        .map(|ingest| IngestContext {
             uri: uri!(ingest_page(ingest.id)).to_string(),
-            num_games,
+            num_games: ingest.num_games,
             started_at: (&ingest.started_at).into(),
             finished_at: ingest.finished_at.as_ref().map(Into::into),
             aborted_at: ingest.aborted_at.as_ref().map(Into::into),
