@@ -1658,7 +1658,12 @@ impl<'g> Game<'g> {
                         };
 
                         let runner_name = if let Some(runner_name) = automatic_runner {
-                            if *runner_name != stored_automatic_runner {
+                            // On s1d2, a bug causing batters to bat in reverse order was fixed.
+                            // There happened to be games running during that fix, and their
+                            // lineup abruptly reversed order, causing a lot of automatic runner
+                            // warnings. MMOLDB still uses the correct runners, though, so it's
+                            // sufficient to just silence the warnings for this day.
+                            if *runner_name != stored_automatic_runner && (self.info.season, self.info.day) != (1, 2) {
                                 ingest_logs.warn(format!(
                                     "Unexpected automatic runner: expected {}, but saw {}",
                                     stored_automatic_runner, runner_name,
