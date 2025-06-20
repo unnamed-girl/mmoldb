@@ -6,39 +6,34 @@ mod taxa;
 mod to_db_format;
 mod taxa_macro;
 
-
 use diesel::sql_types::*;
 
 pub use crate::db::taxa::{
     Taxa, TaxaBase, TaxaBaseDescriptionFormat, TaxaBaseWithDescriptionFormat, TaxaEventType,
     TaxaFairBallType, TaxaFieldingErrorType, TaxaHitType, TaxaPitchType, TaxaPosition,
 };
-use std::collections::HashMap;
-
+use std::iter;
 use crate::ingest::{EventDetail, IngestLog};
-use crate::models::{
-    DbEvent, DbEventIngestLog, DbFielder, DbGame, DbRawEvent, DbRunner, Ingest,
-    NewEventIngestLogOwning, NewGame, NewGameIngestTimings, NewIngest, NewRawEvent,
-};
+use crate::models::{DbEvent, DbEventIngestLog, DbFielder, DbGame, DbRawEvent, DbRunner, Ingest, NewEventIngestLog, NewGame, NewGameIngestTimings, NewIngest, NewRawEvent};
 use chrono::{DateTime, NaiveDateTime, Utc};
-use itertools::PeekingNext;
-use rocket_db_pools::diesel::scoped_futures::ScopedFutureExt;
-use rocket_db_pools::{diesel::AsyncPgConnection, diesel::prelude::*};
+use itertools::{Itertools, PeekingNext};
+use log::info;
+use rocket_sync_db_pools::{diesel::PgConnection, diesel::prelude::*};
 pub use to_db_format::RowToEventError;
 
-pub async fn ingest_count(conn: &mut AsyncPgConnection) -> QueryResult<i64> {
+pub fn ingest_count(conn: &mut PgConnection) -> QueryResult<i64> {
     use crate::data_schema::data::ingests::dsl::*;
 
-    ingests.count().get_result(conn).await
+    ingests.count().get_result(conn)
 }
 
-pub async fn game_count(conn: &mut AsyncPgConnection) -> QueryResult<i64> {
+pub fn game_count(conn: &mut PgConnection) -> QueryResult<i64> {
     use crate::data_schema::data::games::dsl::*;
 
-    games.count().get_result(conn).await
+    games.count().get_result(conn)
 }
 
-pub async fn game_with_issues_count(conn: &mut AsyncPgConnection) -> QueryResult<i64> {
+pub fn game_with_issues_count(conn: &mut PgConnection) -> QueryResult<i64> {
     use diesel::sql_types::*;
     #[derive(QueryableByName)]
     struct GamesWithIssuesCount {
@@ -56,12 +51,11 @@ pub async fn game_with_issues_count(conn: &mut AsyncPgConnection) -> QueryResult
         ",
     )
     .get_result::<GamesWithIssuesCount>(conn)
-    .await
     .map(|games_with_issues| games_with_issues.games_with_issues)
 }
 
-pub async fn latest_ingest_start_time(
-    conn: &mut AsyncPgConnection,
+pub fn latest_ingest_start_time(
+    conn: &mut PgConnection,
 ) -> QueryResult<Option<NaiveDateTime>> {
     use crate::data_schema::data::ingests::dsl::*;
 
@@ -69,12 +63,11 @@ pub async fn latest_ingest_start_time(
         .select(started_at)
         .order(started_at.desc())
         .first(conn)
-        .await
         .optional()
 }
 
-pub async fn last_completed_page(
-    conn: &mut AsyncPgConnection,
+pub fn last_completed_page(
+    conn: &mut PgConnection,
 ) -> QueryResult<Option<String>> {
     use crate::data_schema::data::ingests::dsl::*;
 
@@ -83,7 +76,6 @@ pub async fn last_completed_page(
         .select(last_completed_page)
         .order(started_at.desc())
         .first(conn)
-        .await
         .optional()
         .map(Option::flatten)
 }
@@ -102,7 +94,7 @@ pub struct IngestWithGameCount {
     pub num_games: i64,
 }
 
-pub async fn latest_ingests(conn: &mut AsyncPgConnection) -> QueryResult<Vec<IngestWithGameCount>> {
+pub fn latest_ingests(conn: &mut PgConnection) -> QueryResult<Vec<IngestWithGameCount>> {
     diesel::sql_query(
         "
         select i.id, i.started_at, i.finished_at, i.aborted_at, count(g.mmolb_game_id) as num_games
@@ -114,10 +106,9 @@ pub async fn latest_ingests(conn: &mut AsyncPgConnection) -> QueryResult<Vec<Ing
     ",
     )
     .load::<IngestWithGameCount>(conn)
-    .await
 }
 
-pub async fn start_ingest(conn: &mut AsyncPgConnection, at: DateTime<Utc>) -> QueryResult<i64> {
+pub fn start_ingest(conn: &mut PgConnection, at: DateTime<Utc>) -> QueryResult<i64> {
     use crate::data_schema::data::ingests::dsl::*;
 
     NewIngest {
@@ -125,12 +116,11 @@ pub async fn start_ingest(conn: &mut AsyncPgConnection, at: DateTime<Utc>) -> Qu
     }
     .insert_into(ingests)
     .returning(id)
-    .get_result(conn)
-    .await
+    .get_result(conn) 
 }
 
-pub async fn mark_ingest_finished(
-    conn: &mut AsyncPgConnection,
+pub fn mark_ingest_finished(
+    conn: &mut PgConnection,
     ingest_id: i64,
     at: DateTime<Utc>,
     last_completed_page: Option<&str>,
@@ -143,7 +133,6 @@ pub async fn mark_ingest_finished(
             dsl::last_completed_page.eq(last_completed_page),
          ))
         .execute(conn)
-        .await
         .map(|_| ())
 }
 
@@ -151,8 +140,8 @@ pub async fn mark_ingest_finished(
 // latest_completed_season than the previous ingest. That is not 
 // necessarily true, but it's inconvenient to refactor the code to
 // support it.
-pub async fn mark_ingest_aborted(
-    conn: &mut AsyncPgConnection,
+pub fn mark_ingest_aborted(
+    conn: &mut PgConnection,
     ingest_id: i64,
     at: DateTime<Utc>,
 ) -> QueryResult<()> {
@@ -161,7 +150,6 @@ pub async fn mark_ingest_aborted(
     diesel::update(ingests.filter(id.eq(ingest_id)))
         .set(aborted_at.eq(at.naive_utc()))
         .execute(conn)
-        .await
         .map(|_| ())
 }
 
@@ -172,9 +160,8 @@ macro_rules! log_only_assert {
         }
     };
 }
-
-async fn add_log_levels_to_games(
-    conn: &mut AsyncPgConnection,
+ fn add_log_levels_to_games(
+    conn: &mut PgConnection,
     games: Vec<DbGame>,
 ) -> QueryResult<Vec<(DbGame, i64, i64, i64)>> {
     use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
@@ -182,8 +169,8 @@ async fn add_log_levels_to_games(
 
     let game_ids = games.iter().map(|g| g.id).collect::<Vec<i64>>();
 
-    async fn count_log_level(
-        conn: &mut AsyncPgConnection,
+    fn count_log_level(
+        conn: &mut PgConnection,
         game_ids: &Vec<i64>,
         level: i32,
     ) -> QueryResult<Vec<(i64, i64)>> {
@@ -195,19 +182,15 @@ async fn add_log_levels_to_games(
             .select((raw_event_dsl::game_id, diesel::dsl::count_star()))
             .order_by(raw_event_dsl::game_id)
             .get_results::<(i64, i64)>(conn)
-            .await
     }
 
-    let mut num_warnings = count_log_level(conn, &game_ids, 2)
-        .await?
+    let mut num_warnings = count_log_level(conn, &game_ids, 2)?
         .into_iter()
         .peekable();
-    let mut num_errors = count_log_level(conn, &game_ids, 1)
-        .await?
+    let mut num_errors = count_log_level(conn, &game_ids, 1)?
         .into_iter()
         .peekable();
-    let mut num_critical = count_log_level(conn, &game_ids, 0)
-        .await?
+    let mut num_critical = count_log_level(conn, &game_ids, 0)?
         .into_iter()
         .peekable();
 
@@ -243,8 +226,8 @@ async fn add_log_levels_to_games(
     Ok(games)
 }
 
-pub async fn ingest_with_games(
-    conn: &mut AsyncPgConnection,
+pub fn ingest_with_games(
+    conn: &mut PgConnection,
     for_ingest_id: i64,
 ) -> QueryResult<(Ingest, Vec<(DbGame, i64, i64, i64)>)> {
     use crate::data_schema::data::games::dsl as game_dsl;
@@ -252,46 +235,41 @@ pub async fn ingest_with_games(
 
     let ingest = ingest_dsl::ingests
         .filter(ingest_dsl::id.eq(for_ingest_id))
-        .get_result::<Ingest>(conn)
-        .await?;
+        .get_result::<Ingest>(conn)?;
 
     let games = DbGame::belonging_to(&ingest)
         .order_by(game_dsl::id)
-        .get_results::<DbGame>(conn)
-        .await?;
+        .get_results::<DbGame>(conn)?;
 
-    let games = add_log_levels_to_games(conn, games).await?;
+    let games = add_log_levels_to_games(conn, games)?;
 
     Ok((ingest, games))
 }
 
-pub async fn has_game(conn: &mut AsyncPgConnection, with_id: &str) -> QueryResult<bool> {
+pub fn has_game(conn: &mut PgConnection, with_id: &str) -> QueryResult<bool> {
     use crate::data_schema::data::games::dsl::*;
     use diesel::dsl::*;
 
     select(exists(games.filter(mmolb_game_id.eq(with_id))))
         .get_result(conn)
-        .await
 }
 
-pub async fn delete_game(conn: &mut AsyncPgConnection, with_id: &str) -> QueryResult<usize> {
+pub async fn delete_game(conn: &mut PgConnection, with_id: &str) -> QueryResult<usize> {
     use crate::data_schema::data::games::dsl::*;
     use diesel::dsl::*;
 
     delete(games.filter(mmolb_game_id.eq(with_id)))
         .execute(conn)
-        .await
 }
 
-pub async fn all_games(conn: &mut AsyncPgConnection) -> QueryResult<Vec<(DbGame, i64, i64, i64)>> {
+pub fn all_games(conn: &mut PgConnection) -> QueryResult<Vec<(DbGame, i64, i64, i64)>> {
     use crate::data_schema::data::games::dsl as games_dsl;
 
     let games = games_dsl::games
         .order_by(games_dsl::id)
-        .get_results::<DbGame>(conn)
-        .await?;
+        .get_results::<DbGame>(conn)?;
 
-    add_log_levels_to_games(conn, games).await
+    add_log_levels_to_games(conn, games)
 }
 
 pub struct EventsForGameTimings {
@@ -304,8 +282,8 @@ pub struct EventsForGameTimings {
     pub post_process_duration: f64,
 }
 
-pub async fn events_for_game<'e>(
-    conn: &mut AsyncPgConnection,
+pub fn events_for_game<'e>(
+    conn: &mut PgConnection,
     taxa: &Taxa,
     for_game_id: &str,
 ) -> QueryResult<(
@@ -321,8 +299,7 @@ pub async fn events_for_game<'e>(
     let game_id = games_dsl::games
         .filter(games_dsl::mmolb_game_id.eq(for_game_id))
         .select(games_dsl::id)
-        .get_result::<i64>(conn)
-        .await?;
+        .get_result::<i64>(conn)?;
     let get_game_id_duration = (Utc::now() - get_game_id_start).as_seconds_f64();
 
     let get_events_start = Utc::now();
@@ -330,8 +307,7 @@ pub async fn events_for_game<'e>(
         .filter(events_dsl::game_id.eq(game_id))
         .order(events_dsl::game_event_index.asc())
         .select(DbEvent::as_select())
-        .load(conn)
-        .await?;
+        .load(conn)?;
     let get_events_duration = (Utc::now() - get_events_start).as_seconds_f64();
 
     let get_runners_start = Utc::now();
@@ -341,8 +317,7 @@ pub async fn events_for_game<'e>(
             runner_dsl::base_before.desc().nulls_last(),
         ))
         .select(DbRunner::as_select())
-        .load(conn)
-        .await?;
+        .load(conn)?;
     let get_runners_duration = (Utc::now() - get_runners_start).as_seconds_f64();
 
     let group_runners_start = Utc::now();
@@ -353,8 +328,7 @@ pub async fn events_for_game<'e>(
     let db_fielders = DbFielder::belonging_to(&db_events)
         .order((fielder_dsl::event_id, fielder_dsl::play_order))
         .select(DbFielder::as_select())
-        .load(conn)
-        .await?;
+        .load(conn)?;
     let get_fielders_duration = (Utc::now() - get_fielders_start).as_seconds_f64();
 
     let group_fielders_start = Utc::now();
@@ -388,42 +362,28 @@ pub async fn events_for_game<'e>(
     ))
 }
 
-pub async fn insert_game<'e>(
-    conn: &mut AsyncPgConnection,
+pub fn insert_games<'e>(
+    conn: &mut PgConnection,
     taxa: &Taxa,
     ingest_id: i64,
-    mmolb_game_id: &str,
-    game_data: &mmolb_parsing::game::Game,
-    logs: impl IntoIterator<Item = impl IntoIterator<Item = IngestLog>> + Send,
-    event_details: &'e [EventDetail<&'e str>],
-) -> QueryResult<i64> {
+    games: Vec<(&str, &mmolb_parsing::Game, Vec<EventDetail<&str>>, Vec<Vec<IngestLog>>)>,
+) -> QueryResult<Vec<i64>> {
     conn.transaction::<_, _, _>(|conn| {
-        async move {
-            insert_game_internal(
-                conn,
-                taxa,
-                ingest_id,
-                mmolb_game_id,
-                game_data,
-                logs,
-                event_details,
-            )
-            .await
-        }
-        .scope_boxed()
+        insert_games_internal(
+            conn,
+            taxa,
+            ingest_id,
+            games,
+        )
     })
-    .await
 }
 
-async fn insert_game_internal<'e>(
-    conn: &mut AsyncPgConnection,
+fn insert_games_internal<'e>(
+    conn: &mut PgConnection,
     taxa: &Taxa,
     ingest_id: i64,
-    mmolb_game_id: &str,
-    game_data: &mmolb_parsing::game::Game,
-    logs: impl IntoIterator<Item = impl IntoIterator<Item = IngestLog>>,
-    event_details: &'e [EventDetail<&'e str>],
-) -> QueryResult<i64> {
+    games: Vec<(&str, &mmolb_parsing::Game, Vec<EventDetail<&str>>, Vec<Vec<IngestLog>>)>,
+) -> QueryResult<Vec<i64>> {
     use crate::data_schema::data::event_baserunners::dsl as baserunners_dsl;
     use crate::data_schema::data::event_fielders::dsl as fielders_dsl;
     use crate::data_schema::data::events::dsl as events_dsl;
@@ -431,171 +391,246 @@ async fn insert_game_internal<'e>(
     use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
     use crate::info_schema::info::raw_events::dsl as raw_events_dsl;
 
-    let game_id = diesel::insert_into(games_dsl::games)
-        .values(&NewGame {
-            ingest: ingest_id,
-            mmolb_game_id,
-            season: game_data.season as i32,
-            day: game_data.day as i32,
-            away_team_emoji: &game_data.away_team_emoji,
-            away_team_name: &game_data.away_team_name,
-            away_team_id: &game_data.away_team_id,
-            home_team_emoji: &game_data.home_team_emoji,
-            home_team_name: &game_data.home_team_name,
-            home_team_id: &game_data.home_team_id,
+    let new_games = games.iter()
+        .map(|(mmolb_game_id, game_data, _, _)| {
+            NewGame {
+                ingest: ingest_id,
+                mmolb_game_id,
+                season: game_data.season as i32,
+                day: game_data.day as i32,
+                away_team_emoji: &game_data.away_team_emoji,
+                away_team_name: &game_data.away_team_name,
+                away_team_id: &game_data.away_team_id,
+                home_team_emoji: &game_data.home_team_emoji,
+                home_team_name: &game_data.home_team_name,
+                home_team_id: &game_data.home_team_id,
+            }
         })
+        .collect_vec();
+
+    let n_games_to_insert = new_games.len();
+    info!("Trying to insert {n_games_to_insert} games");
+    let game_ids = diesel::insert_into(games_dsl::games)
+        .values(new_games)
         .returning(games_dsl::id)
-        .get_result::<i64>(conn)
-        .await?;
+        .get_results::<i64>(conn)?;
 
-    let new_raw_events = game_data
-        .event_log
-        .iter()
-        .enumerate()
-        .map(|(index, raw_event)| NewRawEvent {
-            game_id,
-            game_event_index: index as i32,
-            event_text: &raw_event.message,
-        })
-        .collect::<Vec<_>>();
-    let raw_event_ids = diesel::insert_into(raw_events_dsl::raw_events)
-        .values(new_raw_events)
-        .returning(raw_events_dsl::id)
-        .get_results::<i64>(conn)
-        .await?;
+    log_only_assert!(
+        n_games_to_insert == game_ids.len(),
+        "Games insert should have inserted {} rows, but it inserted {}",
+        n_games_to_insert, game_ids.len(),
+    );
 
-    let new_logs: Vec<_> = logs
-        .into_iter()
-        .zip(raw_event_ids)
-        .flat_map(|(logs_for_event, raw_event_id)| {
-            logs_for_event
-                .into_iter()
+    let new_raw_events = iter::zip(&game_ids, &games)
+        .flat_map(|(game_id, (_, game, _, _))| {
+            game.event_log.iter()
                 .enumerate()
-                .map(move |(log_idx, ingest_log)| NewEventIngestLogOwning {
-                    raw_event_id,
-                    log_order: log_idx as i32,
-                    log_level: ingest_log.log_level,
-                    log_text: ingest_log.log_text,
+                .map(|(index, raw_event)| {
+                    NewRawEvent {
+                        game_id: *game_id,
+                        game_event_index: index as i32,
+                        event_text: &raw_event.message,
+                    }
                 })
         })
-        .collect();
+        .collect::<Vec<_>>();
 
-    diesel::insert_into(event_ingest_log_dsl::event_ingest_log)
-        .values(new_logs)
-        .execute(conn)
-        .await?;
-
-    let new_events: Vec<_> = event_details
-        .iter()
-        .map(|event| to_db_format::event_to_row(taxa, game_id, event))
-        .collect();
-
-    let event_ids = diesel::insert_into(events_dsl::events)
-        .values(new_events)
-        .returning(events_dsl::id)
-        .get_results::<i64>(conn)
-        .await?;
+    let n_raw_events_to_insert = new_raw_events.len();
+    info!("Trying to insert {n_raw_events_to_insert} raw events");
+    let n_raw_events_inserted = diesel::copy_from(raw_events_dsl::raw_events)
+        .from_insertable(&new_raw_events)
+        .execute(conn)?;
 
     log_only_assert!(
-        event_ids.len() == event_details.len(),
-        "Events insert should insert {} rows",
-        event_details.len(),
+        n_raw_events_to_insert == n_raw_events_inserted,
+        "Raw events insert should have inserted {} rows, but it inserted {}",
+        n_raw_events_to_insert, n_raw_events_inserted,
     );
+    
+    // let raw_event_ids_by_game = iter::zip(&raw_event_ids, &game_ids)
+    //     .chunk_by(|(_, game_id)| *game_id)
+    //     .into_iter()
+    //     .map(|(_, group)| {
+    //         group
+    //             .map(|(raw_event_id, _)| *raw_event_id)
+    //             .collect_vec()
+    //     })
+    //     .collect_vec();
+    // 
+    // let new_logs = iter::zip(&raw_event_ids_by_game, &games)
+    //     .flat_map(|(raw_event_ids, (_, _, _, logs_for_events))| {
+    //         // Within this closure we're acting on all the logs for all events in a single game
+    //         iter::zip(raw_event_ids, logs_for_events)
+    //             .flat_map(|(raw_event_id, logs_for_event)| {
+    //                 // Within this closure we're acting on the logs for a single event
+    //                 logs_for_event
+    //                     .into_iter()
+    //                     .enumerate()
+    //                     .map(|(log_idx, ingest_log)| NewEventIngestLog {
+    //                         raw_event_id: *raw_event_id,
+    //                         log_order: log_idx as i32,
+    //                         log_level: ingest_log.log_level,
+    //                         log_text: &ingest_log.log_text,
+    //                     })
+    //             })
+    //     })
+    //     .collect_vec();
+    // 
+    // let n_logs_to_insert = new_logs.len();
+    // info!("Trying to insert {n_logs_to_insert} logs");
+    // let n_logs_inserted = diesel::insert_into(event_ingest_log_dsl::event_ingest_log)
+    //     .values(new_logs)
+    //     .execute(conn)?;
+    // 
+    // log_only_assert!(
+    //     n_logs_to_insert == n_logs_inserted,
+    //     "Event ingest logs insert should have inserted {} rows, but it inserted {}",
+    //     n_logs_to_insert, n_logs_inserted,
+    // );
 
-    let new_advances: Vec<_> = event_details
-        .iter()
-        .zip(&event_ids)
-        .flat_map(|(event, &event_id)| to_db_format::event_to_baserunners(taxa, event_id, event))
+    let new_events: Vec<_> = iter::zip(&game_ids, &games)
+        .flat_map(|(game_id, (_, _, events, _))| {
+            events.iter()
+                .map(|event| to_db_format::event_to_row(taxa, *game_id, event))
+        })
         .collect();
-    let n_advances_to_insert = new_advances.len();
 
-    let n_advances_inserted = diesel::insert_into(baserunners_dsl::event_baserunners)
-        .values(new_advances)
-        .execute(conn)
-        .await?;
+    let n_events_to_insert = new_events.len();
+    info!("Trying to insert {n_events_to_insert} events");
+    // let event_ids = diesel::copy_from(events_dsl::events)
+        // .values(&new_events)
+        // .returning(events_dsl::id)
+        // .get_results::<i64>(conn)
+        // .execute(conn)
+        // .await?;
+    let query = diesel::copy_from(events_dsl::events).from_insertable(&new_events);
+    let n_events_inserted = diesel::ExecuteCopyFromDsl::execute(query, conn)?;
 
     log_only_assert!(
-        n_advances_inserted == n_advances_to_insert,
-        "Advances insert should insert {n_advances_to_insert} rows",
+        n_events_to_insert == n_events_inserted,
+        "Events insert should have inserted {} rows, but it inserted {}",
+        n_events_to_insert, n_events_inserted,
     );
 
-    let new_fielders: Vec<_> = event_details
-        .iter()
-        .zip(&event_ids)
-        .flat_map(|(event, &event_id)| to_db_format::event_to_fielders(taxa, event_id, event))
-        .collect();
-    let n_fielders_to_insert = new_fielders.len();
+    // let event_ids_by_game = iter::zip(&event_ids, &game_ids)
+    //     .chunk_by(|(_, game_id)| *game_id)
+    //     .into_iter()
+    //     .map(|(_, group)| {
+    //         group
+    //             .map(|(event_id, _)| *event_id)
+    //             .collect_vec()
+    //     })
+    //     .collect_vec();
+    //
+    // let new_baserunners = iter::zip(&event_ids_by_game, &games)
+    //     .flat_map(|(event_ids, (_, _, events, _))| {
+    //         // Within this closure we're acting on all events in a single game
+    //         iter::zip(event_ids, events)
+    //             .flat_map(|(event_id, event)| {
+    //                 // Within this closure we're acting on a single event
+    //                 to_db_format::event_to_baserunners(taxa, *event_id, event)
+    //             })
+    //     })
+    //     .collect_vec();
+    //
+    // let n_baserunners_to_insert = new_baserunners.len();
+    // info!("Trying to insert {n_baserunners_to_insert} baserunners");
+    // let n_baserunners_inserted = diesel::insert_into(baserunners_dsl::event_baserunners)
+    //     .values(new_baserunners)
+    //     .execute(conn)
+    //     .await?;
+    //
+    // log_only_assert!(
+    //     n_baserunners_to_insert == n_baserunners_inserted,
+    //     "Event baserunners insert should have inserted {} rows, but it inserted {}",
+    //     n_baserunners_to_insert, n_baserunners_inserted,
+    // );
+    //
+    // let new_fielders = iter::zip(&event_ids_by_game, &games)
+    //     .flat_map(|(event_ids, (_, _, events, _))| {
+    //         // Within this closure we're acting on all events in a single game
+    //         iter::zip(event_ids, events)
+    //             .flat_map(|(event_id, event)| {
+    //                 // Within this closure we're acting on a single event
+    //                 to_db_format::event_to_fielders(taxa, *event_id, event)
+    //             })
+    //     })
+    //     .collect_vec();
+    //
+    // let n_fielders_to_insert = new_fielders.len();
+    // info!("Trying to insert {n_fielders_to_insert} fielders");
+    // let n_fielders_inserted = diesel::insert_into(fielders_dsl::event_fielders)
+    //     .values(new_fielders)
+    //     .execute(conn)
+    //     .await?;
+    //
+    // log_only_assert!(
+    //     n_fielders_to_insert == n_fielders_inserted,
+    //     "Event fielders insert should have inserted {} rows, but it inserted {}",
+    //     n_fielders_to_insert, n_fielders_inserted,
+    // );
 
-    let n_fielders_inserted = diesel::insert_into(fielders_dsl::event_fielders)
-        .values(new_fielders)
-        .execute(conn)
-        .await?;
-
-    log_only_assert!(
-        n_fielders_inserted == n_fielders_to_insert,
-        "Fielders insert should insert {n_fielders_to_insert} rows",
-    );
-
-    Ok(game_id)
+    Ok(game_ids)
 }
 
-pub async fn insert_additional_ingest_logs(
-    conn: &mut AsyncPgConnection,
+pub fn insert_additional_ingest_logs(
+    conn: &mut PgConnection,
     game_id: i64,
     extra_ingest_logs: impl IntoIterator<Item = (usize, IngestLog)>,
 ) -> QueryResult<()> {
-    use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
-    use crate::info_schema::info::raw_events::dsl as raw_events_dsl;
-
-    // index is game_event_index, value is raw_event id
-    let raw_event_ids: Vec<i64> = raw_events_dsl::raw_events
-        .select(raw_events_dsl::id)
-        .filter(raw_events_dsl::game_id.eq(game_id))
-        .order_by(raw_events_dsl::game_event_index.asc())
-        .get_results(conn)
-        .await?;
-
-    // Maps raw_event_id to its highest log_order
-    let mut highest_log_order_for_event: HashMap<_, _> = event_ingest_log_dsl::event_ingest_log
-        .group_by(event_ingest_log_dsl::raw_event_id)
-        .select((
-            event_ingest_log_dsl::raw_event_id,
-            diesel::dsl::max(event_ingest_log_dsl::log_order),
-        ))
-        .filter(event_ingest_log_dsl::raw_event_id.eq_any(&raw_event_ids))
-        .order_by(event_ingest_log_dsl::raw_event_id.asc())
-        .get_results::<(i64, Option<i32>)>(conn)
-        .await?
-        .into_iter()
-        .filter_map(|(id, num)| num.map(|n| (id, n)))
-        .collect();
-
-    let new_logs: Vec<_> = extra_ingest_logs
-        .into_iter()
-        .map(|(game_event_index, ingest_log)| {
-            let raw_event_id = raw_event_ids[game_event_index];
-            let n = highest_log_order_for_event.entry(raw_event_id).or_default();
-            *n += 1;
-
-            NewEventIngestLogOwning {
-                raw_event_id,
-                log_order: *n,
-                log_level: ingest_log.log_level,
-                log_text: ingest_log.log_text,
-            }
-        })
-        .collect();
-
-    diesel::insert_into(event_ingest_log_dsl::event_ingest_log)
-        .values(new_logs)
-        .execute(conn)
-        .await?;
-
-    Ok(())
+    // use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
+    // use crate::info_schema::info::raw_events::dsl as raw_events_dsl;
+    //
+    // // index is game_event_index, value is raw_event id
+    // let raw_event_ids: Vec<i64> = raw_events_dsl::raw_events
+    //     .select(raw_events_dsl::id)
+    //     .filter(raw_events_dsl::game_id.eq(game_id))
+    //     .order_by(raw_events_dsl::game_event_index.asc())
+    //     .get_results(conn)
+    //     .await?;
+    //
+    // // Maps raw_event_id to its highest log_order
+    // let mut highest_log_order_for_event: HashMap<_, _> = event_ingest_log_dsl::event_ingest_log
+    //     .group_by(event_ingest_log_dsl::raw_event_id)
+    //     .select((
+    //         event_ingest_log_dsl::raw_event_id,
+    //         diesel::dsl::max(event_ingest_log_dsl::log_order),
+    //     ))
+    //     .filter(event_ingest_log_dsl::raw_event_id.eq_any(&raw_event_ids))
+    //     .order_by(event_ingest_log_dsl::raw_event_id.asc())
+    //     .get_results::<(i64, Option<i32>)>(conn)
+    //     .await?
+    //     .into_iter()
+    //     .filter_map(|(id, num)| num.map(|n| (id, n)))
+    //     .collect();
+    //
+    // let new_logs: Vec<_> = extra_ingest_logs
+    //     .into_iter()
+    //     .map(|(game_event_index, ingest_log)| {
+    //         let raw_event_id = raw_event_ids[game_event_index];
+    //         let n = highest_log_order_for_event.entry(raw_event_id).or_default();
+    //         *n += 1;
+    //
+    //         NewEventIngestLog {
+    //             raw_event_id,
+    //             log_order: *n,
+    //             log_level: ingest_log.log_level,
+    //             log_text: ingest_log.log_text,
+    //         }
+    //     })
+    //     .collect();
+    //
+    // diesel::insert_into(event_ingest_log_dsl::event_ingest_log)
+    //     .values(new_logs)
+    //     .execute(conn)
+    //     .await?;
+    //
+    // Ok(())
+    todo!()
 }
 
-pub async fn game_and_raw_events(
-    conn: &mut AsyncPgConnection,
+pub fn game_and_raw_events(
+    conn: &mut PgConnection,
     for_game_id: i64,
 ) -> QueryResult<(DbGame, Vec<(DbRawEvent, Vec<DbEventIngestLog>)>)> {
     use crate::data_schema::data::games::dsl as games_dsl;
@@ -605,18 +640,15 @@ pub async fn game_and_raw_events(
     let game = games_dsl::games
         .filter(games_dsl::id.eq(for_game_id))
         .select(DbGame::as_select())
-        .get_result::<DbGame>(conn)
-        .await?;
+        .get_result::<DbGame>(conn)?;
 
     let raw_events = DbRawEvent::belonging_to(&game)
         .order_by(raw_events_dsl::game_event_index.asc())
-        .load::<DbRawEvent>(conn)
-        .await?;
+        .load::<DbRawEvent>(conn)?;
 
     let raw_logs = DbEventIngestLog::belonging_to(&raw_events)
         .order_by(event_ingest_log_dsl::log_order.asc())
-        .load::<DbEventIngestLog>(conn)
-        .await?;
+        .load::<DbEventIngestLog>(conn)?;
 
     let logs_by_event = raw_logs.grouped_by(&raw_events);
 
@@ -641,8 +673,8 @@ pub struct Timings {
     pub total_duration: f64,
 }
 
-pub async fn insert_timings(
-    conn: &mut AsyncPgConnection,
+pub fn insert_timings(
+    conn: &mut PgConnection,
     for_game_id: i64,
     timings: Timings,
 ) -> QueryResult<()> {
@@ -679,6 +711,5 @@ pub async fn insert_timings(
     }
     .insert_into(crate::info_schema::info::game_ingest_timing::dsl::game_ingest_timing)
     .execute(conn)
-    .await
     .map(|_| ())
 }

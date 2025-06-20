@@ -17,7 +17,7 @@ macro_rules! taxa_main_enum {
         }
 
         impl $enum_name {
-            pub async fn make_id_mapping(conn: &mut AsyncPgConnection) -> QueryResult<EnumMap<Self, i64>> {
+            pub fn make_id_mapping(conn: &mut PgConnection) -> QueryResult<EnumMap<Self, i64>> {
                 let mut mapping: EnumMap<Self, i64> = EnumMap::default();
 
                 for (taxa, key) in mapping.iter_mut() {
@@ -29,8 +29,7 @@ macro_rules! taxa_main_enum {
                         .do_update()
                         .set(&new_taxa)
                         .returning($id_column)
-                        .get_result(conn)
-                        .await?;
+                        .get_result(conn)?;
                 }
 
                 // Final safety check: Mapping should hold all distinct values

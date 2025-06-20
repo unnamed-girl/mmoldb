@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use futures::{stream, Stream};
+use log::info;
 use reqwest_middleware::ClientWithMiddleware;
 use serde::Deserialize;
 use thiserror::Error;
@@ -86,14 +87,17 @@ pub fn entity_pages<EntityT: for<'a> Deserialize<'a>>(
                             };
                             
                             if let Some(next_page) = response.next_page {
+                                info!("Yielding page");
                                 Some((Ok(page), State::Continue(Some(next_page))))
                             } else {
+                                info!("Yielding last page");
                                 // No next token means it's the end of the stream, but we still have
                                 // to return the item we have.
                                 Some((Ok(page), State::End))
                             }
                         }
                         Err(err) => {
+                            info!("Yielding error");
                             // Yield the error once and then end
                             Some((Err(err), State::End))
                         }

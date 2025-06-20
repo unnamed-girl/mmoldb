@@ -14,16 +14,15 @@ use rocket::fairing::{Fairing, Info, Kind};
 use rocket::tokio::sync::{Notify, RwLock};
 use rocket::tokio::task::JoinHandle;
 use rocket::{Orbit, Rocket, Shutdown, tokio};
-use rocket_db_pools::Database;
-use rocket_db_pools::diesel::AsyncPgConnection;
 use serde::Deserialize;
 pub use sim::{EventDetail, EventDetailFielder, EventDetailRunner, IngestLog};
 use std::mem;
 use std::sync::Arc;
 use std::time::Duration;
 use futures::{future, pin_mut, Stream, StreamExt};
+use itertools::{Itertools, Either};
 use thiserror::Error;
-use crate::ingest::chron::{ChronError, ChronPage};
+use crate::ingest::chron::{ChronEntity, ChronError, ChronPage};
 
 fn default_ingest_period() -> u64 {
     30 * 60  // 30 minutes, expressed in seconds
@@ -61,8 +60,8 @@ struct IngestConfig {
 
 #[derive(Debug, Error)]
 pub enum IngestSetupError {
-    #[error("Failed to get a database connection for ingest setup due to {0}")]
-    DbPoolSetupError(#[from] rocket_db_pools::diesel::pooled_connection::deadpool::PoolError),
+    // #[error("Failed to get a database connection for ingest setup due to {0}")]
+    // DbPoolSetupError(#[from] rocket_sync_db_pools::diesel::pooled_connection::deadpool::PoolError),
 
     #[error("Database error during ingest setup: {0}")]
     DbSetupError(#[from] diesel::result::Error),
@@ -88,8 +87,8 @@ pub enum IngestFatalError {
     #[error("Ingest task transitioned to NotStarted state from some other state")]
     ReenteredNotStarted,
 
-    #[error(transparent)]
-    PoolError(#[from] rocket_db_pools::diesel::pooled_connection::deadpool::PoolError),
+    // #[error(transparent)]
+    // PoolError(#[from] rocket_db_pools::diesel::pooled_connection::deadpool::PoolError),
 
     #[error(transparent)]
     DbError(#[from] diesel::result::Error),
@@ -107,8 +106,8 @@ pub enum IngestFatalError {
 
 #[derive(Debug, Error)]
 pub enum IngestDbError {
-    #[error(transparent)]
-    PoolError(#[from] rocket_db_pools::diesel::pooled_connection::deadpool::PoolError),
+    // #[error(transparent)]
+    // PoolError(#[from] rocket_db_pools::diesel::pooled_connection::deadpool::PoolError),
 
     #[error(transparent)]
     DbError(#[from] diesel::result::Error),
@@ -116,8 +115,8 @@ pub enum IngestDbError {
 
 #[derive(Debug, Error)]
 pub enum GameIngestFatalError {
-    #[error(transparent)]
-    PoolError(#[from] rocket_db_pools::diesel::pooled_connection::deadpool::PoolError),
+    // #[error(transparent)]
+    // PoolError(#[from] rocket_db_pools::diesel::pooled_connection::deadpool::PoolError),
 
     #[error(transparent)]
     DbError(#[from] diesel::result::Error),
@@ -207,7 +206,7 @@ impl Fairing for IngestFairing {
     }
 
     async fn on_liftoff(&self, rocket: &Rocket<Orbit>) {
-        let Some(pool) = Db::fetch(&rocket).cloned() else {
+        let Some(pool) = Db::get_one(rocket).await else {
             error!("Cannot launch ingest task: Rocket is not managing a database pool!");
             return;
         };
@@ -320,34 +319,28 @@ struct CashewsGamesResponse {
 // the ingest task. Errors in setup are propagated to the caller.
 // Errors in the task itself are handled within the task.
 async fn launch_ingest_task(
-    pool: Db,
+    db: Db,
     config: IngestConfig,
     task: IngestTask,
     shutdown: Shutdown,
 ) -> Result<JoinHandle<()>, IngestSetupError> {
     let client = http::get_caching_http_client();
 
-    let (taxa, previous_ingest_start_time) = {
-        let mut conn = pool
-            .get()
-            .await
-            .map_err(|err| IngestSetupError::DbPoolSetupError(err))?;
-
-        let taxa = Taxa::new(&mut conn).await?;
+    let (taxa, previous_ingest_start_time) = db.run(move |conn| {
+        let taxa = Taxa::new(conn)?;
 
         let previous_ingest_start_time = if config.start_ingest_every_launch {
             None
         } else {
-            db::latest_ingest_start_time(&mut conn)
-                .await?
+            db::latest_ingest_start_time(conn)?
                 .map(|t| Utc.from_utc_datetime(&t))
         };
 
-        (taxa, previous_ingest_start_time)
-    };
+        Ok::<_, IngestSetupError>((taxa, previous_ingest_start_time))
+    }).await?;
 
     Ok(tokio::spawn(ingest_task_runner(
-        pool,
+        db,
         taxa,
         client,
         config,
@@ -358,7 +351,7 @@ async fn launch_ingest_task(
 }
 
 async fn ingest_task_runner(
-    pool: Db,
+    db: Db,
     taxa: Taxa,
     client: ClientWithMiddleware,
     config: IngestConfig,
@@ -462,7 +455,7 @@ async fn ingest_task_runner(
         }
 
         let ingest_result = do_ingest(
-            &pool,
+            &db,
             &taxa,
             &client,
             &config,
@@ -471,56 +464,44 @@ async fn ingest_task_runner(
         )
         .await;
 
-        match pool.get().await {
-            Ok(mut conn) => {
-                match ingest_result {
-                    Ok((ingest_id, last_completed_page)) => {
-                        let ingest_end = Utc::now();
-                        match db::mark_ingest_finished(&mut conn, ingest_id, ingest_end, last_completed_page.as_deref()).await {
-                            Ok(()) => {
-                                info!(
-                                    "Marked ingest {ingest_id} finished {:#}.",
-                                    HumanTime::from(ingest_end - ingest_start),
-                                );
-                            }
+        db.run(move |conn| {
+            match ingest_result {
+                Ok((ingest_id, last_completed_page)) => {
+                    let ingest_end = Utc::now();
+                    match db::mark_ingest_finished(conn, ingest_id, ingest_end, last_completed_page.as_deref()) {
+                        Ok(()) => {
+                            info!(
+                                "Marked ingest {ingest_id} finished {:#}.",
+                                HumanTime::from(ingest_end - ingest_start),
+                            );
+                        }
+                        Err(err) => {
+                            warn!("Failed to mark game ingest as finished: {}", err);
+                        }
+                    }
+                }
+                Err((err, ingest_id)) => {
+                    if let Some(ingest_id) = ingest_id {
+                        warn!(
+                            "Fatal error in game ingest: {}. This ingest is aborted.",
+                            err
+                        );
+                        match db::mark_ingest_aborted(conn, ingest_id, Utc::now()) {
+                            Ok(()) => {}
                             Err(err) => {
-                                warn!("Failed to mark game ingest as finished: {}", err);
+                                warn!("Failed to mark game ingest as aborted: {}", err);
                             }
                         }
-                    }
-                    Err((err, ingest_id)) => {
-                        if let Some(ingest_id) = ingest_id {
-                            warn!(
-                                "Fatal error in game ingest: {}. This ingest is aborted.",
-                                err
-                            );
-                            match db::mark_ingest_aborted(&mut conn, ingest_id, Utc::now()).await {
-                                Ok(()) => {}
-                                Err(err) => {
-                                    warn!("Failed to mark game ingest as aborted: {}", err);
-                                }
-                            }
-                        } else {
-                            warn!(
-                                "Fatal error in game ingest before adding ingest to database: {}. \
-                                This ingest is aborted.",
-                                err,
-                            );
-                        }
+                    } else {
+                        warn!(
+                            "Fatal error in game ingest before adding ingest to database: {}. \
+                            This ingest is aborted.",
+                            err,
+                        );
                     }
                 }
             }
-            Err(err) => {
-                match ingest_result {
-                    Ok(_) => {
-                        warn!("Failed to mark game ingest as finished: {}", err);
-                    }
-                    Err(_) => {
-                        warn!("Failed to mark game ingest as aborted: {}", err);
-                    }
-                }
-            }
-        };
+        }).await;
 
         // Try to transition from running to idle, with lots of
         // recovery behaviors
@@ -698,7 +679,7 @@ async fn fetch_game(
 }
 
 async fn do_ingest(
-    pool: &Db,
+    db: &Db,
     taxa: &Taxa,
     client: &ClientWithMiddleware,
     config: &IngestConfig,
@@ -707,28 +688,26 @@ async fn do_ingest(
 ) -> Result<(i64, Option<String>), (IngestFatalError, Option<i64>)> {
     info!("Ingest at {ingest_start} started");
 
-    let mut setup_conn = match pool.get().await {
-        Ok(conn) => conn,
-        Err(pool_err) => {
-            return Err((IngestFatalError::PoolError(pool_err), None))
-        }
-    };
+    // For lifetime reasons
+    let reimport_all_games = config.reimport_all_games;
+    let (start_page, ingest_id) = db.run(move |conn| {
+        let start_page = if reimport_all_games {
+            None
+        } else {
+            // TODO I think I'm storing the wrong page (but it'll just cause one redundant
+            //   request, and not lose data, so it's not high priority to fix)
+            db::last_completed_page(conn)
+                .map_err(|e| (e.into(), None))?
+        };
 
-    let start_page = if config.reimport_all_games {
-        None
-    } else {
-        // TODO I think I'm storing the wrong page (but it'll just cause one redundant
-        //   request, and not lose data, so it's not high priority to fix)
-        db::last_completed_page(&mut setup_conn).await
-            .map_err(|e| (e.into(), None))?
-    };
+        let ingest_id = db::start_ingest(conn, ingest_start)
+            .map_err(|e| (e.into(), None))?;
 
-    let ingest_id = db::start_ingest(&mut setup_conn, ingest_start)
-        .await
-        .map_err(|e| (e.into(), None))?;
+        Ok((start_page, ingest_id))
+    }).await?;
 
     do_ingest_internal(
-        pool,
+        db,
         taxa,
         client,
         config,
@@ -852,90 +831,209 @@ async fn do_ingest_internal(
     Ok((ingest_id, last_completed_page))
 }
 
-async fn ingest_page_of_games(
-    pool: &Db,
-    taxa: &Taxa,
+fn prepare_game_for_db(
+    entity: &ChronEntity<mmolb_parsing::Game>,
+) -> Result<(&str, &mmolb_parsing::Game, Vec<EventDetail<&str>>, Vec<Vec<IngestLog>>), GameIngestFatalError> {
+    let parsed_game = mmolb_parsing::process_game(&entity.data);
+
+    // I'm adding enumeration to parsed, then stripping it out for
+    // the iterator fed to Game::new, on purpose. I need the
+    // counting to count every event, but I don't need the count
+    // inside Game::new.
+    let mut parsed = parsed_game.iter().zip(&entity.data.event_log).enumerate();
+
+    let (mut game, game_creation_ingest_logs) = {
+        let mut parsed_for_game = (&mut parsed).map(|(_, (parsed, _))| parsed);
+
+        Game::new(&entity.entity_id, &entity.data, &mut parsed_for_game)?
+    };
+
+    let (detail_events, ingest_logs): (Vec<_>, Vec<_>) = parsed
+        .map(|(index, (parsed, raw))| {
+            // Sim has a different IngestLogs... this made sense at the time
+            let mut ingest_logs = sim::IngestLogs::new();
+
+            let unparsed = parsed.clone().unparse();
+            if unparsed != raw.message {
+                ingest_logs.error(format!(
+                    "Round-trip of raw event through ParsedEvent produced a mismatch:\n\
+                     Original: <pre>{:?}</pre>\n\
+                     Through EventDetail: <pre>{:?}</pre>",
+                    raw.message, unparsed,
+                ));
+            }
+
+            let event = match game.next(index, &parsed, &raw, &mut ingest_logs) {
+                Ok(result) => result,
+                Err(e) => {
+                    ingest_logs.critical(e.to_string());
+                    None
+                }
+            };
+
+            (event, ingest_logs.into_vec())
+        })
+        .unzip();
+
+    // Take the None values out of detail_events
+    let detail_events = detail_events
+        .into_iter()
+        .flat_map(|event| event)
+        .collect::<Vec<_>>();
+
+    Ok((&entity.entity_id, &entity.data, detail_events, ingest_logs))
+}
+
+fn ingest_page_of_games<'t>(
+    db: &Db,
+    taxa: &'t Taxa,
     config: &IngestConfig,
     ingest_id: i64,
     page: ChronPage<mmolb_parsing::Game>,
-) -> Result<IngestStats, IngestFatalError> {
-    let mut conn = pool.get().await?;
-    
-    let mut stats = IngestStats::new();
+) -> impl Future<Output = Result<IngestStats, IngestFatalError>> {
+    let taxa = taxa.clone(); // TODO Remove this
+    db.run(move |conn| {
+        let (games_in_progress, games_for_import): (Vec<_>, Vec<_>) = page.items.iter()
+            .partition_map(|entity| {
+                if entity.data.state != "Complete" {
+                    Either::Left(&entity.entity_id)
+                } else {
+                    let game_description = format!(
+                        "{} {} @ {} {} s{}d{}",
+                        entity.data.away_team_emoji,
+                        entity.data.away_team_name,
+                        entity.data.home_team_emoji,
+                        entity.data.home_team_name,
+                        entity.data.season,
+                        entity.data.day,
+                    );
 
-    for entity in page.items {
-        let game_description = format!(
-            "{} {} @ {} {} s{}d{}",
-            entity.data.away_team_emoji,
-            entity.data.away_team_name,
-            entity.data.home_team_emoji,
-            entity.data.home_team_name,
-            entity.data.season,
-            entity.data.day,
+                    Either::Right((prepare_game_for_db(entity), game_description))
+                }
+            });
+
+        warn!(
+            "Ignoring {} games in progress -- tracking for these has not yet been implemented.",
+            games_in_progress.len(),
         );
 
-        if entity.data.state != "Complete" {
-            info!(
-                "Skipping non-complete ({}) game {game_description}: {}",
-                entity.data.state,
-                format!("https://mmolb.com/watch/{}", entity.entity_id),
-            );
-            stats.num_incomplete_games_skipped += 1;
-        } else {
-            let total_start = Utc::now();
-
-            let check_already_ingested_start = Utc::now();
-            let already_ingested = if !config.reimport_all_games {
-                db::has_game(&mut conn, &entity.entity_id).await?
-            } else {
-                info!("Deleting {game_description} if it exists");
-                let num_deleted = db::delete_game(&mut conn, &entity.entity_id).await?;
-
-                if num_deleted > 0 {
-                    info!(
-                                "In debug mode, deleted {game_description} and all its events",
-                            );
+        // Unwrap the results
+        let games_for_import = games_for_import.into_iter()
+            .flat_map(|(result, game_description)| {
+                match result {
+                    Ok(game) => Some(game),
+                    Err(err) => {
+                        warn!("Ingest of {game_description} failed with error {err}");
+                        None
+                    }
                 }
-                false
-            };
+            })
+            .collect::<Vec<_>>();
 
-            if already_ingested {
-                stats.num_already_ingested_games_skipped += 1;
-                if stats.num_already_ingested_games_skipped % 1000 == 0 {
-                    info!(
-                        "Skipped {} already-ingested games so far",
-                        stats.num_already_ingested_games_skipped,
-                    );
-                }
-                continue;
-            }
-            let check_already_ingested_duration =
-                (Utc::now() - check_already_ingested_start).as_seconds_f64();
+        // TODO Filter or delete duplicates as appropriate
 
-            info!("Ingesting {game_description}");
+        // Insert the games into the database
+        let capacity = games_for_import.len();
+        let chunked_games_for_import = games_for_import.into_iter()
+            .chunks(100)
+            .into_iter()
+            .map(|chunk| chunk.into_iter().collect_vec())
+            .collect_vec();
 
-            let result = ingest_game(
-                &mut conn,
+        let mut db_game_ids = Vec::with_capacity(capacity);
+        for chunk_for_import in chunked_games_for_import {
+            let chunk_game_ids = db::insert_games(
+                conn,
                 &taxa,
                 ingest_id,
-                &entity.entity_id,
-                entity.data,
-                PreIngestTimings {
-                    total_start,
-                    check_already_ingested_duration,
-                },
-            )
-                .await;
-
-            if let Err(fatal_error) = result {
-                warn!("Ingest of {game_description} failed with error {fatal_error}");
-            }
-
-            stats.num_games_imported += 1;
+                chunk_for_import,
+            )?;
+            db_game_ids.extend(chunk_game_ids);
         }
-    }
+        
+        info!("Chunk ingested");
 
-    Ok(stats)
+        Ok::<_, IngestFatalError>(IngestStats {
+            num_incomplete_games_skipped: games_in_progress.len(),
+            // TODO Restore this part of it
+            num_already_ingested_games_skipped: 0,
+            num_games_imported: db_game_ids.len(),
+        })
+    })
+
+    // TODO Update all the following for batched insert
+    // let inserted_events = db::events_for_game(conn, &taxa, mmolb_game_id).await?;
+    // let mut extra_ingest_logs = IngestLogs::new();
+    // if inserted_events.len() != detail_events.len() {
+    //     error!(
+    //         "Number of events read from the db ({}) does not match number of events written to \
+    //         the db ({})",
+    //         inserted_events.len(),
+    //         detail_events.len(),
+    //     );
+    // }
+    // for (reconstructed_detail, original_detail) in inserted_events.iter().zip(detail_events) {
+    //     let index = original_detail.game_event_index;
+    //     let fair_ball_index = original_detail.fair_ball_event_index;
+    //
+    //     if let Some(index) = fair_ball_index {
+    //         check_round_trip(
+    //             index,
+    //             &mut extra_ingest_logs,
+    //             true,
+    //             &parsed_copy[index],
+    //             &original_detail,
+    //             reconstructed_detail,
+    //         );
+    //     }
+    //
+    //     check_round_trip(
+    //         index,
+    //         &mut extra_ingest_logs,
+    //         false,
+    //         &parsed_copy[index],
+    //         &original_detail,
+    //         reconstructed_detail,
+    //     );
+    // }
+    // let check_round_trip_duration = (Utc::now() - check_round_trip_start).as_seconds_f64();
+    //
+    // let insert_extra_logs_start = Utc::now();
+    // let extra_ingest_logs = extra_ingest_logs.into_vec();
+    // if !extra_ingest_logs.is_empty() {
+    //     db::insert_additional_ingest_logs(conn, game_id, extra_ingest_logs).await?;
+    // }
+    // let insert_extra_logs_duration = (Utc::now() - insert_extra_logs_start).as_seconds_f64();
+    //
+    // {
+    //     db::insert_timings(
+    //         conn,
+    //         game_id,
+    //         db::Timings {
+    //             check_already_ingested_duration: pre_ingest_timings.check_already_ingested_duration,
+    //             parse_duration,
+    //             sim_duration,
+    //             db_insert_duration,
+    //             db_fetch_for_check_duration,
+    //             events_for_game_timings,
+    //             db_duration,
+    //             check_round_trip_duration,
+    //             insert_extra_logs_duration,
+    //             total_duration: (Utc::now() - pre_ingest_timings.total_start).as_seconds_f64(),
+    //         },
+    //     )
+    //         .await?;
+    // }
+    //
+    // info!(
+    //     "Finished importing {} {} @ {} {} s{}d{}",
+    //     game_data.away_team_emoji,
+    //     game_data.away_team_name,
+    //     game_data.home_team_emoji,
+    //     game_data.home_team_name,
+    //     game_data.season,
+    //     game_data.day,
+    // );
 }
 
 async fn fetch_with_retries<R, E, Fut, InnerFn>(
@@ -1085,175 +1183,6 @@ struct PreIngestTimings {
     pub check_already_ingested_duration: f64,
 }
 
-async fn ingest_game(
-    conn: &mut AsyncPgConnection,
-    taxa: &Taxa,
-    ingest_id: i64,
-    mmolb_game_id: &str,
-    game_data: mmolb_parsing::Game,
-    pre_ingest_timings: PreIngestTimings,
-) -> Result<(), GameIngestFatalError> {
-    let parse_start = Utc::now();
-    let parsed_copy = mmolb_parsing::process_game(&game_data);
-    let parse_duration = (Utc::now() - parse_start).as_seconds_f64();
-
-    // I'm adding enumeration to parsed, then stripping it out for
-    // the iterator fed to Game::new, on purpose. I need the
-    // counting to count every event, but I don't need the count
-    // inside Game::new.
-    let mut parsed = parsed_copy.iter().zip(&game_data.event_log).enumerate();
-
-    let sim_start = Utc::now();
-    let (mut game, game_creation_ingest_logs) = {
-        let mut parsed_for_game = (&mut parsed).map(|(_, (parsed, _))| parsed);
-
-        Game::new(mmolb_game_id, &game_data, &mut parsed_for_game)?
-    };
-
-    let (detail_events, ingest_logs): (Vec<_>, Vec<_>) = parsed
-        .map(|(index, (parsed, raw))| {
-            // Sim has a different IngestLogs... this made sense at the time
-            let mut ingest_logs = sim::IngestLogs::new();
-
-            let unparsed = parsed.clone().unparse();
-            if unparsed != raw.message {
-                ingest_logs.error(format!(
-                    "Round-trip of raw event through ParsedEvent produced a mismatch:\n\
-                     Original: <pre>{:?}</pre>\n\
-                     Through EventDetail: <pre>{:?}</pre>",
-                    raw.message, unparsed,
-                ));
-            }
-
-            let event = match game.next(index, &parsed, &raw, &mut ingest_logs) {
-                Ok(result) => result,
-                Err(e) => {
-                    ingest_logs.critical(e.to_string());
-                    None
-                }
-            };
-
-            (event, ingest_logs.into_vec())
-        })
-        .unzip();
-    let sim_duration = (Utc::now() - sim_start).as_seconds_f64();
-
-    // Take the None values out of detail_events
-    let detail_events = detail_events
-        .into_iter()
-        .flat_map(|event| event)
-        .collect::<Vec<_>>();
-
-    // Scope to drop conn as soon as I'm done with it
-    let db_start = Utc::now();
-    let (
-        game_id,
-        (inserted_events, events_for_game_timings),
-        db_insert_duration,
-        db_fetch_for_check_duration,
-    ) = {
-        let db_insert_start = Utc::now();
-        let db_game_id = db::insert_game(
-            conn,
-            &taxa,
-            ingest_id,
-            &mmolb_game_id,
-            &game_data,
-            game_creation_ingest_logs.into_iter().chain(ingest_logs),
-            &detail_events,
-        )
-        .await?;
-        let db_insert_duration = (Utc::now() - db_insert_start).as_seconds_f64();
-
-        // We can rebuild them
-        let db_fetch_for_check_start = Utc::now();
-        let inserted_events = db::events_for_game(conn, &taxa, mmolb_game_id).await?;
-        let db_fetch_for_check_duration = (Utc::now() - db_fetch_for_check_start).as_seconds_f64();
-
-        (
-            db_game_id,
-            inserted_events,
-            db_insert_duration,
-            db_fetch_for_check_duration,
-        )
-    };
-    let db_duration = (Utc::now() - db_start).as_seconds_f64();
-
-    let check_round_trip_start = Utc::now();
-    let mut extra_ingest_logs = IngestLogs::new();
-    if inserted_events.len() != detail_events.len() {
-        error!(
-            "Number of events read from the db ({}) does not match number of events written to \
-            the db ({})",
-            inserted_events.len(),
-            detail_events.len(),
-        );
-    }
-    for (reconstructed_detail, original_detail) in inserted_events.iter().zip(detail_events) {
-        let index = original_detail.game_event_index;
-        let fair_ball_index = original_detail.fair_ball_event_index;
-
-        if let Some(index) = fair_ball_index {
-            check_round_trip(
-                index,
-                &mut extra_ingest_logs,
-                true,
-                &parsed_copy[index],
-                &original_detail,
-                reconstructed_detail,
-            );
-        }
-
-        check_round_trip(
-            index,
-            &mut extra_ingest_logs,
-            false,
-            &parsed_copy[index],
-            &original_detail,
-            reconstructed_detail,
-        );
-    }
-    let check_round_trip_duration = (Utc::now() - check_round_trip_start).as_seconds_f64();
-
-    let insert_extra_logs_start = Utc::now();
-    let extra_ingest_logs = extra_ingest_logs.into_vec();
-    if !extra_ingest_logs.is_empty() {
-        db::insert_additional_ingest_logs(conn, game_id, extra_ingest_logs).await?;
-    }
-    let insert_extra_logs_duration = (Utc::now() - insert_extra_logs_start).as_seconds_f64();
-
-    {
-        db::insert_timings(
-            conn,
-            game_id,
-            db::Timings {
-                check_already_ingested_duration: pre_ingest_timings.check_already_ingested_duration,
-                parse_duration,
-                sim_duration,
-                db_insert_duration,
-                db_fetch_for_check_duration,
-                events_for_game_timings,
-                db_duration,
-                check_round_trip_duration,
-                insert_extra_logs_duration,
-                total_duration: (Utc::now() - pre_ingest_timings.total_start).as_seconds_f64(),
-            },
-        )
-        .await?;
-    }
-
-    info!(
-        "Finished importing {} {} @ {} {} s{}d{}",
-        game_data.away_team_emoji,
-        game_data.away_team_name,
-        game_data.home_team_emoji,
-        game_data.home_team_name,
-        game_data.season,
-        game_data.day,
-    );
-
-    Ok(())
-}
 
 fn log_if_error<'g, E: std::fmt::Display>(
     ingest_logs: &mut IngestLogs,

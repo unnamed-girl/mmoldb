@@ -13,18 +13,17 @@ use crate::ingest::{IngestFairing, IngestTask};
 use num_format::{Locale, ToFormattedString};
 use rocket::fairing::AdHoc;
 use rocket::{Build, Rocket, launch, figment};
-use rocket_db_pools::diesel::prelude::*;
-use rocket_db_pools::{Database, diesel::PgPool};
+use rocket_sync_db_pools::diesel::{prelude::*, PgConnection};
 use rocket_dyn_templates::Template;
 use rocket_dyn_templates::tera::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use rocket::figment::map;
+use rocket_sync_db_pools::database;
 use serde::Deserialize;
 
-#[derive(Database, Clone)]
 #[database("mmoldb")]
-struct Db(PgPool);
+struct Db(PgConnection);
 
 struct NumFormat;
 
@@ -48,7 +47,7 @@ async fn run_migrations(rocket: Rocket<Build>) -> Rocket<Build> {
     use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 
     const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
-    let config: rocket_db_pools::Config = rocket
+    let config: rocket_sync_db_pools::Config = rocket
         .figment()
         .extract_inner("databases.mmoldb")
         .expect("mmoldb database connection information was not found in Rocket.toml");
@@ -96,12 +95,12 @@ fn get_figment_with_constructed_db_url() -> figment::Figment {
 fn rocket() -> _ {
     rocket::custom(get_figment_with_constructed_db_url())
         .mount("/", web::routes())
-        .mount("/static", rocket::fs::FileServer::from("static"))
+        .mount("/static", rocket::fs::FileServer::new(rocket::fs::relative!("static")))
         .manage(IngestTask::new())
         .attach(Template::custom(|engines| {
             engines.tera.register_filter("num_format", NumFormat);
         }))
-        .attach(Db::init())
+        .attach(Db::fairing())
         .attach(AdHoc::on_ignite("Migrations", run_migrations))
         .attach(IngestFairing::new())
 }

@@ -1,7 +1,5 @@
+use diesel::Connection;
 use rocket::{State, get, uri};
-use rocket_db_pools::Connection;
-use rocket_db_pools::diesel::AsyncConnection;
-use rocket_db_pools::diesel::scoped_futures::ScopedFutureExt;
 use rocket_dyn_templates::{Template, context};
 use serde::Serialize;
 
@@ -12,7 +10,7 @@ use crate::{Db, db};
 
 // TODO: Parameterize on MMOLB id, not my db id
 #[get("/game/<game_id>")]
-pub async fn game_page(game_id: i64, mut db: Connection<Db>) -> Result<Template, AppError> {
+pub async fn game_page(game_id: i64, mut db: Db) -> Result<Template, AppError> {
     #[derive(Serialize)]
     struct LogContext {
         level: &'static str,
@@ -42,7 +40,9 @@ pub async fn game_page(game_id: i64, mut db: Connection<Db>) -> Result<Template,
         events: Vec<EventContext>,
     }
 
-    let (game, events) = db::game_and_raw_events(&mut db, game_id).await?;
+    let (game, events) = db.run(move |conn| {
+        db::game_and_raw_events(conn, game_id)
+    }).await?;
     let watch_uri = format!("https://mmolb.com/watch/{}", game.mmolb_game_id);
     let api_uri = format!("https://mmolb.com/api/game/{}", game.mmolb_game_id);
     let game = GameContext {
@@ -91,7 +91,7 @@ pub async fn game_page(game_id: i64, mut db: Connection<Db>) -> Result<Template,
 }
 
 #[get("/ingest/<ingest_id>")]
-pub async fn ingest_page(ingest_id: i64, mut db: Connection<Db>) -> Result<Template, AppError> {
+pub async fn ingest_page(ingest_id: i64, mut db: Db) -> Result<Template, AppError> {
     #[derive(Serialize)]
     struct IngestContext {
         id: i64,
@@ -101,7 +101,9 @@ pub async fn ingest_page(ingest_id: i64, mut db: Connection<Db>) -> Result<Templ
         games: Vec<GameContext>,
     }
 
-    let (ingest, games) = db::ingest_with_games(&mut db, ingest_id).await?;
+    let (ingest, games) = db.run(move |conn| {
+        db::ingest_with_games(conn, ingest_id)
+    }).await?;
     let ingest = IngestContext {
         id: ingest.id,
         started_at: (&ingest.started_at).into(),
@@ -120,10 +122,10 @@ pub async fn ingest_page(ingest_id: i64, mut db: Connection<Db>) -> Result<Templ
 }
 
 #[get("/games")]
-pub async fn games_page(mut db: Connection<Db>) -> Result<Template, AppError> {
-    let games = db
-        .transaction(|conn| async move { db::all_games(conn).await }.scope_boxed())
-        .await?;
+pub async fn games_page(mut db: Db) -> Result<Template, AppError> {
+    let games = db.run(move |conn| {
+        conn.transaction(|conn| db::all_games(conn))
+    }).await?;
 
     Ok(Template::render(
         "games",
@@ -136,12 +138,12 @@ pub async fn games_page(mut db: Connection<Db>) -> Result<Template, AppError> {
 }
 
 #[get("/games-with-issues")]
-pub async fn games_with_issues_page(mut db: Connection<Db>) -> Result<Template, AppError> {
+pub async fn games_with_issues_page(mut db: Db) -> Result<Template, AppError> {
     // TODO Get rid of this query + filter and replace it with a query
     //   that only returns what I need
-    let games = db
-        .transaction(|conn| async move { db::all_games(conn).await }.scope_boxed())
-        .await?;
+    let games = db.run(|conn| {
+        conn.transaction(|conn| db::all_games(conn))
+    }).await?;
 
     let games = games
         .into_iter()
@@ -175,7 +177,7 @@ pub async fn debug_no_games_page() -> Result<Template, AppError> {
 
 #[get("/")]
 pub async fn index_page(
-    mut db: Connection<Db>,
+    mut db: Db,
     ingest_task: &State<IngestTask>,
 ) -> Result<Template, AppError> {
     #[derive(Serialize, Default)]
@@ -223,24 +225,21 @@ pub async fn index_page(
     // A transaction is probably overkill for this, but it's
     // TECHNICALLY the only correct way to make sure that the
     // value of number_of_ingests_not_shown is correct
-    let (total_games, total_games_with_issues, total_num_ingests, displayed_ingests) = db
-        .transaction::<_, diesel::result::Error, _>(|conn| {
-            async move {
-                let num_games = db::game_count(conn).await?;
-                let num_games_with_issues = db::game_with_issues_count(conn).await?;
+    let (total_games, total_games_with_issues, total_num_ingests, displayed_ingests) = db.run(move |conn| {
+        conn.transaction(|conn| {
+            let num_games = db::game_count(conn)?;
+            let num_games_with_issues = db::game_with_issues_count(conn)?;
 
-                let num_ingests = db::ingest_count(conn).await?;
-                let latest_ingests = db::latest_ingests(conn).await?;
-                Ok((
-                    num_games,
-                    num_games_with_issues,
-                    num_ingests,
-                    latest_ingests,
-                ))
-            }
-            .scope_boxed()
+            let num_ingests = db::ingest_count(conn)?;
+            let latest_ingests = db::latest_ingests(conn)?;
+            Ok::<_, AppError>((
+                num_games,
+                num_games_with_issues,
+                num_ingests,
+                latest_ingests,
+            ))
         })
-        .await?;
+    }).await?;
 
     let number_of_ingests_not_shown = total_num_ingests - displayed_ingests.len() as i64;
     let ingests: Vec<_> = displayed_ingests

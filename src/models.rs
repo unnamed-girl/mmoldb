@@ -1,5 +1,5 @@
 use chrono::NaiveDateTime;
-use rocket_db_pools::diesel::prelude::*;
+use rocket_sync_db_pools::diesel::prelude::*;
 
 #[derive(Insertable)]
 #[diesel(table_name = crate::data_schema::data::ingests)]
@@ -18,7 +18,7 @@ pub struct Ingest {
     pub last_completed_page: Option<String>,
 }
 
-#[derive(Insertable)]
+#[derive(Debug, Insertable)]
 #[diesel(table_name = crate::data_schema::data::games)]
 pub struct NewGame<'a> {
     pub ingest: i64,
@@ -53,6 +53,7 @@ pub struct DbGame {
 
 #[derive(Insertable)]
 #[diesel(table_name = crate::data_schema::data::events)]
+#[diesel(treat_none_as_default_value = false)]
 pub struct NewEvent<'a> {
     pub game_id: i64,
     pub game_event_index: i32,
@@ -110,6 +111,7 @@ pub struct DbEvent {
 
 #[derive(Insertable)]
 #[diesel(table_name = crate::info_schema::info::raw_events)]
+#[diesel(treat_none_as_default_value = false)]
 pub struct NewRawEvent<'a> {
     pub game_id: i64,
     pub game_event_index: i32,
@@ -127,16 +129,13 @@ pub struct DbRawEvent {
     pub event_text: String,
 }
 
-// This struct happens to be used in a context where it's more natural
-// for it to own its data. A non-owning version is also perfectly
-// possible.
 #[derive(Insertable)]
 #[diesel(table_name = crate::info_schema::info::event_ingest_log)]
-pub struct NewEventIngestLogOwning {
+pub struct NewEventIngestLog<'a> {
     pub raw_event_id: i64,
     pub log_order: i32,
     pub log_level: i32,
-    pub log_text: String,
+    pub log_text: &'a str,
 }
 
 #[derive(Identifiable, Queryable, Selectable, Associations)]
