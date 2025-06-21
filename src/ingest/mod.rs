@@ -13,16 +13,17 @@ use reqwest_middleware::ClientWithMiddleware;
 use rocket::fairing::{Fairing, Info, Kind};
 use rocket::tokio::sync::{Notify, RwLock};
 use rocket::tokio::task::JoinHandle;
-use rocket::{Orbit, Rocket, Shutdown, tokio};
+use rocket::{Orbit, Rocket, Shutdown, tokio, figment};
 use serde::Deserialize;
 pub use sim::{EventDetail, EventDetailFielder, EventDetailRunner, IngestLog};
-use std::mem;
+use std::{iter, mem};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use futures::{future, pin_mut, Stream, StreamExt};
 use itertools::{Itertools, Either};
 use thiserror::Error;
-use crate::ingest::chron::{ChronEntity, ChronError, ChronPage};
+use crate::ingest::chron::{ChronEntities, ChronEntity, ChronError, ChronPage};
 
 fn default_ingest_period() -> u64 {
     30 * 60  // 30 minutes, expressed in seconds
@@ -30,6 +31,9 @@ fn default_ingest_period() -> u64 {
 
 fn default_retries() -> u64 {
     3
+}
+fn default_chunks() -> usize {
+    1000
 }
 fn default_fetch_rate_limit() -> u64 {
     10
@@ -50,12 +54,15 @@ struct IngestConfig {
     cache_game_list_from_api: bool,
     #[serde(default = "default_retries")]
     fetch_game_list_retries: u64,
+    #[serde(default = "default_chunks")]
+    fetch_game_list_chunks: usize,
     #[serde(default)]
     cache_games_from_api: bool,
     #[serde(default = "default_retries")]
     fetch_games_retries: u64,
     #[serde(default = "default_fetch_rate_limit")]
     fetch_games_rate_limit_ms: u64,
+    cache_path: PathBuf,
 }
 
 #[derive(Debug, Error)]
@@ -87,21 +94,14 @@ pub enum IngestFatalError {
     #[error("Ingest task transitioned to NotStarted state from some other state")]
     ReenteredNotStarted,
 
-    // #[error(transparent)]
-    // PoolError(#[from] rocket_db_pools::diesel::pooled_connection::deadpool::PoolError),
-
     #[error(transparent)]
     DbError(#[from] diesel::result::Error),
 
-    #[error("Failed to fetch games list after {retries} retries: {err}")]
-    FailedToFetchGamesList {
-        retries: u64,
-        #[source]
-        err: FetchGamesListError,
-    },
-
     #[error(transparent)]
     FetchGameError(#[from] FetchGameError),
+    
+    #[error("Couldn't open HTTP cache database: {0}")]
+    OpenCacheDbError(#[from] sled::Error),
 }
 
 #[derive(Debug, Error)]
@@ -216,8 +216,15 @@ impl Fairing for IngestFairing {
             return;
         };
 
-        // extract the entire config any `Deserialize` value
-        let config = match rocket.figment().extract() {
+        let Some(cache_path) = figment::providers::Env::var("HTTP_CACHE_DIR") else {
+            error!("Cannot launch ingest task: HTTP_CACHE_DIR environment variable is not set");
+            return;
+        };
+        
+        let augmented_figment = rocket.figment()
+            .clone() // Might be able to get away without this but. eh
+            .join(("cache_path", cache_path));
+        let config = match augmented_figment.extract() {
             Ok(config) => config,
             Err(err) => {
                 error!(
@@ -644,40 +651,6 @@ async fn fetch_game_from_server(
         .map_err(FetchGamePartialError::FailedJsonDecode)
 }
 
-async fn fetch_game(
-    game_id: &str,
-    client: &ClientWithMiddleware,
-    config: &IngestConfig,
-    rate_limiter: &tokio_utils::RateLimiter,
-) -> Result<mmolb_parsing::Game, FetchGameError> {
-    let url = format!("https://mmolb.com/api/game/{}", game_id);
-
-    // First, attempt to grab data from the cache, and if we succeed,
-    // return early. Otherwise record the fetch-from-cache error and
-    // continue.
-    let cache_err = match fetch_game_from_cache(client, &url).await {
-        Ok(game) => {
-            info!("Returning game from cache");
-            return Ok(game);
-        }
-        Err(err) => err,
-    };
-
-    rate_limiter
-        .throttle(|| async {
-            info!("Fetching game from the server because of cache error: {cache_err}");
-
-            fetch_with_retries(
-                config.cache_games_from_api,
-                config.fetch_games_retries,
-                async |cache_mode| fetch_game_from_server(client, &url, cache_mode).await,
-            )
-            .await
-            .map_err(|e| FetchGameError::from_partial(e, cache_err))
-        })
-        .await
-}
-
 async fn do_ingest(
     db: &Db,
     taxa: &Taxa,
@@ -686,7 +659,13 @@ async fn do_ingest(
     shutdown: &mut Shutdown,
     ingest_start: DateTime<Utc>,
 ) -> Result<(i64, Option<String>), (IngestFatalError, Option<i64>)> {
-    info!("Ingest at {ingest_start} started");
+    info!("Ingest at {ingest_start} starting");
+
+    // The only thing that errors here is opening the http cache, which
+    // could be worked around by just not caching. This feature could
+    // be added upon request.
+    let chron = chron::Chron::new(&config.cache_path, config.fetch_game_list_chunks)
+        .map_err(|err| (err.into(), None))?;
 
     // For lifetime reasons
     let reimport_all_games = config.reimport_all_games;
@@ -711,6 +690,7 @@ async fn do_ingest(
         taxa,
         client,
         config,
+        &chron,
         shutdown,
         ingest_id,
         ingest_start,
@@ -747,6 +727,7 @@ async fn do_ingest_internal(
     taxa: &Taxa,
     client: &ClientWithMiddleware,
     config: &IngestConfig,
+    chron: &chron::Chron,
     shutdown: &mut Shutdown,
     ingest_id: i64,
     ingest_start: DateTime<Utc>,
@@ -757,15 +738,12 @@ async fn do_ingest_internal(
     // TODO Update last_completed_page
     let mut last_completed_page = start_page.clone();
 
-    let games_pages = fetch_games_list(client, config, start_page);
-    pin_mut!(games_pages);
-
     let mut stats = IngestStats::new();
 
     info!("Beginning ingest loop");
 
     let mut page_ingest_fut = None;
-    let mut next_page_fut = Some(games_pages.next());
+    let mut next_page_fut = Some(chron.games_page(start_page));
 
     loop {
         let page = match (page_ingest_fut.take(), next_page_fut.take()) {
@@ -808,18 +786,14 @@ async fn do_ingest_internal(
         };
 
         match page {
-            None => {
-                // Ingest finished successfully
-                break
-            }
-            Some(Err(network_error)) => {
+            Err(network_error) => {
                 // TODO Ensure ingest is marked as aborted
                 warn!("Stopping ingest early because of network error: {network_error}");
                 break;
             }
-            Some(Ok(page)) => {
+            Ok(page) => {
+                next_page_fut = Some(chron.games_page(page.next_page.clone()));
                 page_ingest_fut = Some(ingest_page_of_games(pool, taxa, config, ingest_id, page));
-                next_page_fut = Some(games_pages.next());
             }
         }
     }
@@ -831,9 +805,9 @@ async fn do_ingest_internal(
     Ok((ingest_id, last_completed_page))
 }
 
-fn prepare_game_for_db(
+fn prepare_completed_game_for_db(
     entity: &ChronEntity<mmolb_parsing::Game>,
-) -> Result<(&str, &mmolb_parsing::Game, Vec<EventDetail<&str>>, Vec<Vec<IngestLog>>), GameIngestFatalError> {
+) -> Result<db::CompletedGameForDb, GameIngestFatalError> {
     let parsed_game = mmolb_parsing::process_game(&entity.data);
 
     // I'm adding enumeration to parsed, then stripping it out for
@@ -842,16 +816,16 @@ fn prepare_game_for_db(
     // inside Game::new.
     let mut parsed = parsed_game.iter().zip(&entity.data.event_log).enumerate();
 
-    let (mut game, game_creation_ingest_logs) = {
+    let (mut game, mut all_logs) = {
         let mut parsed_for_game = (&mut parsed).map(|(_, (parsed, _))| parsed);
 
         Game::new(&entity.entity_id, &entity.data, &mut parsed_for_game)?
     };
 
-    let (detail_events, ingest_logs): (Vec<_>, Vec<_>) = parsed
-        .map(|(index, (parsed, raw))| {
+    let detail_events = parsed
+        .map(|(game_event_index, (parsed, raw))| {
             // Sim has a different IngestLogs... this made sense at the time
-            let mut ingest_logs = sim::IngestLogs::new();
+            let mut ingest_logs = sim::IngestLogs::new(game_event_index);
 
             let unparsed = parsed.clone().unparse();
             if unparsed != raw.message {
@@ -863,17 +837,19 @@ fn prepare_game_for_db(
                 ));
             }
 
-            let event = match game.next(index, &parsed, &raw, &mut ingest_logs) {
+            let event = match game.next(game_event_index, &parsed, &raw, &mut ingest_logs) {
                 Ok(result) => result,
                 Err(e) => {
                     ingest_logs.critical(e.to_string());
                     None
                 }
             };
+            
+            all_logs.push(ingest_logs.into_vec());
 
-            (event, ingest_logs.into_vec())
+            event
         })
-        .unzip();
+        .collect_vec();
 
     // Take the None values out of detail_events
     let detail_events = detail_events
@@ -881,7 +857,12 @@ fn prepare_game_for_db(
         .flat_map(|event| event)
         .collect::<Vec<_>>();
 
-    Ok((&entity.entity_id, &entity.data, detail_events, ingest_logs))
+    Ok(CompletedGameForDb {
+        id: &entity.entity_id,
+        game: &entity.data,
+        events: detail_events,
+        logs: all_logs.into_iter().flatten().collect(),
+    })
 }
 
 fn ingest_page_of_games<'t>(
@@ -889,16 +870,35 @@ fn ingest_page_of_games<'t>(
     taxa: &'t Taxa,
     config: &IngestConfig,
     ingest_id: i64,
-    page: ChronPage<mmolb_parsing::Game>,
+    page: ChronEntities<mmolb_parsing::Game>,
 ) -> impl Future<Output = Result<IngestStats, IngestFatalError>> {
     let taxa = taxa.clone(); // TODO Remove this
     db.run(move |conn| {
-        let (games_in_progress, games_for_import): (Vec<_>, Vec<_>) = page.items.iter()
-            .partition_map(|entity| {
-                if entity.data.state != "Complete" {
-                    Either::Left(&entity.entity_id)
+        let raw_games = if !config.reimport_all_games {
+            // Remove any games which are fully imported
+            let is_finished = db::is_finished(conn, page.items.iter().map(|e| e.entity_id.as_str()).collect())?;
+            iter::zip(page.items, is_finished)
+                .flat_map(|(game, is_finished)| {
+                    if is_finished {
+                        None
+                    } else {
+                        Some(game)
+                    }
+                })
+                .collect()
+        } else {
+            page.items
+        };
+        
+        let games = raw_games.iter()
+            .map(|entity| {
+                Ok(if entity.data.state != "Complete" {
+                    db::GameForDb::Incomplete {
+                        game_id: &entity.entity_id,
+                        raw_game: &entity.data,
+                    }
                 } else {
-                    let game_description = format!(
+                    let description = format!(
                         "{} {} @ {} {} s{}d{}",
                         entity.data.away_team_emoji,
                         entity.data.away_team_name,
@@ -908,48 +908,23 @@ fn ingest_page_of_games<'t>(
                         entity.data.day,
                     );
 
-                    Either::Right((prepare_game_for_db(entity), game_description))
-                }
-            });
-
-        warn!(
-            "Ignoring {} games in progress -- tracking for these has not yet been implemented.",
-            games_in_progress.len(),
-        );
-
-        // Unwrap the results
-        let games_for_import = games_for_import.into_iter()
-            .flat_map(|(result, game_description)| {
-                match result {
-                    Ok(game) => Some(game),
-                    Err(err) => {
-                        warn!("Ingest of {game_description} failed with error {err}");
-                        None
+                    db::GameForDb::Completed {
+                        description,
+                        game: prepare_completed_game_for_db(entity)?,
                     }
-                }
+                })
             })
-            .collect::<Vec<_>>();
-
-        // TODO Filter or delete duplicates as appropriate
+            .collect::<Result<Vec<_>, _>>()?;
+        
+        info!("Ingesting {} games, ignoring {} already-ingested games", games.len(), raw_games.len() - games.len());
 
         // Insert the games into the database
-        let capacity = games_for_import.len();
-        let chunked_games_for_import = games_for_import.into_iter()
-            .chunks(100)
-            .into_iter()
-            .map(|chunk| chunk.into_iter().collect_vec())
-            .collect_vec();
-
-        let mut db_game_ids = Vec::with_capacity(capacity);
-        for chunk_for_import in chunked_games_for_import {
-            let chunk_game_ids = db::insert_games(
-                conn,
-                &taxa,
-                ingest_id,
-                chunk_for_import,
-            )?;
-            db_game_ids.extend(chunk_game_ids);
-        }
+        db::insert_games(
+            conn,
+            &taxa,
+            ingest_id,
+            games,
+        )?;
         
         info!("Chunk ingested");
 
@@ -1034,67 +1009,6 @@ fn ingest_page_of_games<'t>(
     //     game_data.season,
     //     game_data.day,
     // );
-}
-
-async fn fetch_with_retries<R, E, Fut, InnerFn>(
-    cache: bool,
-    max_retries: u64,
-    mut inner_fn: InnerFn,
-) -> Result<R, E>
-where
-    E: std::fmt::Display,
-    Fut: Future<Output = Result<R, E>>,
-    InnerFn: FnMut(http_cache_reqwest::CacheMode) -> Fut,
-{
-    let cache_mode = if cache {
-        // ForceCache means to ignore staleness, but still go to the
-        // network if it's not found in the cache
-        http_cache_reqwest::CacheMode::ForceCache
-    } else {
-        // NoStore means don't use the cache at all
-        http_cache_reqwest::CacheMode::NoStore
-    };
-
-    let mut tries = 0;
-    Ok(loop {
-        match inner_fn(cache_mode).await {
-            Ok(r) => break r,
-            Err(err) if tries < max_retries => {
-                tries += 1;
-                let wait_time = Duration::from_millis(100 * tries * tries);
-                warn!(
-                    "Retrying request after {}s due to error: {err}",
-                    wait_time.as_secs_f64()
-                );
-                tokio::time::sleep(wait_time).await;
-            }
-            Err(err) => {
-                return Err(err);
-            }
-        }
-    })
-}
-
-fn fetch_games_list(
-    client: &ClientWithMiddleware,
-    config: &IngestConfig,
-    start_page: Option<String>,
-) -> impl Stream<Item = Result<ChronPage<mmolb_parsing::Game>, ChronError>> {
-    let cache_mode = if config.cache_game_list_from_api {
-        // ForceCache means to ignore staleness, but still go to the
-        // network if it's not found in the cache
-        http_cache_reqwest::CacheMode::ForceCache
-    } else {
-        // NoStore means don't use the cache at all
-        http_cache_reqwest::CacheMode::NoStore
-    };
-
-    chron::entity_pages(client, cache_mode, "game", 1000, start_page)
-}
-
-struct FetchedGames {
-    games: Vec<CashewsGameResponse>,
-    latest_completed_season: Option<i64>,
 }
 
 

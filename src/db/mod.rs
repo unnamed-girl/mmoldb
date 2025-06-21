@@ -22,9 +22,18 @@ use rocket_sync_db_pools::{diesel::PgConnection, diesel::prelude::*};
 pub use to_db_format::RowToEventError;
 
 pub fn ingest_count(conn: &mut PgConnection) -> QueryResult<i64> {
-    use crate::data_schema::data::ingests::dsl::*;
+    use crate::info_schema::info::ingests::dsl;
 
-    ingests.count().get_result(conn)
+    dsl::ingests.count().get_result(conn)
+}
+
+pub fn is_finished(conn: &mut PgConnection, ids: Vec<&str>) -> QueryResult<Vec<bool>> {
+    use crate::data_schema::data::games::dsl;
+    
+    dsl::games
+        .filter(dsl::id.eq_any(ids))
+        .select(dsl::is_finished)
+        .get_results(conn)
 }
 
 pub fn game_count(conn: &mut PgConnection) -> QueryResult<i64> {
@@ -57,7 +66,7 @@ pub fn game_with_issues_count(conn: &mut PgConnection) -> QueryResult<i64> {
 pub fn latest_ingest_start_time(
     conn: &mut PgConnection,
 ) -> QueryResult<Option<NaiveDateTime>> {
-    use crate::data_schema::data::ingests::dsl::*;
+    use crate::info_schema::info::ingests::dsl::*;
 
     ingests
         .select(started_at)
@@ -69,7 +78,7 @@ pub fn latest_ingest_start_time(
 pub fn last_completed_page(
     conn: &mut PgConnection,
 ) -> QueryResult<Option<String>> {
-    use crate::data_schema::data::ingests::dsl::*;
+    use crate::info_schema::info::ingests::dsl::*;
 
     ingests
         .filter(last_completed_page.is_not_null())
@@ -109,7 +118,7 @@ pub fn latest_ingests(conn: &mut PgConnection) -> QueryResult<Vec<IngestWithGame
 }
 
 pub fn start_ingest(conn: &mut PgConnection, at: DateTime<Utc>) -> QueryResult<i64> {
-    use crate::data_schema::data::ingests::dsl::*;
+    use crate::info_schema::info::ingests::dsl::*;
 
     NewIngest {
         started_at: at.naive_utc(),
@@ -125,7 +134,7 @@ pub fn mark_ingest_finished(
     at: DateTime<Utc>,
     last_completed_page: Option<&str>,
 ) -> QueryResult<()> {
-    use crate::data_schema::data::ingests::dsl;
+    use crate::info_schema::info::ingests::dsl;
 
     diesel::update(dsl::ingests.filter(dsl::id.eq(ingest_id)))
         .set((
@@ -145,7 +154,7 @@ pub fn mark_ingest_aborted(
     ingest_id: i64,
     at: DateTime<Utc>,
 ) -> QueryResult<()> {
-    use crate::data_schema::data::ingests::dsl::*;
+    use crate::info_schema::info::ingests::dsl::*;
 
     diesel::update(ingests.filter(id.eq(ingest_id)))
         .set(aborted_at.eq(at.naive_utc()))
@@ -231,7 +240,7 @@ pub fn ingest_with_games(
     for_ingest_id: i64,
 ) -> QueryResult<(Ingest, Vec<(DbGame, i64, i64, i64)>)> {
     use crate::data_schema::data::games::dsl as game_dsl;
-    use crate::data_schema::data::ingests::dsl as ingest_dsl;
+    use crate::info_schema::info::ingests::dsl as ingest_dsl;
 
     let ingest = ingest_dsl::ingests
         .filter(ingest_dsl::id.eq(for_ingest_id))
@@ -362,19 +371,32 @@ pub fn events_for_game<'e>(
     ))
 }
 
-pub fn insert_games<'e>(
+pub(crate) struct CompletedGameForDb<'g> {
+    id: &'g str,
+    raw_game: &'g mmolb_parsing::Game,
+    events: Vec<EventDetail<&'g str>>,
+    logs: Vec<IngestLog>,
+}
+
+pub(crate) enum GameForDb<'g> {
+    Incomplete {
+        game_id: &'g str,
+        raw_game: &'g mmolb_parsing::Game,
+    },
+    Completed {
+        description: String,
+        game: CompletedGameForDb<'g>,
+    }
+}
+
+pub fn insert_games(
     conn: &mut PgConnection,
     taxa: &Taxa,
     ingest_id: i64,
-    games: Vec<(&str, &mmolb_parsing::Game, Vec<EventDetail<&str>>, Vec<Vec<IngestLog>>)>,
+    games: Vec<GameForDb>,
 ) -> QueryResult<Vec<i64>> {
     conn.transaction::<_, _, _>(|conn| {
-        insert_games_internal(
-            conn,
-            taxa,
-            ingest_id,
-            games,
-        )
+        insert_games_internal(conn, taxa, ingest_id, games)
     })
 }
 
@@ -382,7 +404,7 @@ fn insert_games_internal<'e>(
     conn: &mut PgConnection,
     taxa: &Taxa,
     ingest_id: i64,
-    games: Vec<(&str, &mmolb_parsing::Game, Vec<EventDetail<&str>>, Vec<Vec<IngestLog>>)>,
+    games: Vec<GameForDb>,
 ) -> QueryResult<Vec<i64>> {
     use crate::data_schema::data::event_baserunners::dsl as baserunners_dsl;
     use crate::data_schema::data::event_fielders::dsl as fielders_dsl;
@@ -392,18 +414,36 @@ fn insert_games_internal<'e>(
     use crate::info_schema::info::raw_events::dsl as raw_events_dsl;
 
     let new_games = games.iter()
-        .map(|(mmolb_game_id, game_data, _, _)| {
-            NewGame {
-                ingest: ingest_id,
-                mmolb_game_id,
-                season: game_data.season as i32,
-                day: game_data.day as i32,
-                away_team_emoji: &game_data.away_team_emoji,
-                away_team_name: &game_data.away_team_name,
-                away_team_id: &game_data.away_team_id,
-                home_team_emoji: &game_data.home_team_emoji,
-                home_team_name: &game_data.home_team_name,
-                home_team_id: &game_data.home_team_id,
+        .map(|game| {
+            match game {
+                GameForDb::Incomplete { game_id, raw_game } => {
+                    NewGame {
+                        ingest: ingest_id,
+                        mmolb_game_id: game_id,
+                        season: raw_game.season as i32,
+                        day: raw_game.day as i32,
+                        away_team_emoji: &raw_game.away_team_emoji,
+                        away_team_name: &raw_game.away_team_name,
+                        away_team_id: &raw_game.away_team_id,
+                        home_team_emoji: &raw_game.home_team_emoji,
+                        home_team_name: &raw_game.home_team_name,
+                        home_team_id: &raw_game.home_team_id,
+                    }
+                }
+                GameForDb::Completed { game, .. } => {
+                    NewGame {
+                        ingest: ingest_id,
+                        mmolb_game_id: &game.id,
+                        season: game.raw_game.season as i32,
+                        day: game.raw_game.day as i32,
+                        away_team_emoji: &game.raw_game.away_team_emoji,
+                        away_team_name: &game.raw_game.away_team_name,
+                        away_team_id: &game.raw_game.away_team_id,
+                        home_team_emoji: &game.raw_game.home_team_emoji,
+                        home_team_name: &game.raw_game.home_team_name,
+                        home_team_id: &game.raw_game.home_team_id,
+                    }
+                }
             }
         })
         .collect_vec();
@@ -420,10 +460,15 @@ fn insert_games_internal<'e>(
         "Games insert should have inserted {} rows, but it inserted {}",
         n_games_to_insert, game_ids.len(),
     );
-
+    
     let new_raw_events = iter::zip(&game_ids, &games)
-        .flat_map(|(game_id, (_, game, _, _))| {
-            game.event_log.iter()
+        .flat_map(|(game_id, game)| {
+            let raw_game = match game {
+                GameForDb::Incomplete { raw_game, .. } => { raw_game }
+                GameForDb::Completed { game, .. } => { &game.raw_game }
+            };
+            
+            raw_game.event_log.iter()
                 .enumerate()
                 .map(|(index, raw_event)| {
                     NewRawEvent {
@@ -447,46 +492,46 @@ fn insert_games_internal<'e>(
         n_raw_events_to_insert, n_raw_events_inserted,
     );
     
-    // let raw_event_ids_by_game = iter::zip(&raw_event_ids, &game_ids)
-    //     .chunk_by(|(_, game_id)| *game_id)
-    //     .into_iter()
-    //     .map(|(_, group)| {
-    //         group
-    //             .map(|(raw_event_id, _)| *raw_event_id)
-    //             .collect_vec()
-    //     })
-    //     .collect_vec();
-    // 
-    // let new_logs = iter::zip(&raw_event_ids_by_game, &games)
-    //     .flat_map(|(raw_event_ids, (_, _, _, logs_for_events))| {
-    //         // Within this closure we're acting on all the logs for all events in a single game
-    //         iter::zip(raw_event_ids, logs_for_events)
-    //             .flat_map(|(raw_event_id, logs_for_event)| {
-    //                 // Within this closure we're acting on the logs for a single event
-    //                 logs_for_event
-    //                     .into_iter()
-    //                     .enumerate()
-    //                     .map(|(log_idx, ingest_log)| NewEventIngestLog {
-    //                         raw_event_id: *raw_event_id,
-    //                         log_order: log_idx as i32,
-    //                         log_level: ingest_log.log_level,
-    //                         log_text: &ingest_log.log_text,
-    //                     })
-    //             })
-    //     })
-    //     .collect_vec();
-    // 
-    // let n_logs_to_insert = new_logs.len();
-    // info!("Trying to insert {n_logs_to_insert} logs");
-    // let n_logs_inserted = diesel::insert_into(event_ingest_log_dsl::event_ingest_log)
-    //     .values(new_logs)
-    //     .execute(conn)?;
-    // 
-    // log_only_assert!(
-    //     n_logs_to_insert == n_logs_inserted,
-    //     "Event ingest logs insert should have inserted {} rows, but it inserted {}",
-    //     n_logs_to_insert, n_logs_inserted,
-    // );
+    let raw_event_ids_by_game = iter::zip(&raw_event_ids, &game_ids)
+        .chunk_by(|(_, game_id)| *game_id)
+        .into_iter()
+        .map(|(_, group)| {
+            group
+                .map(|(raw_event_id, _)| *raw_event_id)
+                .collect_vec()
+        })
+        .collect_vec();
+    
+    let new_logs = iter::zip(&raw_event_ids_by_game, &games)
+        .flat_map(|(raw_event_ids, (_, _, _, logs_for_events))| {
+            // Within this closure we're acting on all the logs for all events in a single game
+            iter::zip(raw_event_ids, logs_for_events)
+                .flat_map(|(raw_event_id, logs_for_event)| {
+                    // Within this closure we're acting on the logs for a single event
+                    logs_for_event
+                        .into_iter()
+                        .enumerate()
+                        .map(|(log_idx, ingest_log)| NewEventIngestLog {
+                            raw_event_id: *raw_event_id,
+                            log_order: log_idx as i32,
+                            log_level: ingest_log.log_level,
+                            log_text: &ingest_log.log_text,
+                        })
+                })
+        })
+        .collect_vec();
+    
+    let n_logs_to_insert = new_logs.len();
+    info!("Trying to insert {n_logs_to_insert} logs");
+    let n_logs_inserted = diesel::insert_into(event_ingest_log_dsl::event_ingest_log)
+        .values(new_logs)
+        .execute(conn)?;
+    
+    log_only_assert!(
+        n_logs_to_insert == n_logs_inserted,
+        "Event ingest logs insert should have inserted {} rows, but it inserted {}",
+        n_logs_to_insert, n_logs_inserted,
+    );
 
     let new_events: Vec<_> = iter::zip(&game_ids, &games)
         .flat_map(|(game_id, (_, _, events, _))| {

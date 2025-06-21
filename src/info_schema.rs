@@ -35,6 +35,16 @@ pub mod info {
     }
 
     diesel::table! {
+        info.ingests (id) {
+            id -> Int8,
+            started_at -> Timestamp,
+            finished_at -> Nullable<Timestamp>,
+            aborted_at -> Nullable<Timestamp>,
+            last_completed_page -> Nullable<Text>,
+        }
+    }
+
+    diesel::table! {
         info.raw_events (id) {
             id -> Int8,
             game_id -> Int8,
@@ -48,6 +58,7 @@ pub mod info {
     diesel::allow_tables_to_appear_in_same_query!(
         event_ingest_log,
         game_ingest_timing,
+        ingests,
         raw_events,
     );
 }

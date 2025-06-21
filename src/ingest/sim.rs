@@ -88,22 +88,25 @@ pub struct EventDetail<StrT: Clone> {
 
 #[derive(Debug)]
 pub struct IngestLog {
+    pub game_event_index: usize,
     pub log_level: i32,
     pub log_text: String,
 }
 
 // A utility to more conveniently build a Vec<IngestLog>
 pub struct IngestLogs {
+    game_event_index: usize,
     logs: Vec<IngestLog>,
 }
 
 impl IngestLogs {
-    pub fn new() -> Self {
-        Self { logs: Vec::new() }
+    pub fn new(game_event_index: usize) -> Self {
+        Self { game_event_index, logs: Vec::new() }
     }
 
     pub fn critical(&mut self, s: impl Into<String>) {
         self.logs.push(IngestLog {
+            game_event_index: self.game_event_index,
             log_level: 0,
             log_text: s.into(),
         });
@@ -111,6 +114,7 @@ impl IngestLogs {
 
     pub fn error(&mut self, s: impl Into<String>) {
         self.logs.push(IngestLog {
+            game_event_index: self.game_event_index,
             log_level: 1,
             log_text: s.into(),
         });
@@ -118,6 +122,7 @@ impl IngestLogs {
 
     pub fn warn(&mut self, s: impl Into<String>) {
         self.logs.push(IngestLog {
+            game_event_index: self.game_event_index,
             log_level: 2,
             log_text: s.into(),
         });
@@ -125,6 +130,7 @@ impl IngestLogs {
 
     pub fn info(&mut self, s: impl Into<String>) {
         self.logs.push(IngestLog {
+            game_event_index: self.game_event_index,
             log_level: 3,
             log_text: s.into(),
         });
@@ -132,6 +138,7 @@ impl IngestLogs {
 
     pub fn debug(&mut self, s: impl Into<String>) {
         self.logs.push(IngestLog {
+            game_event_index: self.game_event_index,
             log_level: 4,
             log_text: s.into(),
         });
@@ -140,6 +147,7 @@ impl IngestLogs {
     #[allow(dead_code)]
     pub fn trace(&mut self, s: impl Into<String>) {
         self.logs.push(IngestLog {
+            game_event_index: self.game_event_index,
             log_level: 5,
             log_text: s.into(),
         });
@@ -806,6 +814,8 @@ impl<'g> Game<'g> {
         let mut events = ParsedEventMessageIter::new(events);
         let mut ingest_logs = Vec::new();
 
+        // TODO Double check correctness of game_event_index
+        let mut game_event_index = 0;
         let (away_team_name, away_team_emoji, home_team_name, home_team_emoji) = extract_next_game_event!(
             events,
             [ParsedEventMessageDiscriminants::LiveNow]
@@ -823,7 +833,7 @@ impl<'g> Game<'g> {
         )?;
 
         ingest_logs.push({
-            let mut logs = IngestLogs::new();
+            let mut logs = IngestLogs::new(game_event_index);
             logs.debug(format!(
                 "Set home team to name: \"{home_team_name}\", emoji: \"{home_team_emoji}\""
             ));
@@ -833,6 +843,7 @@ impl<'g> Game<'g> {
             logs.into_vec()
         });
 
+        game_event_index += 1;
         let (
             home_pitcher_name,
             away_pitcher_name,
@@ -859,7 +870,7 @@ impl<'g> Game<'g> {
                 home_team_emoji,
             )
         )?;
-        let mut event_ingest_logs = IngestLogs::new();
+        let mut event_ingest_logs = IngestLogs::new(game_event_index);
         if away_team_name_2 != away_team_name {
             event_ingest_logs.warn(format!(
                 "Away team name from PitchingMatchup ({away_team_name_2}) did \
@@ -892,13 +903,14 @@ impl<'g> Game<'g> {
         ));
         ingest_logs.push(event_ingest_logs.into_vec());
 
+        game_event_index += 1;
         let away_lineup = extract_next_game_event!(
             events,
             [ParsedEventMessageDiscriminants::Lineup]
             ParsedEventMessage::Lineup { side: HomeAway::Away, players } => players
         )?;
         ingest_logs.push({
-            let mut logs = IngestLogs::new();
+            let mut logs = IngestLogs::new(game_event_index);
             logs.debug(format!(
                 "Set away lineup to: {}",
                 format_lineup(&away_lineup)
@@ -910,13 +922,14 @@ impl<'g> Game<'g> {
             .map(|player| (player.name, BatterStats::new()))
             .collect();
 
+        game_event_index += 1;
         let home_lineup = extract_next_game_event!(
             events,
             [ParsedEventMessageDiscriminants::Lineup]
             ParsedEventMessage::Lineup { side: HomeAway::Home, players } => players
         )?;
         ingest_logs.push({
-            let mut logs = IngestLogs::new();
+            let mut logs = IngestLogs::new(game_event_index);
             logs.debug(format!(
                 "Set home lineup to: {}",
                 format_lineup(&home_lineup)
@@ -928,6 +941,7 @@ impl<'g> Game<'g> {
             .map(|player| (player.name, BatterStats::new()))
             .collect();
 
+        game_event_index += 1;
         extract_next_game_event!(
             events,
             [ParsedEventMessageDiscriminants::PlayBall]
@@ -1573,7 +1587,7 @@ impl<'g> Game<'g> {
 
     pub fn next(
         &mut self,
-        index: usize,
+        game_event_index: usize,
         event: &ParsedEventMessage<&'g str>,
         raw_event: &'g mmolb_parsing::game::Event,
         ingest_logs: &mut IngestLogs,
@@ -1581,7 +1595,7 @@ impl<'g> Game<'g> {
         let previous_event = self.state.prev_event_type;
         let this_event_discriminant = event.discriminant();
 
-        let detail_builder = self.detail_builder(self.state.clone(), index, raw_event);
+        let detail_builder = self.detail_builder(self.state.clone(), game_event_index, raw_event);
 
         let result = match self.state.phase {
             GamePhase::ExpectInningStart => game_event!(

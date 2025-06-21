@@ -1,9 +1,5 @@
 create schema data;
 create schema taxa;
-create schema info;
-
--- TODO should this be in info instead?
-alter table ingests set schema data;
 
 create table taxa.event_type (
     id bigserial primary key not null,
@@ -63,7 +59,7 @@ create table taxa.pitch_type (
 create table data.games (
     -- bookkeeping
     id bigserial primary key not null,
-    ingest bigserial references data.ingests not null,
+    ingest bigserial references info.ingests not null,
     mmolb_game_id text not null unique, -- note: unique causes an index to be built
 
     -- game metadata
@@ -74,7 +70,10 @@ create table data.games (
     away_team_id text not null,
     home_team_emoji text not null,
     home_team_name text not null,
-    home_team_id text not null
+    home_team_id text not null,
+
+    -- Indicates whether this game has been ingested
+    is_finished bool not null
 );
 
 create index games_ingest_id_index on data.games (ingest);

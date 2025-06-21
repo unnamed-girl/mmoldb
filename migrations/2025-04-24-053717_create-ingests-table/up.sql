@@ -1,4 +1,6 @@
-create table ingests (
+create schema info;
+
+create table info.ingests (
     id bigserial primary key not null,
     started_at timestamp without time zone not null,
     -- If this is null the ingest is ongoing or it crashed
