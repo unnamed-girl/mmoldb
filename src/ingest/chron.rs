@@ -48,7 +48,8 @@ pub struct ChronEntity<EntityT> {
 pub struct Chron {
     cache: sled::Db,
     client: reqwest::Client,
-    fetch_games_list_chunks_string: String,
+    page_size: usize,
+    page_size_string: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -59,7 +60,7 @@ enum VersionedCacheEntry<T> {
 impl Chron {
     pub fn new<P: AsRef<std::path::Path>>(
         cache_path: P,
-        fetch_games_list_chunks: usize,
+        page_size: usize,
     ) -> Result<Self, sled::Error> {
         info!("Opening cache db. This can be very slow, which is a known issue.");
         let cache_path = cache_path.as_ref();
@@ -76,7 +77,8 @@ impl Chron {
         Ok(Self {
             cache,
             client: reqwest::Client::new(),
-            fetch_games_list_chunks_string: fetch_games_list_chunks.to_string(),
+            page_size,
+            page_size_string: page_size.to_string(),
         })
     }
 
@@ -112,7 +114,7 @@ impl Chron {
     }
 
     pub async fn games_page(&self, page: Option<&str>) -> Result<ChronEntities<mmolb_parsing::Game>, ChronError> {
-        let request = self.entities_request("game", &self.fetch_games_list_chunks_string, page.as_deref()).build()
+        let request = self.entities_request("game", &self.page_size_string, page.as_deref()).build()
             .map_err(ChronError::RequestBuildError)?;
         let url = request.url().to_string();
         let result = if let Some(cache_entry) = self.get_cached(&url)? {
@@ -127,11 +129,16 @@ impl Chron {
                 .await
                 .map_err(ChronError::RequestDeserializeError)?;
             
+            if entities.next_page.is_none() {
+                info!("Not caching page {page:?} because it's the last page");
+                return Ok(entities);
+            }
+            
             let has_incomplete_game = entities.items.iter()
                 .any(|item| item.data.state != "Complete");
             if has_incomplete_game {
                 info!("Not caching page {page:?} because it contains at least one incomplete game");
-                return Ok(entities);                
+                return Ok(entities);
             }
 
             // Otherwise, save to cache

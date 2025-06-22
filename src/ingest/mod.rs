@@ -35,8 +35,12 @@ fn default_ingest_period() -> u64 {
 fn default_retries() -> u64 {
     3
 }
-fn default_chunks() -> usize {
-    1000
+fn default_page_size() -> usize {
+    // Chron is currently limited to a maximum page size of 100, but
+    // it might be raised soon. If we're asking for a page size bigger
+    // than 100 when that happens, the responses will change without us
+    // changing the URL and we'll have stale pages in the cache.
+    100
 }
 fn default_fetch_rate_limit() -> u64 {
     10
@@ -57,8 +61,8 @@ struct IngestConfig {
     cache_game_list_from_api: bool,
     #[serde(default = "default_retries")]
     fetch_game_list_retries: u64,
-    #[serde(default = "default_chunks")]
-    fetch_game_list_chunks: usize,
+    #[serde(default = "default_page_size")]
+    game_list_page_size: usize,
     #[serde(default)]
     cache_games_from_api: bool,
     #[serde(default = "default_retries")]
@@ -508,7 +512,7 @@ async fn do_ingest(
     // The only thing that errors here is opening the http cache, which
     // could be worked around by just not caching. I don't currently support
     // running without a cache but it could be added fairly easily.
-    let chron = chron::Chron::new(&config.cache_path, config.fetch_game_list_chunks)
+    let chron = chron::Chron::new(&config.cache_path, config.game_list_page_size)
         .map_err(|err| (err.into(), None))?;
 
     info!("Initialized chron");
