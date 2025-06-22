@@ -6,6 +6,7 @@ mod taxa;
 mod to_db_format;
 mod taxa_macro;
 
+use std::collections::HashMap;
 use diesel::sql_types::*;
 
 pub use crate::db::taxa::{
@@ -20,6 +21,7 @@ use diesel::dsl::count_distinct;
 use diesel::query_dsl::methods::OrderDsl;
 use itertools::{Itertools, PeekingNext};
 use log::info;
+use mmolb_parsing::ParsedEventMessage;
 use rocket_sync_db_pools::{diesel::PgConnection, diesel::prelude::*};
 use thiserror::Error;
 pub use to_db_format::RowToEventError;
@@ -275,7 +277,7 @@ pub fn all_games(conn: &mut PgConnection) -> QueryResult<Vec<(DbGame, i64, i64, 
 }
 
 pub struct EventsForGameTimings {
-    pub get_game_id_duration: f64,
+    pub get_game_ids_duration: f64,
     pub get_events_duration: f64,
     pub group_events_duration: f64,
     pub get_runners_duration: f64,
@@ -285,23 +287,11 @@ pub struct EventsForGameTimings {
     pub post_process_duration: f64,
 }
 
-#[derive(Debug, Error)]
-pub(crate) enum EventsForGamesError {
-    #[error(transparent)]
-    DbError(#[from] diesel::result::Error),
-    
-    #[error(transparent)]
-    RowToEventError(#[from] RowToEventError),
-}
-
 pub fn events_for_games(
     conn: &mut PgConnection,
     taxa: &Taxa,
-    for_game_ids: Vec<&str>,
-) -> Result<
-    (Vec<Vec<EventDetail<String>>>, EventsForGameTimings),
-    EventsForGamesError,
-> {
+    for_game_ids: &[&str],
+) -> QueryResult<(Vec<(i64, Vec<Result<EventDetail<String>, RowToEventError>>)>, EventsForGameTimings)> {
     use crate::data_schema::data::event_baserunners::dsl as runner_dsl;
     use crate::data_schema::data::event_fielders::dsl as fielder_dsl;
     use crate::data_schema::data::events::dsl as events_dsl;
@@ -311,13 +301,15 @@ pub fn events_for_games(
     let game_ids = games_dsl::games
         .filter(games_dsl::mmolb_game_id.eq_any(for_game_ids))
         .select(games_dsl::id)
+        .order_by(games_dsl::id.asc())
         .get_results::<i64>(conn)?;
     let get_game_ids_duration = (Utc::now() - get_game_ids_start).as_seconds_f64();
 
     let get_events_start = Utc::now();
     let db_events = events_dsl::events
         .filter(events_dsl::game_id.eq_any(&game_ids))
-        .order_by(events_dsl::game_event_index.asc())
+        .order_by(events_dsl::game_id.asc())
+        .then_order_by(events_dsl::game_event_index.asc())
         .select(DbEvent::as_select())
         .load(conn)?;
     let all_event_ids = db_events.iter()
@@ -329,10 +321,10 @@ pub fn events_for_games(
     let mut db_events_iter = db_events
         .into_iter()
         .peekable();
-    let db_games_events = game_ids.into_iter()
+    let db_games_events = game_ids.iter()
         .map(|id| {
             let mut game_events = Vec::new();
-            while let Some(event) = db_events_iter.next_if(|e| e.game_id == id) {
+            while let Some(event) = db_events_iter.next_if(|e| e.game_id == *id) {
                 game_events.push(event);
             }
             game_events
@@ -341,30 +333,35 @@ pub fn events_for_games(
     let group_events_duration = (Utc::now() - group_events_start).as_seconds_f64();
 
     let get_runners_start = Utc::now();
-    // TODO this exhibits the N+1 problem. I'm trying to fix that on fielders, if successful
-    //   copy it here
-    let db_games_runners = db_games_events.iter()
-        .map(|db_events| {
-            DbRunner::belonging_to(db_events)
-                .order_by((
-                    runner_dsl::event_id,
-                    runner_dsl::base_before.desc().nulls_last(),
-                ))
-                .select(DbRunner::as_select())
-                .load(conn)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut db_runners_iter = runner_dsl::event_baserunners
+        .filter(runner_dsl::event_id.eq_any(&all_event_ids))
+        .order_by((runner_dsl::event_id.asc(), runner_dsl::base_before.asc().nulls_last()))
+        .select(DbRunner::as_select())
+        .load(conn)?
+        .into_iter()
+        .peekable();
     let get_runners_duration = (Utc::now() - get_runners_start).as_seconds_f64();
 
     let group_runners_start = Utc::now();
-    let db_runners = iter::zip(db_games_runners, &db_games_events)
-        .map(|(db_runners, db_events)| db_runners.grouped_by(&db_events))
+    let db_runners = db_games_events.iter()
+        .map(|game_events| {
+            game_events.iter()
+                .map(|game_event| {
+                    let mut runners = Vec::new();
+                    while let Some(runner) = db_runners_iter.next_if(|f| f.event_id == game_event.id) {
+                        runners.push(runner);
+                    }
+                    runners
+                })
+                .collect_vec()
+        })
         .collect_vec();
+    assert_eq!(db_runners_iter.count(), 0);
     let group_runners_duration = (Utc::now() - group_runners_start).as_seconds_f64();
 
     let get_fielders_start = Utc::now();
     let mut db_fielders_iter = fielder_dsl::event_fielders
-        .select(fielder_dsl::event_id.eq_any(&all_event_ids))
+        .filter(fielder_dsl::event_id.eq_any(&all_event_ids))
         .order_by((fielder_dsl::event_id, fielder_dsl::play_order))
         .select(DbFielder::as_select())
         .load(conn)?
@@ -386,24 +383,28 @@ pub fn events_for_games(
                 .collect_vec()
         })
         .collect_vec();
+    assert_eq!(db_fielders_iter.count(), 0);
     let group_fielders_duration = (Utc::now() - group_fielders_start).as_seconds_f64();
 
     let post_process_start = Utc::now();
-    let result = itertools::izip!(db_games_events, db_runners, db_fielders)
-        .map(|(events, runners, fielders)| {
-            itertools::izip!(events, runners, fielders)
+    let result = itertools::izip!(game_ids, db_games_events, db_runners, db_fielders)
+        .map(|(game_id, events, runners, fielders)| {
+            // Note: This should stay a vec of results. The individual results for each
+            // entry are semantically meaningful.
+            let detail_events = itertools::izip!(events, runners, fielders)
                 .map(|(event, runners, fielders)| {
                     to_db_format::row_to_event(taxa, event, runners, fielders)
                 })
-                .collect::<Result<Vec<_>, _>>()
+                .collect_vec();
+            (game_id, detail_events)
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect_vec();
     let post_process_duration = (Utc::now() - post_process_start).as_seconds_f64();
 
     Ok((
         result,
         EventsForGameTimings {
-            get_game_id_duration: get_game_ids_duration,
+            get_game_ids_duration,
             get_events_duration,
             group_events_duration,
             get_runners_duration,
@@ -420,6 +421,8 @@ pub(crate) struct CompletedGameForDb<'g> {
     pub raw_game: &'g mmolb_parsing::Game,
     pub events: Vec<EventDetail<&'g str>>,
     pub logs: Vec<Vec<IngestLog>>,
+    // This is used for verifying the round trip
+    pub parsed_game: Vec<ParsedEventMessage<&'g str>>,
 }
 
 pub(crate) enum GameForDb<'g> {
@@ -516,7 +519,7 @@ fn insert_games_internal<'e>(
     let n_games_to_insert = new_games.len();
     info!("Trying to insert {n_games_to_insert} games");
     let game_ids = diesel::insert_into(games_dsl::games)
-        .values(new_games)
+        .values(&new_games)
         .returning(games_dsl::id)
         .get_results::<i64>(conn)?;
     info!("Inserted {} games", game_ids.len());
@@ -569,10 +572,10 @@ fn insert_games_internal<'e>(
                     logs.iter()
                         .enumerate()
                         .map(move |(log_index, log)| {
-                            assert_eq!(game_event_index, log.game_event_index);
+                            assert_eq!(game_event_index as i32, log.game_event_index);
                             NewEventIngestLog {
                                 game_id: **game_id,
-                                game_event_index: game_event_index as i32,
+                                game_event_index: log.game_event_index,
                                 log_index: log_index as i32,
                                 log_level: log.log_level,
                                 log_text: &log.log_text,
@@ -618,8 +621,9 @@ fn insert_games_internal<'e>(
         .filter(events_dsl::game_id.eq_any(&game_ids))
         .select((events_dsl::game_id, events_dsl::id))
         .order_by(events_dsl::game_id)
+        .then_order_by(events_dsl::game_event_index)
         .get_results::<(i64, i64)>(conn)?;
-
+    
     let event_ids_by_game = event_ids.into_iter()
         .chunk_by(|(game_id, _)| *game_id)
         .into_iter()
@@ -682,70 +686,74 @@ fn insert_games_internal<'e>(
 
 pub fn insert_additional_ingest_logs(
     conn: &mut PgConnection,
-    game_id: i64,
-    extra_ingest_logs: impl IntoIterator<Item = (usize, IngestLog)>,
+    extra_ingest_logs: &[(i64, Vec<IngestLog>)],
 ) -> QueryResult<()> {
-    // use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
-    // use crate::info_schema::info::raw_events::dsl as raw_events_dsl;
-    //
-    // // index is game_event_index, value is raw_event id
-    // let raw_event_ids: Vec<i64> = raw_events_dsl::raw_events
-    //     .select(raw_events_dsl::id)
-    //     .filter(raw_events_dsl::game_id.eq(game_id))
-    //     .order_by(raw_events_dsl::game_event_index.asc())
-    //     .get_results(conn)
-    //     .await?;
-    //
-    // // Maps raw_event_id to its highest log_order
-    // let mut highest_log_order_for_event: HashMap<_, _> = event_ingest_log_dsl::event_ingest_log
-    //     .group_by(event_ingest_log_dsl::raw_event_id)
-    //     .select((
-    //         event_ingest_log_dsl::raw_event_id,
-    //         diesel::dsl::max(event_ingest_log_dsl::log_order),
-    //     ))
-    //     .filter(event_ingest_log_dsl::raw_event_id.eq_any(&raw_event_ids))
-    //     .order_by(event_ingest_log_dsl::raw_event_id.asc())
-    //     .get_results::<(i64, Option<i32>)>(conn)
-    //     .await?
-    //     .into_iter()
-    //     .filter_map(|(id, num)| num.map(|n| (id, n)))
-    //     .collect();
-    //
-    // let new_logs: Vec<_> = extra_ingest_logs
-    //     .into_iter()
-    //     .map(|(game_event_index, ingest_log)| {
-    //         let raw_event_id = raw_event_ids[game_event_index];
-    //         let n = highest_log_order_for_event.entry(raw_event_id).or_default();
-    //         *n += 1;
-    //
-    //         NewEventIngestLog {
-    //             raw_event_id,
-    //             log_order: *n,
-    //             log_level: ingest_log.log_level,
-    //             log_text: ingest_log.log_text,
-    //         }
-    //     })
-    //     .collect();
-    //
-    // diesel::insert_into(event_ingest_log_dsl::event_ingest_log)
-    //     .values(new_logs)
-    //     .execute(conn)
-    //     .await?;
-    //
-    // Ok(())
-    todo!()
+    use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
+    use crate::info_schema::info::raw_events::dsl as raw_events_dsl;
+    
+    let game_ids = extra_ingest_logs.iter()
+        .map(|(game_id, _)| game_id)
+        .collect_vec();
+    
+    // Get the highest log_index for each event
+    // TODO Only select the game event indices we care about
+    let mut highest_log_indices: HashMap<_, _> = event_ingest_log_dsl::event_ingest_log
+        .group_by((event_ingest_log_dsl::game_id, event_ingest_log_dsl::game_event_index))
+        .select((
+            event_ingest_log_dsl::game_id,
+            event_ingest_log_dsl::game_event_index,
+            diesel::dsl::max(event_ingest_log_dsl::log_index),
+        ))
+        .filter(event_ingest_log_dsl::game_id.eq_any(&game_ids))
+        .order_by(event_ingest_log_dsl::game_id.asc())
+        .then_order_by(event_ingest_log_dsl::game_event_index.asc())
+        .get_results::<(i64, i32, Option<i32>)>(conn)?
+        .into_iter()
+        .filter_map(|(game_id, game_event_index, highest_log_order)| {
+            highest_log_order.map(|n| ((game_id, game_event_index), n))
+        })
+        .collect();
+    
+    let new_logs = extra_ingest_logs
+        .into_iter()
+        .flat_map(|(game_id, ingest_logs)| {
+            ingest_logs.iter()
+                .map(|ingest_log| {
+                    let log_index = highest_log_indices
+                        .entry((*game_id, ingest_log.game_event_index))
+                        .or_default();
+                    *log_index += 1;
+
+                    NewEventIngestLog {
+                        game_id: *game_id,
+                        game_event_index: ingest_log.game_event_index,
+                        log_index: *log_index,
+                        log_level: ingest_log.log_level,
+                        log_text: &ingest_log.log_text,
+                    }
+                })
+                // The intermediate vec is for lifetime reasons
+                .collect_vec()
+        })
+        .collect_vec();
+    
+    diesel::copy_from(event_ingest_log_dsl::event_ingest_log)
+        .from_insertable(new_logs)
+        .execute(conn)?;
+    
+    Ok(())
 }
 
 pub fn game_and_raw_events(
     conn: &mut PgConnection,
-    for_game_id: i64,
+    mmolb_game_id: &str,
 ) -> QueryResult<(DbGame, Vec<(DbRawEvent, Vec<DbEventIngestLog>)>)> {
     use crate::data_schema::data::games::dsl as games_dsl;
     use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
     use crate::info_schema::info::raw_events::dsl as raw_events_dsl;
 
     let game = games_dsl::games
-        .filter(games_dsl::id.eq(for_game_id))
+        .filter(games_dsl::mmolb_game_id.eq(mmolb_game_id))
         .select(DbGame::as_select())
         .get_result::<DbGame>(conn)?;
 
@@ -756,7 +764,7 @@ pub fn game_and_raw_events(
     // This would be another belonging_to but diesel doesn't seem to support
     // compound foreign keys in associations
     let mut raw_logs = event_ingest_log_dsl::event_ingest_log
-        .filter(event_ingest_log_dsl::game_id.eq(for_game_id))
+        .filter(event_ingest_log_dsl::game_id.eq(game.id))
         .order_by(event_ingest_log_dsl::game_event_index.asc())
         .then_order_by(event_ingest_log_dsl::log_index.asc())
         .get_results::<DbEventIngestLog>(conn)?
@@ -808,7 +816,7 @@ pub fn insert_timings(
         sim_duration: timings.sim_duration,
         db_fetch_for_check_get_game_id_duration: timings
             .events_for_game_timings
-            .get_game_id_duration,
+            .get_game_ids_duration,
         db_fetch_for_check_get_events_duration: timings.events_for_game_timings.get_events_duration,
         db_fetch_for_check_group_events_duration: timings.events_for_game_timings.group_events_duration,
         db_fetch_for_check_get_runners_duration: timings

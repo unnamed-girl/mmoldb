@@ -92,24 +92,30 @@ pub fn row_to_event<'e>(
 ) -> Result<EventDetail<String>, RowToEventError> {
     let baserunners = runners
         .into_iter()
-        .map(|r| EventDetailRunner {
-            name: r.baserunner_name,
-            base_before: r.base_before.map(|id| taxa.base_from_id(id)),
-            base_after: taxa.base_from_id(r.base_after),
-            is_out: r.is_out,
-            base_description_format: r
-                .base_description_format
-                .map(|id| taxa.base_description_format_from_id(id)),
-            is_steal: r.steal,
+        .map(|r| {
+            assert_eq!(r.event_id, event.id);
+            EventDetailRunner {
+                name: r.baserunner_name,
+                base_before: r.base_before.map(|id| taxa.base_from_id(id)),
+                base_after: taxa.base_from_id(r.base_after),
+                is_out: r.is_out,
+                base_description_format: r
+                    .base_description_format
+                    .map(|id| taxa.base_description_format_from_id(id)),
+                is_steal: r.steal,
+            }
         })
         .collect();
 
     let fielders = fielders
         .into_iter()
-        .map(|f| EventDetailFielder {
-            name: f.fielder_name,
-            position: taxa.position_from_id(f.fielder_position).into(),
-            is_perfect_catch: f.perfect_catch,
+        .map(|f| {
+            assert_eq!(f.event_id, event.id);
+            EventDetailFielder {
+                name: f.fielder_name,
+                position: taxa.position_from_id(f.fielder_position).into(),
+                is_perfect_catch: f.perfect_catch,
+            }
         })
         .collect();
 

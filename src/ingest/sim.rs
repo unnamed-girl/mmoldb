@@ -88,19 +88,19 @@ pub struct EventDetail<StrT: Clone> {
 
 #[derive(Debug)]
 pub struct IngestLog {
-    pub game_event_index: usize,
+    pub game_event_index: i32,
     pub log_level: i32,
     pub log_text: String,
 }
 
 // A utility to more conveniently build a Vec<IngestLog>
 pub struct IngestLogs {
-    game_event_index: usize,
+    game_event_index: i32,
     logs: Vec<IngestLog>,
 }
 
 impl IngestLogs {
-    pub fn new(game_event_index: usize) -> Self {
+    pub fn new(game_event_index: i32) -> Self {
         Self { game_event_index, logs: Vec::new() }
     }
 

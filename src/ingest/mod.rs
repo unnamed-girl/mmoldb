@@ -2,7 +2,7 @@ mod http;
 mod sim;
 mod chron;
 
-use crate::db::{CompletedGameForDb, EventsForGamesError, GameForDb, RowToEventError, Taxa};
+use crate::db::{CompletedGameForDb, GameForDb, RowToEventError, Taxa};
 use crate::ingest::sim::{Game, SimFatalError};
 use crate::{Db, db};
 use chrono::{DateTime, TimeZone, Utc};
@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use futures::{future, pin_mut, Stream, StreamExt};
-use itertools::{Itertools, Either};
+use itertools::{Itertools, Either, izip};
 use thiserror::Error;
 use crate::ingest::chron::{ChronEntities, ChronEntity, ChronError, ChronPage};
 
@@ -102,23 +102,6 @@ pub enum IngestFatalError {
     
     #[error("Couldn't open HTTP cache database: {0}")]
     OpenCacheDbError(#[from] sled::Error),
-    
-    // TODO This should probably be handled internally to the ingest
-    #[error(transparent)]
-    RowToEventError(RowToEventError)
-}
-
-impl From<EventsForGamesError> for IngestFatalError {
-    fn from(value: EventsForGamesError) -> Self {
-        match value {
-            EventsForGamesError::DbError(err) => {
-                IngestFatalError::DbError(err)
-            }
-            EventsForGamesError::RowToEventError(err) => {
-                IngestFatalError::RowToEventError(err)
-            }
-        }
-    }
 }
 
 #[derive(Debug, Error)]
@@ -832,7 +815,7 @@ fn prepare_completed_game_for_db(
     let detail_events = parsed
         .map(|(game_event_index, (parsed, raw))| {
             // Sim has a different IngestLogs... this made sense at the time
-            let mut ingest_logs = sim::IngestLogs::new(game_event_index);
+            let mut ingest_logs = sim::IngestLogs::new(game_event_index as i32);
 
             let unparsed = parsed.clone().unparse();
             if unparsed != raw.message {
@@ -859,16 +842,17 @@ fn prepare_completed_game_for_db(
         .collect_vec();
 
     // Take the None values out of detail_events
-    let detail_events = detail_events
+    let events = detail_events
         .into_iter()
-        .flat_map(|event| event)
-        .collect::<Vec<_>>();
+        .filter_map(|event| event)
+        .collect_vec();
 
     Ok(CompletedGameForDb {
         id: &entity.entity_id,
         raw_game: &entity.data,
-        events: detail_events,
+        events,
         logs: all_logs,
+        parsed_game,
     })
 }
 
@@ -957,7 +941,6 @@ async fn ingest_page_of_games<'t>(
             .count();
         let num_already_ingested_games_skipped = raw_games.len() - games.len();
         let num_games_imported = games.len() - num_incomplete_games_skipped;
-        let total_games = games.len();
         info!("Ingesting {} games, ignoring {} already-ingested games", games.len(), raw_games.len() - games.len());
 
         // Insert the games into the database
@@ -982,8 +965,62 @@ async fn ingest_page_of_games<'t>(
             })
             .collect_vec();
 
-        let (ingested_games, timings) = db::events_for_games(conn, &taxa, mmolb_game_ids)?;
-        assert_eq!(total_games, ingested_games.len());
+        let (ingested_games, timings) = db::events_for_games(conn, &taxa, &mmolb_game_ids)?;
+        assert_eq!(mmolb_game_ids.len(), ingested_games.len());
+        
+        let additional_logs = games.iter()
+            .filter_map(|game| match game {
+                GameForDb::Incomplete { .. } => { None }
+                GameForDb::Completed { game, .. } => { Some(game) }
+            })
+            .zip(&ingested_games)
+            .filter_map(|(game, (game_id, inserted_events))| {
+                let detail_events = &game.events; 
+                let mut extra_ingest_logs = IngestLogs::new();
+                if inserted_events.len() != detail_events.len() {
+                    error!(
+                        "Number of events read from the db ({}) does not match number of events written to \
+                        the db ({})",
+                        inserted_events.len(),
+                        detail_events.len(),
+                    );
+                }
+                for (reconstructed_detail, original_detail) in izip!(inserted_events, detail_events) {
+                    let index = original_detail.game_event_index;
+                    let fair_ball_index = original_detail.fair_ball_event_index;
+                
+                    if let Some(index) = fair_ball_index {
+                        check_round_trip(
+                            index,
+                            &mut extra_ingest_logs,
+                            true,
+                            &game.parsed_game[index],
+                            &original_detail,
+                            reconstructed_detail,
+                        );
+                    }
+                
+                    check_round_trip(
+                        index,
+                        &mut extra_ingest_logs,
+                        false,
+                        &game.parsed_game[index],
+                        &original_detail,
+                        reconstructed_detail,
+                    );
+                }
+                let extra_ingest_logs = extra_ingest_logs.into_vec();
+                if extra_ingest_logs.is_empty() {
+                    None
+                } else {
+                    Some((*game_id, extra_ingest_logs))
+                }
+            })
+            .collect_vec();
+
+        if !additional_logs.is_empty() {
+            db::insert_additional_ingest_logs(conn, &additional_logs)?;
+        }
 
         Ok::<_, IngestFatalError>(IngestStats {
             num_incomplete_games_skipped,
@@ -991,80 +1028,6 @@ async fn ingest_page_of_games<'t>(
             num_games_imported,
         })
     }).await?;
-
-    // TODO Update all the following for batched insert
-    // let inserted_events = db::events_for_game(conn, &taxa, mmolb_game_id).await?;
-    // let mut extra_ingest_logs = IngestLogs::new();
-    // if inserted_events.len() != detail_events.len() {
-    //     error!(
-    //         "Number of events read from the db ({}) does not match number of events written to \
-    //         the db ({})",
-    //         inserted_events.len(),
-    //         detail_events.len(),
-    //     );
-    // }
-    // for (reconstructed_detail, original_detail) in inserted_events.iter().zip(detail_events) {
-    //     let index = original_detail.game_event_index;
-    //     let fair_ball_index = original_detail.fair_ball_event_index;
-    //
-    //     if let Some(index) = fair_ball_index {
-    //         check_round_trip(
-    //             index,
-    //             &mut extra_ingest_logs,
-    //             true,
-    //             &parsed_copy[index],
-    //             &original_detail,
-    //             reconstructed_detail,
-    //         );
-    //     }
-    //
-    //     check_round_trip(
-    //         index,
-    //         &mut extra_ingest_logs,
-    //         false,
-    //         &parsed_copy[index],
-    //         &original_detail,
-    //         reconstructed_detail,
-    //     );
-    // }
-    // let check_round_trip_duration = (Utc::now() - check_round_trip_start).as_seconds_f64();
-    //
-    // let insert_extra_logs_start = Utc::now();
-    // let extra_ingest_logs = extra_ingest_logs.into_vec();
-    // if !extra_ingest_logs.is_empty() {
-    //     db::insert_additional_ingest_logs(conn, game_id, extra_ingest_logs).await?;
-    // }
-    // let insert_extra_logs_duration = (Utc::now() - insert_extra_logs_start).as_seconds_f64();
-    //
-    // {
-    //     db::insert_timings(
-    //         conn,
-    //         game_id,
-    //         db::Timings {
-    //             check_already_ingested_duration: pre_ingest_timings.check_already_ingested_duration,
-    //             parse_duration,
-    //             sim_duration,
-    //             db_insert_duration,
-    //             db_fetch_for_check_duration,
-    //             events_for_game_timings,
-    //             db_duration,
-    //             check_round_trip_duration,
-    //             insert_extra_logs_duration,
-    //             total_duration: (Utc::now() - pre_ingest_timings.total_start).as_seconds_f64(),
-    //         },
-    //     )
-    //         .await?;
-    // }
-    //
-    // info!(
-    //     "Finished importing {} {} @ {} {} s{}d{}",
-    //     game_data.away_team_emoji,
-    //     game_data.away_team_name,
-    //     game_data.home_team_emoji,
-    //     game_data.home_team_name,
-    //     game_data.season,
-    //     game_data.day,
-    // );
 
     Ok(stats)
 }
@@ -1083,7 +1046,7 @@ impl IngestLogs {
     #[allow(dead_code)]
     pub fn critical(&mut self, game_event_index: usize, s: impl Into<String>) {
         self.logs.push(IngestLog {
-            game_event_index,
+            game_event_index: game_event_index as i32,
             log_level: 0,
             log_text: s.into(),
         });
@@ -1091,7 +1054,7 @@ impl IngestLogs {
 
     pub fn error(&mut self, game_event_index: usize, s: impl Into<String>) {
         self.logs.push(IngestLog {
-            game_event_index,
+            game_event_index: game_event_index as i32,
             log_level: 1,
             log_text: s.into(),
         });
@@ -1100,7 +1063,7 @@ impl IngestLogs {
     #[allow(dead_code)]
     pub fn warn(&mut self, game_event_index: usize, s: impl Into<String>) {
         self.logs.push(IngestLog {
-            game_event_index,
+            game_event_index: game_event_index as i32,
             log_level: 2,
             log_text: s.into(),
         });
@@ -1109,7 +1072,7 @@ impl IngestLogs {
     #[allow(dead_code)]
     pub fn info(&mut self, game_event_index: usize, s: impl Into<String>) {
         self.logs.push(IngestLog {
-            game_event_index,
+            game_event_index: game_event_index as i32,
             log_level: 3,
             log_text: s.into(),
         });
@@ -1118,7 +1081,7 @@ impl IngestLogs {
     #[allow(dead_code)]
     pub fn debug(&mut self, game_event_index: usize, s: impl Into<String>) {
         self.logs.push(IngestLog {
-            game_event_index,
+            game_event_index: game_event_index as i32,
             log_level: 4,
             log_text: s.into(),
         });
@@ -1127,7 +1090,7 @@ impl IngestLogs {
     #[allow(dead_code)]
     pub fn trace(&mut self, game_event_index: usize, s: impl Into<String>) {
         self.logs.push(IngestLog {
-            game_event_index,
+            game_event_index: game_event_index as i32,
             log_level: 5,
             log_text: s.into(),
         });

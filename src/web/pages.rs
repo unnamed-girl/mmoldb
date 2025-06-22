@@ -9,8 +9,8 @@ use crate::web::utility_contexts::{FormattedDateContext, GameContext};
 use crate::{Db, db};
 
 // TODO: Parameterize on MMOLB id, not my db id
-#[get("/game/<game_id>")]
-pub async fn game_page(game_id: i64, mut db: Db) -> Result<Template, AppError> {
+#[get("/game/<mmolb_game_id>")]
+pub async fn game_page(mmolb_game_id: String, db: Db) -> Result<Template, AppError> {
     #[derive(Serialize)]
     struct LogContext {
         level: &'static str,
@@ -41,7 +41,7 @@ pub async fn game_page(game_id: i64, mut db: Db) -> Result<Template, AppError> {
     }
 
     let (game, events) = db.run(move |conn| {
-        db::game_and_raw_events(conn, game_id)
+        db::game_and_raw_events(conn, &mmolb_game_id)
     }).await?;
     let watch_uri = format!("https://mmolb.com/watch/{}", game.mmolb_game_id);
     let api_uri = format!("https://mmolb.com/api/game/{}", game.mmolb_game_id);
@@ -122,7 +122,7 @@ pub async fn ingest_page(ingest_id: i64, mut db: Db) -> Result<Template, AppErro
 }
 
 #[get("/games")]
-pub async fn games_page(mut db: Db) -> Result<Template, AppError> {
+pub async fn games_page(db: Db) -> Result<Template, AppError> {
     let games = db.run(move |conn| {
         conn.transaction(|conn| db::all_games(conn))
     }).await?;
@@ -138,7 +138,7 @@ pub async fn games_page(mut db: Db) -> Result<Template, AppError> {
 }
 
 #[get("/games-with-issues")]
-pub async fn games_with_issues_page(mut db: Db) -> Result<Template, AppError> {
+pub async fn games_with_issues_page(db: Db) -> Result<Template, AppError> {
     // TODO Get rid of this query + filter and replace it with a query
     //   that only returns what I need
     let games = db.run(|conn| {
@@ -177,7 +177,7 @@ pub async fn debug_no_games_page() -> Result<Template, AppError> {
 
 #[get("/")]
 pub async fn index_page(
-    mut db: Db,
+    db: Db,
     ingest_task: &State<IngestTask>,
 ) -> Result<Template, AppError> {
     #[derive(Serialize, Default)]
