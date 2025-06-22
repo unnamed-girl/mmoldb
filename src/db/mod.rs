@@ -20,7 +20,7 @@ pub use crate::db::taxa::{
 };
 use crate::ingest::{EventDetail, IngestLog};
 use crate::models::{
-    DbEvent, DbEventIngestLog, DbFielder, DbGame, DbRawEvent, DbRunner, Ingest, NewEventIngestLog, 
+    DbEvent, DbEventIngestLog, DbFielder, DbGame, DbRawEvent, DbRunner, DbIngest, NewEventIngestLog,
     NewGame, NewGameIngestTimings, NewIngest, NewRawEvent,
 };
 
@@ -229,13 +229,13 @@ macro_rules! log_only_assert {
 pub fn ingest_with_games(
     conn: &mut PgConnection,
     for_ingest_id: i64,
-) -> QueryResult<(Ingest, Vec<(DbGame, i64, i64, i64)>)> {
+) -> QueryResult<(DbIngest, Vec<(DbGame, i64, i64, i64)>)> {
     use crate::data_schema::data::games::dsl as game_dsl;
     use crate::info_schema::info::ingests::dsl as ingest_dsl;
 
     let ingest = ingest_dsl::ingests
         .filter(ingest_dsl::id.eq(for_ingest_id))
-        .get_result::<Ingest>(conn)?;
+        .get_result::<DbIngest>(conn)?;
 
     let games = DbGame::belonging_to(&ingest)
         // The .select is not necessary but yields better compile errors
@@ -333,7 +333,7 @@ pub fn events_for_games(
     let get_runners_start = Utc::now();
     let mut db_runners_iter = runner_dsl::event_baserunners
         .filter(runner_dsl::event_id.eq_any(&all_event_ids))
-        .order_by((runner_dsl::event_id.asc(), runner_dsl::base_before.asc().nulls_last()))
+        .order_by((runner_dsl::event_id.asc(), runner_dsl::base_before.desc().nulls_last()))
         .select(DbRunner::as_select())
         .load(conn)?
         .into_iter()
@@ -783,13 +783,11 @@ pub fn game_and_raw_events(
 }
 
 pub struct Timings {
-    pub check_already_ingested_duration: f64,
-    pub parse_duration: f64,
-    pub sim_duration: f64,
+    pub filter_finished_games_duration: f64,
+    pub parse_and_sim_duration: f64,
     pub db_insert_duration: f64,
     pub db_fetch_for_check_duration: f64,
     pub events_for_game_timings: EventsForGameTimings,
-    pub db_duration: f64,
     pub check_round_trip_duration: f64,
     pub insert_extra_logs_duration: f64,
     pub total_duration: f64,
@@ -797,14 +795,15 @@ pub struct Timings {
 
 pub fn insert_timings(
     conn: &mut PgConnection,
-    for_game_id: i64,
+    ingest_id: i64,
+    index: usize,
     timings: Timings,
 ) -> QueryResult<()> {
     NewGameIngestTimings {
-        game_id: for_game_id,
-        check_already_ingested_duration: timings.check_already_ingested_duration,
-        parse_duration: timings.parse_duration,
-        sim_duration: timings.sim_duration,
+        ingest_id,
+        index: index as i32,
+        filter_finished_games_duration: timings.filter_finished_games_duration,
+        parse_and_sim_duration: timings.parse_and_sim_duration,
         db_fetch_for_check_get_game_id_duration: timings
             .events_for_game_timings
             .get_game_ids_duration,
@@ -827,12 +826,11 @@ pub fn insert_timings(
             .post_process_duration,
         db_insert_duration: timings.db_insert_duration,
         db_fetch_for_check_duration: timings.db_fetch_for_check_duration,
-        db_duration: timings.db_duration,
         check_round_trip_duration: timings.check_round_trip_duration,
         insert_extra_logs_duration: timings.insert_extra_logs_duration,
         total_duration: timings.total_duration,
     }
-    .insert_into(crate::info_schema::info::game_ingest_timing::dsl::game_ingest_timing)
+    .insert_into(crate::info_schema::info::ingest_timings::dsl::ingest_timings)
     .execute(conn)
     .map(|_| ())
 }

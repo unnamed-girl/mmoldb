@@ -111,8 +111,7 @@ impl Chron {
         }
     }
 
-    // Must take owned `page` for lifetime reasons
-    pub async fn games_page(&self, page: Option<String>) -> Result<ChronEntities<mmolb_parsing::Game>, ChronError> {
+    pub async fn games_page(&self, page: Option<&str>) -> Result<ChronEntities<mmolb_parsing::Game>, ChronError> {
         let request = self.entities_request("game", &self.fetch_games_list_chunks_string, page.as_deref()).build()
             .map_err(ChronError::RequestBuildError)?;
         let url = request.url().to_string();

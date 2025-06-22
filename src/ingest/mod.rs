@@ -18,13 +18,13 @@ use std::{iter, mem};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use futures::future;
+use futures::{future, FutureExt};
 use itertools::{Itertools, izip};
 use thiserror::Error;
 
 // First party dependencies
 use crate::ingest::chron::{ChronEntities, ChronEntity, ChronError};
-use crate::db::{CompletedGameForDb, GameForDb, RowToEventError, Taxa};
+use crate::db::{CompletedGameForDb, GameForDb, RowToEventError, Taxa, Timings};
 use crate::ingest::sim::{Game, SimFatalError};
 use crate::{Db, db};
 
@@ -570,6 +570,15 @@ impl IngestStats {
     }
 }
 
+async fn games_page_wrapper(
+    chron: &chron::Chron,
+    page: Option<String>,
+    index: usize,
+) -> Result<(ChronEntities<mmolb_parsing::Game>, usize), ChronError> {
+    let page = chron.games_page(page.as_deref()).await?;
+    Ok((page, index))
+}
+
 async fn do_ingest_internal(
     pool: &Db,
     taxa: &Taxa,
@@ -596,7 +605,7 @@ async fn do_ingest_internal(
     info!("Beginning ingest loop");
 
     let mut page_ingest_fut = None;
-    let mut next_page_fut = Some(chron.games_page(start_page));
+    let mut next_page_fut = Some(games_page_wrapper(chron, start_page, 0));
 
     loop {
         let (ingest_result, next_page) = match (page_ingest_fut.take(), next_page_fut.take()) {
@@ -649,13 +658,13 @@ async fn do_ingest_internal(
         }
 
         match next_page {
-            None => break, // Ingest is finished!
+            None => { break; }, // Ingest is finished!
             Some(Err(chron_err)) => {
                 return Err(IngestFatalError::ChronError(chron_err));
             }
-            Some(Ok(page)) => {
-                next_page_fut = Some(chron.games_page(page.next_page.clone()));
-                page_ingest_fut = Some(ingest_page_of_games(pool, taxa, config, ingest_id, page));
+            Some(Ok((page, index))) => {
+                next_page_fut = Some(games_page_wrapper(chron, page.next_page.clone(), index + 1));
+                page_ingest_fut = Some(ingest_page_of_games(pool, taxa, config, ingest_id, index, page));
             }
         }
     }
@@ -740,6 +749,7 @@ async fn ingest_page_of_games<'t>(
     taxa: &'t Taxa,
     config: &IngestConfig,
     ingest_id: i64,
+    page_index: usize,
     page: ChronEntities<mmolb_parsing::Game>,
 ) -> Result<(IngestStats, Option<String>), IngestFatalError> {
     // These clones are here because rocket_sync_db_pools' derived
@@ -757,6 +767,8 @@ async fn ingest_page_of_games<'t>(
     let config = config.clone();
 
     let stats = db.run(move |conn| {
+        let start = Utc::now();
+        let filter_finished_games_start = Utc::now();
         let raw_games = if !config.reimport_all_games {
             // Remove any games which are fully imported
             let is_finished = db::is_finished(conn, page.items.iter().map(|e| e.entity_id.as_str()).collect())?;
@@ -772,7 +784,9 @@ async fn ingest_page_of_games<'t>(
         } else {
             page.items
         };
+        let filter_finished_games_duration = (Utc::now() - filter_finished_games_start).as_seconds_f64();
 
+        let parse_and_sim_start = Utc::now();
         let games = raw_games.iter()
             .map(|entity| {
                 Ok::<_, IngestFatalError>(if entity.data.state != "Complete" {
@@ -818,14 +832,11 @@ async fn ingest_page_of_games<'t>(
         let num_already_ingested_games_skipped = raw_games.len() - games.len();
         let num_games_imported = games.len() - num_incomplete_games_skipped;
         info!("Ingesting {} games, ignoring {} already-ingested games", games.len(), raw_games.len() - games.len());
+        let parse_and_sim_duration = (Utc::now() - parse_and_sim_start).as_seconds_f64();
 
-        // Insert the games into the database
-        db::insert_games(
-            conn,
-            &taxa,
-            ingest_id,
-            &games,
-        )?;
+        let db_insert_start = Utc::now();
+        db::insert_games(conn, &taxa, ingest_id, &games)?;
+        let db_insert_duration = (Utc::now() - db_insert_start).as_seconds_f64();
 
         info!("Chunk ingested");
 
@@ -834,6 +845,7 @@ async fn ingest_page_of_games<'t>(
         // This step, and all the following verification steps, could be
         // skipped. However, my profiling shows that it's negligible
         // cost so I haven't added the capability.
+        let db_fetch_for_check_start = Utc::now();
         let mmolb_game_ids = games.iter()
             .filter_map(|game| match game {
                 GameForDb::Incomplete { .. } => { None }
@@ -841,9 +853,11 @@ async fn ingest_page_of_games<'t>(
             })
             .collect_vec();
 
-        let (ingested_games, timings) = db::events_for_games(conn, &taxa, &mmolb_game_ids)?;
+        let (ingested_games, events_for_game_timings) = db::events_for_games(conn, &taxa, &mmolb_game_ids)?;
         assert_eq!(mmolb_game_ids.len(), ingested_games.len());
+        let db_fetch_for_check_duration = (Utc::now() - db_fetch_for_check_start).as_seconds_f64();
         
+        let check_round_trip_start = Utc::now();
         let additional_logs = games.iter()
             .filter_map(|game| match game {
                 GameForDb::Incomplete { .. } => { None }
@@ -893,10 +907,25 @@ async fn ingest_page_of_games<'t>(
                 }
             })
             .collect_vec();
+        let check_round_trip_duration = (Utc::now() - check_round_trip_start).as_seconds_f64();
 
+        let insert_extra_logs_start = Utc::now();
         if !additional_logs.is_empty() {
             db::insert_additional_ingest_logs(conn, &additional_logs)?;
         }
+        let insert_extra_logs_duration = (Utc::now() - insert_extra_logs_start).as_seconds_f64();
+        let total_duration = (Utc::now() - start).as_seconds_f64();
+        
+        db::insert_timings(conn, ingest_id, page_index, Timings {
+            filter_finished_games_duration,
+            parse_and_sim_duration,
+            db_insert_duration,
+            db_fetch_for_check_duration,
+            events_for_game_timings,
+            check_round_trip_duration,
+            insert_extra_logs_duration,
+            total_duration,
+        })?;
 
         Ok::<_, IngestFatalError>(IngestStats {
             num_incomplete_games_skipped,

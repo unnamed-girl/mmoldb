@@ -10,7 +10,7 @@ pub struct NewIngest {
 #[derive(Identifiable, Queryable, Selectable)]
 #[diesel(table_name = crate::info_schema::info::ingests)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
-pub struct Ingest {
+pub struct DbIngest {
     pub id: i64,
     pub started_at: NaiveDateTime,
     pub finished_at: Option<NaiveDateTime>,
@@ -35,7 +35,7 @@ pub struct NewGame<'a> {
 }
 
 #[derive(Identifiable, Queryable, Selectable, Associations)]
-#[diesel(belongs_to(Ingest, foreign_key = ingest))]
+#[diesel(belongs_to(DbIngest, foreign_key = ingest))]
 #[diesel(table_name = crate::data_schema::data::games)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct DbGame {
@@ -158,13 +158,14 @@ pub struct DbEventIngestLog {
 }
 
 #[derive(Insertable)]
-#[diesel(table_name = crate::info_schema::info::game_ingest_timing)]
+#[diesel(table_name = crate::info_schema::info::ingest_timings)]
 pub struct NewGameIngestTimings {
-    pub game_id: i64,
-    pub check_already_ingested_duration: f64,
-    pub parse_duration: f64,
-    pub sim_duration: f64,
+    pub ingest_id: i64,
+    pub index: i32,
+    pub filter_finished_games_duration: f64,
+    pub parse_and_sim_duration: f64,
     pub db_insert_duration: f64,
+    pub db_fetch_for_check_duration: f64,
     pub db_fetch_for_check_get_game_id_duration: f64,
     pub db_fetch_for_check_get_events_duration: f64,
     pub db_fetch_for_check_group_events_duration: f64,
@@ -173,23 +174,21 @@ pub struct NewGameIngestTimings {
     pub db_fetch_for_check_get_fielders_duration: f64,
     pub db_fetch_for_check_group_fielders_duration: f64,
     pub db_fetch_for_check_post_process_duration: f64,
-    pub db_fetch_for_check_duration: f64,
-    pub db_duration: f64,
     pub check_round_trip_duration: f64,
     pub insert_extra_logs_duration: f64,
     pub total_duration: f64,
 }
 
 #[derive(Identifiable, Queryable, Selectable, Associations)]
-#[diesel(belongs_to(DbGame, foreign_key = game_id))]
-#[diesel(table_name = crate::info_schema::info::game_ingest_timing)]
+#[diesel(belongs_to(DbIngest, foreign_key = ingest_id))]
+#[diesel(table_name = crate::info_schema::info::ingest_timings)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct DbGameIngestTimings {
     pub id: i64,
-    pub game_id: i64,
-    pub check_already_ingested_duration: f64,
-    pub parse_duration: f64,
-    pub sim_duration: f64,
+    pub ingest_id: i64,
+    pub index: i32,
+    pub filter_finished_games_duration: f64,
+    pub parse_and_sim_duration: f64,
     pub db_insert_duration: f64,
     pub db_fetch_for_check_get_game_id_duration: f64,
     pub db_fetch_for_check_get_events_duration: f64,
@@ -200,7 +199,6 @@ pub struct DbGameIngestTimings {
     pub db_fetch_for_check_group_fielders_duration: f64,
     pub db_fetch_for_check_post_process_duration: f64,
     pub db_fetch_for_check_duration: f64,
-    pub db_duration: f64,
     pub check_round_trip_duration: f64,
     pub insert_extra_logs_duration: f64,
     pub total_duration: f64,

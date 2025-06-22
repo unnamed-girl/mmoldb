@@ -108,16 +108,16 @@ create table info.event_ingest_log (
 -- `on delete cascade` is very slow without the appropriate index
 create index event_ingest_log_game_id on info.event_ingest_log (game_id);
 
-create table info.game_ingest_timing (
+create table info.ingest_timings (
     -- bookkeeping
     id bigserial primary key not null,
-    game_id bigserial references data.games on delete cascade not null,
+    ingest_id bigint references info.ingests on delete cascade not null ,
+    index int not null,
 
-    check_already_ingested_duration float8 not null,
-    parse_duration float8 not null,
-    sim_duration float8 not null,
+    filter_finished_games_duration float8 not null,
+    parse_and_sim_duration float8 not null,
     db_insert_duration float8 not null,
-    db_fetch_for_check_duration float8 not null,
+    db_fetch_for_check_duration float8 not null, -- overlaps
     db_fetch_for_check_get_game_id_duration float8 not null,
     db_fetch_for_check_get_events_duration float8 not null,
     db_fetch_for_check_group_events_duration float8 not null,
@@ -126,14 +126,13 @@ create table info.game_ingest_timing (
     db_fetch_for_check_get_fielders_duration float8 not null,
     db_fetch_for_check_group_fielders_duration float8 not null,
     db_fetch_for_check_post_process_duration float8 not null,
-    db_duration float8 not null,
     check_round_trip_duration float8 not null,
     insert_extra_logs_duration float8 not null,
-    total_duration float8 not null
+    total_duration float8 not null -- overlaps everything
 );
 
 -- `on delete cascade` is very slow without the appropriate index
-create index game_ingest_timing_game_id on info.game_ingest_timing (game_id);
+create index game_ingest_timing_ingest_id on info.ingest_timings (ingest_id);
 
 create table data.events (
     -- bookkeeping

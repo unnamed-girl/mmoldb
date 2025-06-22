@@ -91,7 +91,7 @@ pub async fn game_page(mmolb_game_id: String, db: Db) -> Result<Template, AppErr
 }
 
 #[get("/ingest/<ingest_id>")]
-pub async fn ingest_page(ingest_id: i64, mut db: Db) -> Result<Template, AppError> {
+pub async fn ingest_page(ingest_id: i64, db: Db) -> Result<Template, AppError> {
     #[derive(Serialize)]
     struct IngestContext {
         id: i64,
