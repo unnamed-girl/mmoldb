@@ -95,7 +95,7 @@ fn get_figment_with_constructed_db_url() -> figment::Figment {
 fn rocket() -> _ {
     rocket::custom(get_figment_with_constructed_db_url())
         .mount("/", web::routes())
-        .mount("/static", rocket::fs::FileServer::new(rocket::fs::relative!("static")))
+        .mount("/static", rocket::fs::FileServer::from("static"))
         .manage(IngestTask::new())
         .attach(Template::custom(|engines| {
             engines.tera.register_filter("num_format", NumFormat);
