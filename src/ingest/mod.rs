@@ -2,7 +2,7 @@ mod http;
 mod sim;
 mod chron;
 
-use crate::db::{RowToEventError, Taxa};
+use crate::db::{CompletedGameForDb, GameForDb, RowToEventError, Taxa};
 use crate::ingest::sim::{Game, SimFatalError};
 use crate::{Db, db};
 use chrono::{DateTime, TimeZone, Utc};
@@ -39,7 +39,7 @@ fn default_fetch_rate_limit() -> u64 {
     10
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 // Not sure if I need this because I also depend on serde, but it
 // probably doesn't hurt
 #[serde(crate = "rocket::serde")]
@@ -807,7 +807,7 @@ async fn do_ingest_internal(
 
 fn prepare_completed_game_for_db(
     entity: &ChronEntity<mmolb_parsing::Game>,
-) -> Result<db::CompletedGameForDb, GameIngestFatalError> {
+) -> Result<CompletedGameForDb, SimFatalError> {
     let parsed_game = mmolb_parsing::process_game(&entity.data);
 
     // I'm adding enumeration to parsed, then stripping it out for
@@ -844,7 +844,7 @@ fn prepare_completed_game_for_db(
                     None
                 }
             };
-            
+
             all_logs.push(ingest_logs.into_vec());
 
             event
@@ -859,9 +859,9 @@ fn prepare_completed_game_for_db(
 
     Ok(CompletedGameForDb {
         id: &entity.entity_id,
-        game: &entity.data,
+        raw_game: &entity.data,
         events: detail_events,
-        logs: all_logs.into_iter().flatten().collect(),
+        logs: all_logs,
     })
 }
 
@@ -873,6 +873,7 @@ fn ingest_page_of_games<'t>(
     page: ChronEntities<mmolb_parsing::Game>,
 ) -> impl Future<Output = Result<IngestStats, IngestFatalError>> {
     let taxa = taxa.clone(); // TODO Remove this
+    let config = config.clone(); // TODO Remove this
     db.run(move |conn| {
         let raw_games = if !config.reimport_all_games {
             // Remove any games which are fully imported
@@ -889,11 +890,11 @@ fn ingest_page_of_games<'t>(
         } else {
             page.items
         };
-        
+
         let games = raw_games.iter()
             .map(|entity| {
-                Ok(if entity.data.state != "Complete" {
-                    db::GameForDb::Incomplete {
+                Ok::<_, IngestFatalError>(if entity.data.state != "Complete" {
+                    GameForDb::Incomplete {
                         game_id: &entity.entity_id,
                         raw_game: &entity.data,
                     }
@@ -908,14 +909,33 @@ fn ingest_page_of_games<'t>(
                         entity.data.day,
                     );
 
-                    db::GameForDb::Completed {
-                        description,
-                        game: prepare_completed_game_for_db(entity)?,
+                    match prepare_completed_game_for_db(entity) {
+                        Ok(game) => {
+                            GameForDb::Completed { description, game }
+                        }
+                        Err(err) => {
+                            // TODO Capture this on the games with issues page
+                            warn!("Sim error importing {description}: {err}");
+                            GameForDb::Incomplete {
+                                game_id: &entity.entity_id,
+                                raw_game: &entity.data,
+                            }
+                        }
                     }
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        
+
+        let num_incomplete_games_skipped = games.iter()
+            .filter(|g| {
+                match g {
+                    GameForDb::Incomplete { .. } => { true }
+                    GameForDb::Completed { .. } => { false }
+                }
+            })
+            .count();
+        let num_already_ingested_games_skipped = raw_games.len() - games.len();
+        let num_games_imported = games.len() - num_incomplete_games_skipped;
         info!("Ingesting {} games, ignoring {} already-ingested games", games.len(), raw_games.len() - games.len());
 
         // Insert the games into the database
@@ -929,10 +949,9 @@ fn ingest_page_of_games<'t>(
         info!("Chunk ingested");
 
         Ok::<_, IngestFatalError>(IngestStats {
-            num_incomplete_games_skipped: games_in_progress.len(),
-            // TODO Restore this part of it
-            num_already_ingested_games_skipped: 0,
-            num_games_imported: db_game_ids.len(),
+            num_incomplete_games_skipped,
+            num_already_ingested_games_skipped,
+            num_games_imported,
         })
     })
 
@@ -1014,7 +1033,7 @@ fn ingest_page_of_games<'t>(
 
 // A utility to more conveniently build a Vec<IngestLog>
 pub struct IngestLogs {
-    logs: Vec<(usize, IngestLog)>,
+    logs: Vec<IngestLog>,
 }
 
 impl IngestLogs {
@@ -1024,70 +1043,58 @@ impl IngestLogs {
 
     #[allow(dead_code)]
     pub fn critical(&mut self, game_event_index: usize, s: impl Into<String>) {
-        self.logs.push((
+        self.logs.push(IngestLog {
             game_event_index,
-            IngestLog {
-                log_level: 0,
-                log_text: s.into(),
-            },
-        ));
+            log_level: 0,
+            log_text: s.into(),
+        });
     }
 
     pub fn error(&mut self, game_event_index: usize, s: impl Into<String>) {
-        self.logs.push((
+        self.logs.push(IngestLog {
             game_event_index,
-            IngestLog {
-                log_level: 1,
-                log_text: s.into(),
-            },
-        ));
+            log_level: 1,
+            log_text: s.into(),
+        });
     }
 
     #[allow(dead_code)]
     pub fn warn(&mut self, game_event_index: usize, s: impl Into<String>) {
-        self.logs.push((
+        self.logs.push(IngestLog {
             game_event_index,
-            IngestLog {
-                log_level: 2,
-                log_text: s.into(),
-            },
-        ));
+            log_level: 2,
+            log_text: s.into(),
+        });
     }
 
     #[allow(dead_code)]
     pub fn info(&mut self, game_event_index: usize, s: impl Into<String>) {
-        self.logs.push((
+        self.logs.push(IngestLog {
             game_event_index,
-            IngestLog {
-                log_level: 3,
-                log_text: s.into(),
-            },
-        ));
+            log_level: 3,
+            log_text: s.into(),
+        });
     }
 
     #[allow(dead_code)]
     pub fn debug(&mut self, game_event_index: usize, s: impl Into<String>) {
-        self.logs.push((
+        self.logs.push(IngestLog {
             game_event_index,
-            IngestLog {
-                log_level: 4,
-                log_text: s.into(),
-            },
-        ));
+            log_level: 4,
+            log_text: s.into(),
+        });
     }
 
     #[allow(dead_code)]
     pub fn trace(&mut self, game_event_index: usize, s: impl Into<String>) {
-        self.logs.push((
+        self.logs.push(IngestLog {
             game_event_index,
-            IngestLog {
-                log_level: 5,
-                log_text: s.into(),
-            },
-        ));
+            log_level: 5,
+            log_text: s.into(),
+        });
     }
 
-    pub fn into_vec(self) -> Vec<(usize, IngestLog)> {
+    pub fn into_vec(self) -> Vec<IngestLog> {
         self.logs
     }
 }

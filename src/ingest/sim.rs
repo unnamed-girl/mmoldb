@@ -167,7 +167,7 @@ struct Pitch {
 
 #[derive(Debug, Copy, Clone)]
 struct FairBall {
-    index: usize,
+    game_event_index: usize,
     fair_ball_type: FairBallType,
     fair_ball_destination: FairBallDestination,
     pitch: Option<Pitch>
@@ -415,7 +415,7 @@ struct EventDetailBuilder<'g> {
 impl<'g> EventDetailBuilder<'g> {
     fn fair_ball(mut self, fair_ball: FairBall) -> Self {
         self = self.pitch(fair_ball.pitch);
-        self.fair_ball_event_index = Some(fair_ball.index);
+        self.fair_ball_event_index = Some(fair_ball.game_event_index);
         self.fair_ball_type = Some(fair_ball.fair_ball_type.into());
         self.fair_ball_direction = Some(fair_ball.fair_ball_destination.into());
         self
@@ -1842,7 +1842,7 @@ impl<'g> Game<'g> {
                         self.check_batter(batter_name, batter, ingest_logs);
 
                         self.state.phase = GamePhase::ExpectFairBallOutcome(batter_name, FairBall {
-                            index,
+                            game_event_index,
                             fair_ball_type: *fair_ball_type,
                             fair_ball_destination: *destination,
                             pitch

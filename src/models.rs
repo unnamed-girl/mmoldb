@@ -2,13 +2,13 @@ use chrono::NaiveDateTime;
 use rocket_sync_db_pools::diesel::prelude::*;
 
 #[derive(Insertable)]
-#[diesel(table_name = crate::data_schema::data::ingests)]
+#[diesel(table_name = crate::info_schema::info::ingests)]
 pub struct NewIngest {
     pub started_at: NaiveDateTime,
 }
 
 #[derive(Identifiable, Queryable, Selectable)]
-#[diesel(table_name = crate::data_schema::data::ingests)]
+#[diesel(table_name = crate::info_schema::info::ingests)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct Ingest {
     pub id: i64,
@@ -31,6 +31,7 @@ pub struct NewGame<'a> {
     pub home_team_emoji: &'a str,
     pub home_team_name: &'a str,
     pub home_team_id: &'a str,
+    pub is_finished: bool,
 }
 
 #[derive(Identifiable, Queryable, Selectable, Associations)]
@@ -49,6 +50,7 @@ pub struct DbGame {
     pub home_team_emoji: String,
     pub home_team_name: String,
     pub home_team_id: String,
+    pub is_finished: bool,
 }
 
 #[derive(Insertable)]
@@ -131,21 +133,26 @@ pub struct DbRawEvent {
 
 #[derive(Insertable)]
 #[diesel(table_name = crate::info_schema::info::event_ingest_log)]
+#[diesel(treat_none_as_default_value = false)]
 pub struct NewEventIngestLog<'a> {
-    pub raw_event_id: i64,
-    pub log_order: i32,
+    // Compound key
+    pub game_id: i64,
+    pub game_event_index: i32,
+    pub log_index: i32,
+    
+    // Data
     pub log_level: i32,
     pub log_text: &'a str,
 }
 
-#[derive(Identifiable, Queryable, Selectable, Associations)]
-#[diesel(belongs_to(DbRawEvent, foreign_key = raw_event_id))]
+#[derive(Identifiable, Queryable, Selectable)]
 #[diesel(table_name = crate::info_schema::info::event_ingest_log)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct DbEventIngestLog {
     pub id: i64,
-    pub raw_event_id: i64,
-    pub log_order: i32,
+    pub game_id: i64,
+    pub game_event_index: i32,
+    pub log_index: i32,
     pub log_level: i32,
     pub log_text: String,
 }
@@ -199,6 +206,7 @@ pub struct DbGameIngestTimings {
 
 #[derive(Insertable)]
 #[diesel(table_name = crate::data_schema::data::event_baserunners)]
+#[diesel(treat_none_as_default_value = false)]
 pub struct NewBaserunner<'a> {
     pub event_id: i64,
     pub baserunner_name: &'a str,
@@ -226,6 +234,7 @@ pub struct DbRunner {
 
 #[derive(Insertable)]
 #[diesel(table_name = crate::data_schema::data::event_fielders)]
+#[diesel(treat_none_as_default_value = false)]
 pub struct NewFielder<'a> {
     pub event_id: i64,
     pub fielder_name: &'a str,

@@ -83,6 +83,7 @@ create table info.raw_events (
     id bigserial primary key not null,
     game_id bigserial references data.games on delete cascade not null,
     game_event_index int not null,
+    unique (game_id, game_event_index),
 
     -- event data
     event_text text not null
@@ -91,16 +92,19 @@ create table info.raw_events (
 create table info.event_ingest_log (
     -- bookkeeping
     id bigserial primary key not null,
-    raw_event_id bigserial references info.raw_events on delete cascade not null,
+    game_id bigserial references data.games on delete cascade not null,
+    game_event_index int not null,
+    log_index int not null,
+    foreign key (game_id, game_event_index) references info.raw_events (game_id, game_event_index),
 
     -- log data
-    log_order int not null,
     log_level int not null,
     log_text text not null
 );
 
 -- Without this, deleting a game is super slow
-create index event_ingest_log_raw_event_id_index on info.event_ingest_log (raw_event_id);
+-- TODO Fix this
+-- create index event_ingest_log_raw_event_id_index on info.event_ingest_log (raw_event_id);
 
 create table info.game_ingest_timing (
     -- bookkeeping
