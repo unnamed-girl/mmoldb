@@ -8,7 +8,6 @@ use crate::web::error::AppError;
 use crate::web::utility_contexts::{FormattedDateContext, GameContext};
 use crate::{Db, db};
 
-// TODO: Parameterize on MMOLB id, not my db id
 #[get("/game/<mmolb_game_id>")]
 pub async fn game_page(mmolb_game_id: String, db: Db) -> Result<Template, AppError> {
     #[derive(Serialize)]
