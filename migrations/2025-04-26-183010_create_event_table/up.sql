@@ -89,6 +89,9 @@ create table info.raw_events (
     event_text text not null
 );
 
+-- `on delete cascade` is very slow without the appropriate index
+create index raw_events_game_id on info.raw_events (game_id);
+
 create table info.event_ingest_log (
     -- bookkeeping
     id bigserial primary key not null,
@@ -102,9 +105,8 @@ create table info.event_ingest_log (
     log_text text not null
 );
 
--- Without this, deleting a game is super slow
--- TODO Fix this
--- create index event_ingest_log_raw_event_id_index on info.event_ingest_log (raw_event_id);
+-- `on delete cascade` is very slow without the appropriate index
+create index event_ingest_log_game_id on info.event_ingest_log (game_id);
 
 create table info.game_ingest_timing (
     -- bookkeeping
@@ -128,6 +130,9 @@ create table info.game_ingest_timing (
     insert_extra_logs_duration float8 not null,
     total_duration float8 not null
 );
+
+-- `on delete cascade` is very slow without the appropriate index
+create index game_ingest_timing_game_id on info.game_ingest_timing (game_id);
 
 create table data.events (
     -- bookkeeping
@@ -193,6 +198,7 @@ create table data.events (
 --     constraint fair_ball_direction_null_sync check ((fair_ball_event_index is not null) = (fair_ball_direction is not null))
  );
 
+-- `on delete cascade` is very slow without the appropriate index
 create index events_game_id_index on data.events (game_id);
 
 create table data.event_baserunners (
@@ -233,6 +239,7 @@ create table data.event_baserunners (
     steal bool not null -- this records all ATTEMPTED steals. identify failed steals by looking at is_out
 );
 
+-- `on delete cascade` is very slow without the appropriate index
 create index event_baserunners_event_id_index on data.event_baserunners (event_id);
 
 create table data.event_fielders (
@@ -247,4 +254,5 @@ create table data.event_fielders (
     perfect_catch bool -- null indicates this was not a catch
 );
 
+-- `on delete cascade` is very slow without the appropriate index
 create index event_fielders_event_id_index on data.event_fielders (event_id);

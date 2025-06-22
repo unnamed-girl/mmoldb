@@ -633,24 +633,6 @@ impl FetchGameError {
     }
 }
 
-async fn fetch_game_from_server(
-    client: &ClientWithMiddleware,
-    url: &str,
-    cache_mode: http_cache_reqwest::CacheMode,
-) -> Result<mmolb_parsing::Game, FetchGamePartialError> {
-    client
-        .get(url)
-        .with_extension(cache_mode)
-        .send()
-        .await
-        .map_err(FetchGamePartialError::RequestError)?
-        .error_for_status()
-        .map_err(FetchGamePartialError::NonSuccessStatusCode)?
-        .json()
-        .await
-        .map_err(FetchGamePartialError::FailedJsonDecode)
-}
-
 async fn do_ingest(
     db: &Db,
     taxa: &Taxa,
@@ -662,10 +644,12 @@ async fn do_ingest(
     info!("Ingest at {ingest_start} starting");
 
     // The only thing that errors here is opening the http cache, which
-    // could be worked around by just not caching. This feature could
-    // be added upon request.
+    // could be worked around by just not caching. I don't currently support
+    // running without a cache but it could be added fairly easily.
     let chron = chron::Chron::new(&config.cache_path, config.fetch_game_list_chunks)
         .map_err(|err| (err.into(), None))?;
+
+    info!("Initialized chron");
 
     // For lifetime reasons
     let reimport_all_games = config.reimport_all_games;
@@ -679,11 +663,17 @@ async fn do_ingest(
                 .map_err(|e| (e.into(), None))?
         };
 
+        info!("Got last completed page");
+
         let ingest_id = db::start_ingest(conn, ingest_start)
             .map_err(|e| (e.into(), None))?;
 
+        info!("Inserted new ingest");
+
         Ok((start_page, ingest_id))
     }).await?;
+
+    info!("Finished first db block");
 
     do_ingest_internal(
         db,

@@ -27,6 +27,9 @@ pub enum ChronError {
 
     #[error("Error removing invalid games page from cache: {0}")]
     CacheRemoveError(sled::Error),
+
+    #[error("Error flushing cache to disk: {0}")]
+    CacheFlushError(sled::Error),
 }
 
 // This is exactly like ChronEntities except it contains its own page 
@@ -69,8 +72,19 @@ impl Chron {
         cache_path: P,
         fetch_games_list_chunks: usize,
     ) -> Result<Self, sled::Error> {
+        let cache_path = cache_path.as_ref();
+        let cache = sled::open(cache_path)?;
+        if cache.was_recovered() {
+            match cache.size_on_disk() {
+                Ok(size) => { info!("Opened existing {size}-byte cache at {cache_path:?}") }
+                Err(err) => { info!("Opened existing cache at {cache_path:?}. Error retrieving size: {err}") }
+            }
+        } else {
+            info!("Created new cache at {cache_path:?}");
+        }
+        
         Ok(Self {
-            cache: sled::open(cache_path)?,
+            cache,
             client: reqwest::Client::new(),
             fetch_games_list_chunks_string: fetch_games_list_chunks.to_string(),
         })
@@ -112,7 +126,7 @@ impl Chron {
         let request = self.entities_request("game", &self.fetch_games_list_chunks_string, page.as_deref()).build()
             .map_err(ChronError::RequestBuild)?;
         let url = request.url().to_string();
-        if let Some(cache_entry) = self.get_cached(&url)? {
+        let result = if let Some(cache_entry) = self.get_cached(&url)? {
             info!("Returning page {page:?} from cache");
             Ok(cache_entry)
         } else {
@@ -137,6 +151,12 @@ impl Chron {
                 .expect("Cache entry was not found immediately after it was saved");
             
             Ok(entities)
-        }
+        };
+        
+        // Fetches are already so slow that cache flushing should be a drop in the bucket. Non-fetch
+        // requests shouldn't dirty the cache at all and so this should be near-instant.
+        self.cache.flush().map_err(ChronError::CacheFlushError)?;
+        
+        result
     }
 }

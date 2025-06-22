@@ -16,6 +16,7 @@ use std::iter;
 use crate::ingest::{EventDetail, IngestLog};
 use crate::models::{DbEvent, DbEventIngestLog, DbFielder, DbGame, DbRawEvent, DbRunner, Ingest, NewEventIngestLog, NewGame, NewGameIngestTimings, NewIngest, NewRawEvent};
 use chrono::{DateTime, NaiveDateTime, Utc};
+use diesel::dsl::count_distinct;
 use diesel::query_dsl::methods::OrderDsl;
 use itertools::{Itertools, PeekingNext};
 use log::info;
@@ -44,24 +45,12 @@ pub fn game_count(conn: &mut PgConnection) -> QueryResult<i64> {
 }
 
 pub fn game_with_issues_count(conn: &mut PgConnection) -> QueryResult<i64> {
-    use diesel::sql_types::*;
-    #[derive(QueryableByName)]
-    struct GamesWithIssuesCount {
-        #[diesel(sql_type = Int8)]
-        pub games_with_issues: i64,
-    }
+    use crate::info_schema::info::event_ingest_log::dsl;
 
-    diesel::sql_query(
-        "
-        select count(distinct data.games.id) games_with_issues
-        from data.games
-        join info.raw_events on data.games.id = info.raw_events.game_id
-        join info.event_ingest_log on info.raw_events.id = info.event_ingest_log.raw_event_id
-        where info.event_ingest_log.log_level < 3
-        ",
-    )
-    .get_result::<GamesWithIssuesCount>(conn)
-    .map(|games_with_issues| games_with_issues.games_with_issues)
+    dsl::event_ingest_log
+        .filter(dsl::log_level.lt(3)) // Selects warnings and higher
+        .select(count_distinct(dsl::game_id))
+        .get_result(conn)
 }
 
 pub fn latest_ingest_start_time(
@@ -108,7 +97,7 @@ pub fn latest_ingests(conn: &mut PgConnection) -> QueryResult<Vec<IngestWithGame
     diesel::sql_query(
         "
         select i.id, i.started_at, i.finished_at, i.aborted_at, count(g.mmolb_game_id) as num_games
-        from data.ingests i
+        from info.ingests i
              left join data.games g on g.ingest = i.id
         group by i.id, i.started_at
         order by i.started_at desc
@@ -399,9 +388,9 @@ pub fn insert_games(
     games: Vec<GameForDb>,
 ) -> QueryResult<Vec<i64>> {
     conn.transaction(|conn| {
-        // When a batch fails, split it in half (recursively if necessary)
-        // and try again until the batch size is 1. Then return some indication
-        // of which inserts failed.
+        // TODO: When a batch fails, split it in half (recursively if necessary) and try again 
+        //   until it succeeds or the batch size is 1. Then return some indication of which inserts 
+        //   failed.
         insert_games_internal(conn, taxa, ingest_id, games)
     })
 }
@@ -418,6 +407,22 @@ fn insert_games_internal<'e>(
     use crate::data_schema::data::games::dsl as games_dsl;
     use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
     use crate::info_schema::info::raw_events::dsl as raw_events_dsl;
+    
+    // First delete all games. If particular debug settings are turned on this may happen for every
+    // game, but even in release mode we may need to delete partial games and replace them with
+    // full games.
+    let game_mmolb_ids = games.iter()
+        .map(|g| match g {
+            GameForDb::Incomplete { game_id, .. } => { *game_id }
+            GameForDb::Completed { game, .. } => { game.id }
+        })
+        .collect_vec();
+
+    info!("Pruning any existing records for {} games", game_mmolb_ids.len());
+    let n_deleted_games = diesel::delete(games_dsl::games)
+        .filter(games_dsl::mmolb_game_id.eq_any(game_mmolb_ids))
+        .execute(conn)?;
+    info!("Deleted {} games that will be replaced", n_deleted_games);
 
     let new_games = games.iter()
         .map(|game| {
@@ -462,6 +467,7 @@ fn insert_games_internal<'e>(
         .values(new_games)
         .returning(games_dsl::id)
         .get_results::<i64>(conn)?;
+    info!("Inserted {} games", game_ids.len());
 
     log_only_assert!(
         n_games_to_insert == game_ids.len(),
@@ -502,19 +508,6 @@ fn insert_games_internal<'e>(
         "Raw events insert should have inserted {} rows, but it inserted {}",
         n_raw_events_to_insert, n_raw_events_inserted,
     );
-
-    // // Copy doesn't let us return the ids, but we need them, so we query them from scratch
-    // let raw_event_ids = raw_events_dsl::raw_events
-    //     .filter(raw_events_dsl::game_id.eq_any(&game_ids))
-    //     .select((raw_events_dsl::game_id, raw_events_dsl::id))
-    //     .order_by(raw_events_dsl::game_id)
-    //     .get_results::<(i64, i64)>(conn)?;
-    //
-    // let raw_event_ids_by_game = raw_event_ids.into_iter()
-    //     .chunk_by(|(game_id, _)| *game_id)
-    //     .into_iter()
-    //     .map(|(_, group)| group.collect_vec())
-    //     .collect_vec();
 
     let new_logs = games.iter()
         .flat_map(|(game_id, game)| {
