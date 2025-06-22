@@ -276,6 +276,7 @@ pub fn all_games(conn: &mut PgConnection) -> QueryResult<Vec<(DbGame, i64, i64, 
 pub struct EventsForGameTimings {
     pub get_game_id_duration: f64,
     pub get_events_duration: f64,
+    pub group_events_duration: f64,
     pub get_runners_duration: f64,
     pub group_runners_duration: f64,
     pub get_fielders_duration: f64,
@@ -283,10 +284,10 @@ pub struct EventsForGameTimings {
     pub post_process_duration: f64,
 }
 
-pub fn events_for_game<'e>(
+pub fn events_for_games(
     conn: &mut PgConnection,
     taxa: &Taxa,
-    for_game_id: &str,
+    for_game_ids: Vec<&str>,
 ) -> QueryResult<(
     Vec<Result<EventDetail<String>, RowToEventError>>,
     EventsForGameTimings,
@@ -296,20 +297,34 @@ pub fn events_for_game<'e>(
     use crate::data_schema::data::events::dsl as events_dsl;
     use crate::data_schema::data::games::dsl as games_dsl;
 
-    let get_game_id_start = Utc::now();
-    let game_id = games_dsl::games
-        .filter(games_dsl::mmolb_game_id.eq(for_game_id))
+    let get_game_ids_start = Utc::now();
+    let game_ids = games_dsl::games
+        .filter(games_dsl::mmolb_game_id.eq_any(for_game_ids))
         .select(games_dsl::id)
-        .get_result::<i64>(conn)?;
-    let get_game_id_duration = (Utc::now() - get_game_id_start).as_seconds_f64();
+        .get_results::<i64>(conn)?;
+    let get_game_ids_duration = (Utc::now() - get_game_ids_start).as_seconds_f64();
 
     let get_events_start = Utc::now();
-    let db_events = events_dsl::events
-        .filter(events_dsl::game_id.eq(game_id))
+    let mut db_events_iter = events_dsl::events
+        .filter(events_dsl::game_id.eq_any(game_ids))
         .order_by(events_dsl::game_event_index.asc())
         .select(DbEvent::as_select())
-        .load(conn)?;
+        .load(conn)?
+        .into_iter()
+        .peekable();
     let get_events_duration = (Utc::now() - get_events_start).as_seconds_f64();
+    
+    let group_events_start = Utc::now();
+    let db_events = game_ids.iter()
+        .map(|id| {
+            let mut game_events = Vec::new();
+            while let Some(event) = db_events_iter.next_if(|e| e.game_id == id) {
+                game_events.push(event);
+            }
+            game_events
+        })
+        .collect_vec();
+    let group_events_duration = (Utc::now() - group_events_start).as_seconds_f64();
 
     let get_runners_start = Utc::now();
     let db_runners = DbRunner::belonging_to(&db_events)
@@ -352,8 +367,9 @@ pub fn events_for_game<'e>(
     Ok((
         result,
         EventsForGameTimings {
-            get_game_id_duration,
+            get_game_id_duration: get_game_ids_duration,
             get_events_duration,
+            group_events_duration,
             get_runners_duration,
             group_runners_duration,
             get_fielders_duration,

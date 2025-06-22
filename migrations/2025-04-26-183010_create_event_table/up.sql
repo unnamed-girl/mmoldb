@@ -120,6 +120,7 @@ create table info.game_ingest_timing (
     db_fetch_for_check_duration float8 not null,
     db_fetch_for_check_get_game_id_duration float8 not null,
     db_fetch_for_check_get_events_duration float8 not null,
+    db_fetch_for_check_group_events_duration float8 not null,
     db_fetch_for_check_get_runners_duration float8 not null,
     db_fetch_for_check_group_runners_duration float8 not null,
     db_fetch_for_check_get_fielders_duration float8 not null,

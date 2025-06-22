@@ -23,6 +23,7 @@ pub mod info {
             db_fetch_for_check_duration -> Float8,
             db_fetch_for_check_get_game_id_duration -> Float8,
             db_fetch_for_check_get_events_duration -> Float8,
+            db_fetch_for_check_group_events_duration -> Float8,
             db_fetch_for_check_get_runners_duration -> Float8,
             db_fetch_for_check_group_runners_duration -> Float8,
             db_fetch_for_check_get_fielders_duration -> Float8,

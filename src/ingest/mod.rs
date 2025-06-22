@@ -855,16 +855,28 @@ fn prepare_completed_game_for_db(
     })
 }
 
-fn ingest_page_of_games<'t>(
+async fn ingest_page_of_games<'t>(
     db: &Db,
     taxa: &'t Taxa,
     config: &IngestConfig,
     ingest_id: i64,
     page: ChronEntities<mmolb_parsing::Game>,
-) -> impl Future<Output = Result<IngestStats, IngestFatalError>> {
-    let taxa = taxa.clone(); // TODO Remove this
-    let config = config.clone(); // TODO Remove this
-    db.run(move |conn| {
+) -> Result<IngestStats, IngestFatalError> {
+    // These clones are here because rocket_sync_db_pools' derived 
+    // run() function imposes a 'static lifetime on its callback, and
+    // thus we can't express "these variables must live longer than
+    // this callback" to the type system. Cloning isn't the only 
+    // solution (Arc would also work), but these objects are small
+    // enough that cloning is a negligible-cost workaround to the
+    // lifetime issue. They're also both frozen after launch, so
+    // there's no risk of getting out of sync.
+    // TODO Encapsulate these variables into some sort of Context
+    //   object (and maybe take the opportunity to lift cache_path
+    //   out of config).
+    let taxa = taxa.clone();
+    let config = config.clone();
+    
+    let stats = db.run(move |conn| {
         let raw_games = if !config.reimport_all_games {
             // Remove any games which are fully imported
             let is_finished = db::is_finished(conn, page.items.iter().map(|e| e.entity_id.as_str()).collect())?;
@@ -889,6 +901,8 @@ fn ingest_page_of_games<'t>(
                         raw_game: &entity.data,
                     }
                 } else {
+                    // TODO This used to be used a lot, which is why I precomputed it, but I think
+                    //   it isn't. If that's true, remove it.
                     let description = format!(
                         "{} {} @ {} {} s{}d{}",
                         entity.data.away_team_emoji,
@@ -926,6 +940,7 @@ fn ingest_page_of_games<'t>(
             .count();
         let num_already_ingested_games_skipped = raw_games.len() - games.len();
         let num_games_imported = games.len() - num_incomplete_games_skipped;
+        let total_games = games.len();
         info!("Ingesting {} games, ignoring {} already-ingested games", games.len(), raw_games.len() - games.len());
 
         // Insert the games into the database
@@ -937,13 +952,28 @@ fn ingest_page_of_games<'t>(
         )?;
         
         info!("Chunk ingested");
+        
+        // Immediately turn around and fetch all the games we just inserted,
+        // so we can verify that they round-trip correctly.
+        // This step, and all the following verification steps, could be 
+        // skipped. However, my profiling shows that it's negligible
+        // cost so I haven't added the capability.
+        let mmolb_game_ids = games.iter()
+            .filter_map(|game| match game {
+                GameForDb::Incomplete { .. } => { None }
+                GameForDb::Completed { game, .. } => { Some(game.id) }
+            })
+            .collect_vec();
+        
+        let (ingested_games, timings) = db::events_for_games(conn, &taxa, mmolb_game_ids)?;
+        assert_eq!(total_games, ingested_games.len());
 
         Ok::<_, IngestFatalError>(IngestStats {
             num_incomplete_games_skipped,
             num_already_ingested_games_skipped,
             num_games_imported,
         })
-    })
+    }).await?;
 
     // TODO Update all the following for batched insert
     // let inserted_events = db::events_for_game(conn, &taxa, mmolb_game_id).await?;
@@ -1018,6 +1048,8 @@ fn ingest_page_of_games<'t>(
     //     game_data.season,
     //     game_data.day,
     // );
+    
+    Ok(stats)
 }
 
 
