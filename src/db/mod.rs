@@ -248,22 +248,6 @@ pub fn ingest_with_games(
     Ok((ingest, games))
 }
 
-pub fn has_game(conn: &mut PgConnection, with_id: &str) -> QueryResult<bool> {
-    use crate::data_schema::data::games::dsl::*;
-    use diesel::dsl::*;
-
-    select(exists(games.filter(mmolb_game_id.eq(with_id))))
-        .get_result(conn)
-}
-
-pub async fn delete_game(conn: &mut PgConnection, with_id: &str) -> QueryResult<usize> {
-    use crate::data_schema::data::games::dsl::*;
-    use diesel::dsl::*;
-
-    delete(games.filter(mmolb_game_id.eq(with_id)))
-        .execute(conn)
-}
-
 pub fn all_games(conn: &mut PgConnection) -> QueryResult<Vec<(DbGame, i64, i64, i64)>> {
     use crate::data_schema::data::games::dsl as games_dsl;
 

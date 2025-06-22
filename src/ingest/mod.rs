@@ -18,7 +18,7 @@ use std::{iter, mem};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use futures::{future, FutureExt};
+use futures::{future};
 use itertools::{Itertools, izip};
 use thiserror::Error;
 
@@ -32,18 +32,12 @@ fn default_ingest_period() -> u64 {
     30 * 60  // 30 minutes, expressed in seconds
 }
 
-fn default_retries() -> u64 {
-    3
-}
 fn default_page_size() -> usize {
     // Chron is currently limited to a maximum page size of 100, but
     // it might be raised soon. If we're asking for a page size bigger
     // than 100 when that happens, the responses will change without us
     // changing the URL and we'll have stale pages in the cache.
     100
-}
-fn default_fetch_rate_limit() -> u64 {
-    10
 }
 
 #[derive(Clone, Deserialize)]
@@ -57,18 +51,8 @@ struct IngestConfig {
     reimport_all_games: bool,
     #[serde(default)]
     start_ingest_every_launch: bool,
-    #[serde(default)]
-    cache_game_list_from_api: bool,
-    #[serde(default = "default_retries")]
-    fetch_game_list_retries: u64,
     #[serde(default = "default_page_size")]
     game_list_page_size: usize,
-    #[serde(default)]
-    cache_games_from_api: bool,
-    #[serde(default = "default_retries")]
-    fetch_games_retries: u64,
-    #[serde(default = "default_fetch_rate_limit")]
-    fetch_games_rate_limit_ms: u64,
     cache_path: PathBuf,
 }
 
@@ -1009,12 +993,6 @@ impl IngestLogs {
         self.logs
     }
 }
-
-struct PreIngestTimings {
-    pub total_start: DateTime<Utc>,
-    pub check_already_ingested_duration: f64,
-}
-
 
 fn log_if_error<'g, E: std::fmt::Display>(
     ingest_logs: &mut IngestLogs,
