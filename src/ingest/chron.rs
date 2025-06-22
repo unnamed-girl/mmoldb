@@ -30,15 +30,6 @@ pub enum ChronError {
     CacheFlushError(sled::Error),
 }
 
-// This is exactly like ChronEntities except it contains its own page 
-// token instead of the next page's token. The first page's token is
-// None
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ChronPage<EntityT> {
-    pub items: Vec<ChronEntity<EntityT >>,
-    pub page_token: Option<String>,
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ChronEntities<EntityT> {
     pub items: Vec<ChronEntity<EntityT>>,

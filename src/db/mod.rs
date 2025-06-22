@@ -428,10 +428,7 @@ pub(crate) enum GameForDb<'g> {
         game_id: &'g str,
         raw_game: &'g mmolb_parsing::Game,
     },
-    Completed {
-        description: String,
-        game: CompletedGameForDb<'g>,
-    }
+    Completed(CompletedGameForDb<'g>),
 }
 
 pub fn insert_games(
@@ -464,7 +461,7 @@ fn insert_games_internal<'e>(
     let game_mmolb_ids = games.iter()
         .map(|g| match g {
             GameForDb::Incomplete { game_id, .. } => { *game_id }
-            GameForDb::Completed { game, .. } => { game.id }
+            GameForDb::Completed(game) => { game.id }
         })
         .collect_vec();
 
@@ -492,7 +489,7 @@ fn insert_games_internal<'e>(
                         is_finished: false,
                     }
                 }
-                GameForDb::Completed { game, .. } => {
+                GameForDb::Completed(game) => {
                     NewGame {
                         ingest: ingest_id,
                         mmolb_game_id: &game.id,
@@ -529,7 +526,7 @@ fn insert_games_internal<'e>(
     let games = iter::zip(&game_ids, games)
         .flat_map(|(game_id, game)| match game {
             GameForDb::Incomplete { .. } => { None }
-            GameForDb::Completed { game, .. } => { Some((game_id, game)) }
+            GameForDb::Completed(game) => { Some((game_id, game)) }
         })
         .collect_vec();
 

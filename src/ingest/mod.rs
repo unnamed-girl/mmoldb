@@ -1,28 +1,32 @@
 mod sim;
 mod chron;
 
-use crate::db::{CompletedGameForDb, GameForDb, RowToEventError, Taxa};
-use crate::ingest::sim::{Game, SimFatalError};
-use crate::{Db, db};
+// Reexports
+pub use sim::{EventDetail, EventDetailFielder, EventDetailRunner, IngestLog};
+
+// Third party dependencies
 use chrono::{DateTime, TimeZone, Utc};
 use chrono_humanize::HumanTime;
 use log::{error, info, warn};
 use mmolb_parsing::ParsedEventMessage;
-use reqwest_middleware::ClientWithMiddleware;
 use rocket::fairing::{Fairing, Info, Kind};
 use rocket::tokio::sync::{Notify, RwLock};
 use rocket::tokio::task::JoinHandle;
 use rocket::{Orbit, Rocket, Shutdown, tokio, figment};
 use serde::Deserialize;
-pub use sim::{EventDetail, EventDetailFielder, EventDetailRunner, IngestLog};
 use std::{iter, mem};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use futures::{future, pin_mut, Stream, StreamExt};
-use itertools::{Itertools, Either, izip};
+use futures::future;
+use itertools::{Itertools, izip};
 use thiserror::Error;
-use crate::ingest::chron::{ChronEntities, ChronEntity, ChronError, ChronPage};
+
+// First party dependencies
+use crate::ingest::chron::{ChronEntities, ChronEntity, ChronError};
+use crate::db::{CompletedGameForDb, GameForDb, RowToEventError, Taxa};
+use crate::ingest::sim::{Game, SimFatalError};
+use crate::{Db, db};
 
 fn default_ingest_period() -> u64 {
     30 * 60  // 30 minutes, expressed in seconds
@@ -253,42 +257,6 @@ impl Fairing for IngestFairing {
             error!("Rocket is not managing an IngestTask!");
         };
     }
-}
-
-#[derive(Deserialize, Eq, PartialEq, Debug)]
-pub enum GameState {
-    Complete,
-    Pitch,
-    Field,
-    Change,
-    NowBatting,
-    Change2, // what
-    MoundVisit,
-    GameOver,
-    Recordkeeping,
-    LiveNow,
-    PitchingMatchup,
-    AwayLineup,
-    HomeLineup,
-    PlayBall,
-    InningStart,
-    InningEnd,
-}
-
-// This is incomplete, there is more data available in this response if necessary
-#[derive(Debug, Deserialize)]
-struct CashewsGameResponse {
-    pub game_id: String,
-    pub season: i64,
-    pub day: i64,
-    pub state: GameState,
-}
-
-#[derive(Deserialize)]
-
-struct CashewsGamesResponse {
-    items: Vec<CashewsGameResponse>,
-    next_page: Option<String>,
 }
 
 // This function sets up the ingest task, then returns a JoinHandle for
@@ -813,25 +781,22 @@ async fn ingest_page_of_games<'t>(
                         raw_game: &entity.data,
                     }
                 } else {
-                    // TODO This used to be used a lot, which is why I precomputed it, but I think
-                    //   it isn't. If that's true, remove it.
-                    let description = format!(
-                        "{} {} @ {} {} s{}d{}",
-                        entity.data.away_team_emoji,
-                        entity.data.away_team_name,
-                        entity.data.home_team_emoji,
-                        entity.data.home_team_name,
-                        entity.data.season,
-                        entity.data.day,
-                    );
-
                     match prepare_completed_game_for_db(entity) {
                         Ok(game) => {
-                            GameForDb::Completed { description, game }
+                            GameForDb::Completed(game)
                         }
                         Err(err) => {
-                            // TODO Capture this on the games with issues page
-                            warn!("Sim error importing {description}: {err}");
+                            // TODO Surface this error on the games with issues page
+                            let description = format!(
+                                "{} {} @ {} {} s{}d{}",
+                                entity.data.away_team_emoji,
+                                entity.data.away_team_name,
+                                entity.data.home_team_emoji,
+                                entity.data.home_team_name,
+                                entity.data.season,
+                                entity.data.day,
+                            );
+                            warn!("Sim fatal error importing {description}: {err}. This game will be skipped.");
                             GameForDb::Incomplete {
                                 game_id: &entity.entity_id,
                                 raw_game: &entity.data,
@@ -872,7 +837,7 @@ async fn ingest_page_of_games<'t>(
         let mmolb_game_ids = games.iter()
             .filter_map(|game| match game {
                 GameForDb::Incomplete { .. } => { None }
-                GameForDb::Completed { game, .. } => { Some(game.id) }
+                GameForDb::Completed(game) => { Some(game.id) }
             })
             .collect_vec();
 
@@ -882,7 +847,7 @@ async fn ingest_page_of_games<'t>(
         let additional_logs = games.iter()
             .filter_map(|game| match game {
                 GameForDb::Incomplete { .. } => { None }
-                GameForDb::Completed { game, .. } => { Some(game) }
+                GameForDb::Completed(game) => { Some(game) }
             })
             .zip(&ingested_games)
             .filter_map(|(game, (game_id, inserted_events))| {
