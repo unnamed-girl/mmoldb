@@ -21,6 +21,7 @@ use diesel::query_dsl::methods::OrderDsl;
 use itertools::{Itertools, PeekingNext};
 use log::info;
 use rocket_sync_db_pools::{diesel::PgConnection, diesel::prelude::*};
+use thiserror::Error;
 pub use to_db_format::RowToEventError;
 
 pub fn ingest_count(conn: &mut PgConnection) -> QueryResult<i64> {
@@ -284,14 +285,23 @@ pub struct EventsForGameTimings {
     pub post_process_duration: f64,
 }
 
+#[derive(Debug, Error)]
+pub(crate) enum EventsForGamesError {
+    #[error(transparent)]
+    DbError(#[from] diesel::result::Error),
+    
+    #[error(transparent)]
+    RowToEventError(#[from] RowToEventError),
+}
+
 pub fn events_for_games(
     conn: &mut PgConnection,
     taxa: &Taxa,
     for_game_ids: Vec<&str>,
-) -> QueryResult<(
-    Vec<Result<EventDetail<String>, RowToEventError>>,
-    EventsForGameTimings,
-)> {
+) -> Result<
+    (Vec<Vec<EventDetail<String>>>, EventsForGameTimings),
+    EventsForGamesError,
+> {
     use crate::data_schema::data::event_baserunners::dsl as runner_dsl;
     use crate::data_schema::data::event_fielders::dsl as fielder_dsl;
     use crate::data_schema::data::events::dsl as events_dsl;
@@ -305,17 +315,21 @@ pub fn events_for_games(
     let get_game_ids_duration = (Utc::now() - get_game_ids_start).as_seconds_f64();
 
     let get_events_start = Utc::now();
-    let mut db_events_iter = events_dsl::events
-        .filter(events_dsl::game_id.eq_any(game_ids))
+    let db_events = events_dsl::events
+        .filter(events_dsl::game_id.eq_any(&game_ids))
         .order_by(events_dsl::game_event_index.asc())
         .select(DbEvent::as_select())
-        .load(conn)?
-        .into_iter()
-        .peekable();
+        .load(conn)?;
+    let all_event_ids = db_events.iter()
+        .map(|event| event.id)
+        .collect_vec();
     let get_events_duration = (Utc::now() - get_events_start).as_seconds_f64();
     
     let group_events_start = Utc::now();
-    let db_events = game_ids.iter()
+    let mut db_events_iter = db_events
+        .into_iter()
+        .peekable();
+    let db_games_events = game_ids.into_iter()
         .map(|id| {
             let mut game_events = Vec::new();
             while let Some(event) = db_events_iter.next_if(|e| e.game_id == id) {
@@ -327,41 +341,63 @@ pub fn events_for_games(
     let group_events_duration = (Utc::now() - group_events_start).as_seconds_f64();
 
     let get_runners_start = Utc::now();
-    let db_runners = DbRunner::belonging_to(&db_events)
-        .order_by((
-            runner_dsl::event_id,
-            runner_dsl::base_before.desc().nulls_last(),
-        ))
-        .select(DbRunner::as_select())
-        .load(conn)?;
+    // TODO this exhibits the N+1 problem. I'm trying to fix that on fielders, if successful
+    //   copy it here
+    let db_games_runners = db_games_events.iter()
+        .map(|db_events| {
+            DbRunner::belonging_to(db_events)
+                .order_by((
+                    runner_dsl::event_id,
+                    runner_dsl::base_before.desc().nulls_last(),
+                ))
+                .select(DbRunner::as_select())
+                .load(conn)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let get_runners_duration = (Utc::now() - get_runners_start).as_seconds_f64();
 
     let group_runners_start = Utc::now();
-    let db_runners = db_runners.grouped_by(&db_events);
+    let db_runners = iter::zip(db_games_runners, &db_games_events)
+        .map(|(db_runners, db_events)| db_runners.grouped_by(&db_events))
+        .collect_vec();
     let group_runners_duration = (Utc::now() - group_runners_start).as_seconds_f64();
 
     let get_fielders_start = Utc::now();
-    let db_fielders = DbFielder::belonging_to(&db_events)
+    let mut db_fielders_iter = fielder_dsl::event_fielders
+        .select(fielder_dsl::event_id.eq_any(&all_event_ids))
         .order_by((fielder_dsl::event_id, fielder_dsl::play_order))
         .select(DbFielder::as_select())
-        .load(conn)?;
+        .load(conn)?
+        .into_iter()
+        .peekable();
     let get_fielders_duration = (Utc::now() - get_fielders_start).as_seconds_f64();
 
     let group_fielders_start = Utc::now();
-    let db_fielders = db_fielders.grouped_by(&db_events);
+    let db_fielders = db_games_events.iter()
+        .map(|game_events| {
+            game_events.iter()
+                .map(|game_event| {
+                    let mut fielders = Vec::new();
+                    while let Some(fielder) = db_fielders_iter.next_if(|f| f.event_id == game_event.id) {
+                        fielders.push(fielder);
+                    }
+                    fielders
+                })
+                .collect_vec()
+        })
+        .collect_vec();
     let group_fielders_duration = (Utc::now() - group_fielders_start).as_seconds_f64();
 
-    // This complicated-looking statement just zips all the iterators
-    // together and passes the corresponding elements to row_to_event
     let post_process_start = Utc::now();
-    let result = db_events
-        .into_iter()
-        .zip(db_runners)
-        .zip(db_fielders)
-        .map(|((db_event, db_runners), db_fielders)| {
-            to_db_format::row_to_event(taxa, db_event, db_runners, db_fielders)
+    let result = itertools::izip!(db_games_events, db_runners, db_fielders)
+        .map(|(events, runners, fielders)| {
+            itertools::izip!(events, runners, fielders)
+                .map(|(event, runners, fielders)| {
+                    to_db_format::row_to_event(taxa, event, runners, fielders)
+                })
+                .collect::<Result<Vec<_>, _>>()
         })
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
     let post_process_duration = (Utc::now() - post_process_start).as_seconds_f64();
 
     Ok((
@@ -401,7 +437,7 @@ pub fn insert_games(
     conn: &mut PgConnection,
     taxa: &Taxa,
     ingest_id: i64,
-    games: Vec<GameForDb>,
+    games: &[GameForDb],
 ) -> QueryResult<Vec<i64>> {
     conn.transaction(|conn| {
         // TODO: When a batch fails, split it in half (recursively if necessary) and try again 
@@ -415,7 +451,7 @@ fn insert_games_internal<'e>(
     conn: &mut PgConnection,
     taxa: &Taxa,
     ingest_id: i64,
-    games: Vec<GameForDb>,
+    games: &[GameForDb],
 ) -> QueryResult<Vec<i64>> {
     use crate::data_schema::data::event_baserunners::dsl as baserunners_dsl;
     use crate::data_schema::data::event_fielders::dsl as fielders_dsl;
@@ -492,7 +528,7 @@ fn insert_games_internal<'e>(
     );
 
     // From now on, we don't need unfinished games
-    let games = iter::zip(&game_ids, &games)
+    let games = iter::zip(&game_ids, games)
         .flat_map(|(game_id, game)| match game {
             GameForDb::Incomplete { .. } => { None }
             GameForDb::Completed { game, .. } => { Some((game_id, game)) }
@@ -774,6 +810,7 @@ pub fn insert_timings(
             .events_for_game_timings
             .get_game_id_duration,
         db_fetch_for_check_get_events_duration: timings.events_for_game_timings.get_events_duration,
+        db_fetch_for_check_group_events_duration: timings.events_for_game_timings.group_events_duration,
         db_fetch_for_check_get_runners_duration: timings
             .events_for_game_timings
             .get_runners_duration,

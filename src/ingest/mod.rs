@@ -2,7 +2,7 @@ mod http;
 mod sim;
 mod chron;
 
-use crate::db::{CompletedGameForDb, GameForDb, RowToEventError, Taxa};
+use crate::db::{CompletedGameForDb, EventsForGamesError, GameForDb, RowToEventError, Taxa};
 use crate::ingest::sim::{Game, SimFatalError};
 use crate::{Db, db};
 use chrono::{DateTime, TimeZone, Utc};
@@ -102,6 +102,23 @@ pub enum IngestFatalError {
     
     #[error("Couldn't open HTTP cache database: {0}")]
     OpenCacheDbError(#[from] sled::Error),
+    
+    // TODO This should probably be handled internally to the ingest
+    #[error(transparent)]
+    RowToEventError(RowToEventError)
+}
+
+impl From<EventsForGamesError> for IngestFatalError {
+    fn from(value: EventsForGamesError) -> Self {
+        match value {
+            EventsForGamesError::DbError(err) => {
+                IngestFatalError::DbError(err)
+            }
+            EventsForGamesError::RowToEventError(err) => {
+                IngestFatalError::RowToEventError(err)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -862,10 +879,10 @@ async fn ingest_page_of_games<'t>(
     ingest_id: i64,
     page: ChronEntities<mmolb_parsing::Game>,
 ) -> Result<IngestStats, IngestFatalError> {
-    // These clones are here because rocket_sync_db_pools' derived 
+    // These clones are here because rocket_sync_db_pools' derived
     // run() function imposes a 'static lifetime on its callback, and
     // thus we can't express "these variables must live longer than
-    // this callback" to the type system. Cloning isn't the only 
+    // this callback" to the type system. Cloning isn't the only
     // solution (Arc would also work), but these objects are small
     // enough that cloning is a negligible-cost workaround to the
     // lifetime issue. They're also both frozen after launch, so
@@ -875,7 +892,7 @@ async fn ingest_page_of_games<'t>(
     //   out of config).
     let taxa = taxa.clone();
     let config = config.clone();
-    
+
     let stats = db.run(move |conn| {
         let raw_games = if !config.reimport_all_games {
             // Remove any games which are fully imported
@@ -948,14 +965,14 @@ async fn ingest_page_of_games<'t>(
             conn,
             &taxa,
             ingest_id,
-            games,
+            &games,
         )?;
-        
+
         info!("Chunk ingested");
-        
+
         // Immediately turn around and fetch all the games we just inserted,
         // so we can verify that they round-trip correctly.
-        // This step, and all the following verification steps, could be 
+        // This step, and all the following verification steps, could be
         // skipped. However, my profiling shows that it's negligible
         // cost so I haven't added the capability.
         let mmolb_game_ids = games.iter()
@@ -964,7 +981,7 @@ async fn ingest_page_of_games<'t>(
                 GameForDb::Completed { game, .. } => { Some(game.id) }
             })
             .collect_vec();
-        
+
         let (ingested_games, timings) = db::events_for_games(conn, &taxa, mmolb_game_ids)?;
         assert_eq!(total_games, ingested_games.len());
 
@@ -1048,7 +1065,7 @@ async fn ingest_page_of_games<'t>(
     //     game_data.season,
     //     game_data.day,
     // );
-    
+
     Ok(stats)
 }
 
