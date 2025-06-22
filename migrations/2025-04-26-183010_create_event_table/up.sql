@@ -165,6 +165,11 @@ create table data.events (
     count_strikes int not null,
     outs_before int not null,
     outs_after int not null,
+
+    home_score_before int not null,
+    home_score_after int not null,
+    away_score_before int not null,
+    away_score_after int not null,
     -- note: runs scored, outs on play, steal info, etc. are all computed from data.event_baserunners
 
     -- player info
