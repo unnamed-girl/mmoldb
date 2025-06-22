@@ -1,30 +1,28 @@
-// Philosophically, I would like this module to be decoupled from Rocket. But
-// Rocket does some magic to kinda-sorta merge diesel and diesel-async, so I'm
-// not sure that will be possible.
-
 mod taxa;
 mod to_db_format;
 mod taxa_macro;
 
-use std::collections::HashMap;
-use diesel::sql_types::*;
+// Reexports
+pub use to_db_format::RowToEventError;
 
+// Third-party imports
+use std::{iter, collections::HashMap};
+use diesel::{PgConnection, prelude::*, sql_types::*};
+use chrono::{DateTime, NaiveDateTime, Utc};
+use itertools::{Itertools, PeekingNext};
+use log::info;
+use mmolb_parsing::ParsedEventMessage;
+
+// First-party imports
 pub use crate::db::taxa::{
     Taxa, TaxaBase, TaxaBaseDescriptionFormat, TaxaBaseWithDescriptionFormat, TaxaEventType,
     TaxaFairBallType, TaxaFieldingErrorType, TaxaHitType, TaxaPitchType, TaxaPosition,
 };
-use std::iter;
 use crate::ingest::{EventDetail, IngestLog};
-use crate::models::{DbEvent, DbEventIngestLog, DbFielder, DbGame, DbRawEvent, DbRunner, Ingest, NewEventIngestLog, NewGame, NewGameIngestTimings, NewIngest, NewRawEvent};
-use chrono::{DateTime, NaiveDateTime, Utc};
-use diesel::dsl::count_distinct;
-use diesel::query_dsl::methods::OrderDsl;
-use itertools::{Itertools, PeekingNext};
-use log::info;
-use mmolb_parsing::ParsedEventMessage;
-use rocket_sync_db_pools::{diesel::PgConnection, diesel::prelude::*};
-use thiserror::Error;
-pub use to_db_format::RowToEventError;
+use crate::models::{
+    DbEvent, DbEventIngestLog, DbFielder, DbGame, DbRawEvent, DbRunner, Ingest, NewEventIngestLog, 
+    NewGame, NewGameIngestTimings, NewIngest, NewRawEvent,
+};
 
 pub fn ingest_count(conn: &mut PgConnection) -> QueryResult<i64> {
     use crate::info_schema::info::ingests::dsl;
@@ -52,7 +50,7 @@ pub fn game_with_issues_count(conn: &mut PgConnection) -> QueryResult<i64> {
 
     dsl::event_ingest_log
         .filter(dsl::log_level.lt(3)) // Selects warnings and higher
-        .select(count_distinct(dsl::game_id))
+        .select(diesel::dsl::count_distinct(dsl::game_id))
         .get_result(conn)
 }
 
@@ -68,14 +66,14 @@ pub fn latest_ingest_start_time(
         .optional()
 }
 
-pub fn last_completed_page(
+pub fn next_ingest_start_page(
     conn: &mut PgConnection,
 ) -> QueryResult<Option<String>> {
     use crate::info_schema::info::ingests::dsl::*;
 
     ingests
-        .filter(last_completed_page.is_not_null())
-        .select(last_completed_page)
+        .filter(start_next_ingest_at_page.is_not_null())
+        .select(start_next_ingest_at_page)
         .order_by(started_at.desc())
         .first(conn)
         .optional()
@@ -125,14 +123,14 @@ pub fn mark_ingest_finished(
     conn: &mut PgConnection,
     ingest_id: i64,
     at: DateTime<Utc>,
-    last_completed_page: Option<&str>,
+    start_next_ingest_at_page: Option<&str>,
 ) -> QueryResult<()> {
     use crate::info_schema::info::ingests::dsl;
 
     diesel::update(dsl::ingests.filter(dsl::id.eq(ingest_id)))
         .set((
             dsl::finished_at.eq(at.naive_utc()),
-            dsl::last_completed_page.eq(last_completed_page),
+            dsl::start_next_ingest_at_page.eq(start_next_ingest_at_page),
          ))
         .execute(conn)
         .map(|_| ())
@@ -443,9 +441,6 @@ pub fn insert_games(
     games: &[GameForDb],
 ) -> QueryResult<Vec<i64>> {
     conn.transaction(|conn| {
-        // TODO: When a batch fails, split it in half (recursively if necessary) and try again 
-        //   until it succeeds or the batch size is 1. Then return some indication of which inserts 
-        //   failed.
         insert_games_internal(conn, taxa, ingest_id, games)
     })
 }
@@ -689,7 +684,6 @@ pub fn insert_additional_ingest_logs(
     extra_ingest_logs: &[(i64, Vec<IngestLog>)],
 ) -> QueryResult<()> {
     use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
-    use crate::info_schema::info::raw_events::dsl as raw_events_dsl;
     
     let game_ids = extra_ingest_logs.iter()
         .map(|(game_id, _)| game_id)

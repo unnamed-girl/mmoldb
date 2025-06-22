@@ -1,26 +1,24 @@
 use chrono::{DateTime, Utc};
-use futures::{stream, Stream};
-use log::info;
-use reqwest_middleware::ClientWithMiddleware;
+use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ChronError {
     #[error("Error building Chron request: {0}")]
-    RequestBuild(reqwest::Error),
+    RequestBuildError(reqwest::Error),
 
     #[error("Error searching cache for games page: {0}")]
     CacheGetError(sled::Error),
 
     #[error("Error executing Chron request: {0}")]
-    RequestExecute(reqwest::Error),
+    RequestExecuteError(reqwest::Error),
     
     #[error("Error deserializing Chron response: {0}")]
-    RequestDeserialize(reqwest::Error),
+    RequestDeserializeError(reqwest::Error),
 
     #[error("Error encoding Chron response for cache: {0}")]
-    CacheSerialize(rmp_serde::encode::Error),
+    CacheSerializeError(rmp_serde::encode::Error),
 
     #[error("Error inserting games page into cache: {0}")]
     CachePutError(sled::Error),
@@ -72,6 +70,7 @@ impl Chron {
         cache_path: P,
         fetch_games_list_chunks: usize,
     ) -> Result<Self, sled::Error> {
+        info!("Opening cache db. This can be very slow, which is a known issue.");
         let cache_path = cache_path.as_ref();
         let cache = sled::open(cache_path)?;
         if cache.was_recovered() {
@@ -110,7 +109,7 @@ impl Chron {
         let versions = match rmp_serde::from_slice(&cache_entry) {
             Ok(versions) => versions,
             Err(err) => {
-                info!("Cache entry could not be decoded: {:?}. Removing it from the cache.", err);
+                warn!("Cache entry could not be decoded: {:?}. Removing it from the cache.", err);
                 self.cache.remove(key).map_err(ChronError::CacheRemoveError)?;
                 return Ok(None);
             }
@@ -124,7 +123,7 @@ impl Chron {
     // Must take owned `page` for lifetime reasons
     pub async fn games_page(&self, page: Option<String>) -> Result<ChronEntities<mmolb_parsing::Game>, ChronError> {
         let request = self.entities_request("game", &self.fetch_games_list_chunks_string, page.as_deref()).build()
-            .map_err(ChronError::RequestBuild)?;
+            .map_err(ChronError::RequestBuildError)?;
         let url = request.url().to_string();
         let result = if let Some(cache_entry) = self.get_cached(&url)? {
             info!("Returning page {page:?} from cache");
@@ -133,16 +132,24 @@ impl Chron {
             // Cache miss -- request from chron
             info!("Requesting page {page:?} from chron");
             let response = self.client.execute(request).await
-                .map_err(ChronError::RequestExecute)?;
+                .map_err(ChronError::RequestExecuteError)?;
             let entities: ChronEntities<mmolb_parsing::Game> = response.json()
                 .await
-                .map_err(ChronError::RequestDeserialize)?;
+                .map_err(ChronError::RequestDeserializeError)?;
+            
+            let has_incomplete_game = entities.items.iter()
+                .any(|item| item.data.state != "Complete");
+            if has_incomplete_game {
+                info!("Not caching page {page:?} because it contains at least one incomplete game");
+                return Ok(entities);                
+            }
 
+            // Otherwise, save to cache
             let cache_entry = VersionedCacheEntry::V0(entities);
 
             // Save to cache
             let entities_bin = rmp_serde::to_vec(&cache_entry)
-                .map_err(ChronError::CacheSerialize)?;
+                .map_err(ChronError::CacheSerializeError)?;
             self.cache.insert(url.as_str(), entities_bin.as_slice()).map_err(ChronError::CachePutError)?;
 
             // Immediately fetch again from cache to verify everything is working

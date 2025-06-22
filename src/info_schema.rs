@@ -42,7 +42,7 @@ pub mod info {
             started_at -> Timestamp,
             finished_at -> Nullable<Timestamp>,
             aborted_at -> Nullable<Timestamp>,
-            last_completed_page -> Nullable<Text>,
+            start_next_ingest_at_page -> Nullable<Text>,
         }
     }
 

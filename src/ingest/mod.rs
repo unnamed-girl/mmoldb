@@ -1,4 +1,3 @@
-mod http;
 mod sim;
 mod chron;
 
@@ -67,23 +66,11 @@ struct IngestConfig {
 
 #[derive(Debug, Error)]
 pub enum IngestSetupError {
-    // #[error("Failed to get a database connection for ingest setup due to {0}")]
-    // DbPoolSetupError(#[from] rocket_sync_db_pools::diesel::pooled_connection::deadpool::PoolError),
-
     #[error("Database error during ingest setup: {0}")]
     DbSetupError(#[from] diesel::result::Error),
 
     #[error("Ingest task transitioned away from NotStarted before liftoff")]
     LeftNotStartedTooEarly,
-}
-
-#[derive(Debug, Error)]
-pub enum FetchGamesListError {
-    #[error(transparent)]
-    Network(#[from] reqwest_middleware::Error),
-
-    #[error(transparent)]
-    Deserialize(#[from] reqwest::Error),
 }
 
 #[derive(Debug, Error)]
@@ -93,36 +80,18 @@ pub enum IngestFatalError {
 
     #[error("Ingest task transitioned to NotStarted state from some other state")]
     ReenteredNotStarted,
-
-    #[error(transparent)]
-    DbError(#[from] diesel::result::Error),
-
-    #[error(transparent)]
-    FetchGameError(#[from] FetchGameError),
     
     #[error("Couldn't open HTTP cache database: {0}")]
     OpenCacheDbError(#[from] sled::Error),
-}
 
-#[derive(Debug, Error)]
-pub enum IngestDbError {
-    // #[error(transparent)]
-    // PoolError(#[from] rocket_db_pools::diesel::pooled_connection::deadpool::PoolError),
+    #[error(transparent)]
+    ChronError(#[from] ChronError),
 
     #[error(transparent)]
     DbError(#[from] diesel::result::Error),
-}
-
-#[derive(Debug, Error)]
-pub enum GameIngestFatalError {
-    // #[error(transparent)]
-    // PoolError(#[from] rocket_db_pools::diesel::pooled_connection::deadpool::PoolError),
-
-    #[error(transparent)]
-    DbError(#[from] diesel::result::Error),
-
-    #[error(transparent)]
-    SimFatalError(#[from] SimFatalError),
+    
+    #[error("User requested early termination")]
+    ShutdownRequested,
 }
 
 // This is the publicly visible version of IngestTaskState
@@ -331,8 +300,6 @@ async fn launch_ingest_task(
     task: IngestTask,
     shutdown: Shutdown,
 ) -> Result<JoinHandle<()>, IngestSetupError> {
-    let client = http::get_caching_http_client();
-
     let (taxa, previous_ingest_start_time) = db.run(move |conn| {
         let taxa = Taxa::new(conn)?;
 
@@ -349,7 +316,6 @@ async fn launch_ingest_task(
     Ok(tokio::spawn(ingest_task_runner(
         db,
         taxa,
-        client,
         config,
         task,
         previous_ingest_start_time,
@@ -360,7 +326,6 @@ async fn launch_ingest_task(
 async fn ingest_task_runner(
     db: Db,
     taxa: Taxa,
-    client: ClientWithMiddleware,
     config: IngestConfig,
     task: IngestTask,
     mut previous_ingest_start_time: Option<DateTime<Utc>>,
@@ -464,7 +429,6 @@ async fn ingest_task_runner(
         let ingest_result = do_ingest(
             &db,
             &taxa,
-            &client,
             &config,
             &mut shutdown,
             ingest_start,
@@ -473,9 +437,9 @@ async fn ingest_task_runner(
 
         db.run(move |conn| {
             match ingest_result {
-                Ok((ingest_id, last_completed_page)) => {
+                Ok((ingest_id, start_next_ingest_at_page)) => {
                     let ingest_end = Utc::now();
-                    match db::mark_ingest_finished(conn, ingest_id, ingest_end, last_completed_page.as_deref()) {
+                    match db::mark_ingest_finished(conn, ingest_id, ingest_end, start_next_ingest_at_page.as_deref()) {
                         Ok(()) => {
                             info!(
                                 "Marked ingest {ingest_id} finished {:#}.",
@@ -564,79 +528,9 @@ async fn ingest_task_runner(
     }
 }
 
-#[derive(Debug, Error)]
-pub enum FetchGameFromCacheError {
-    #[error("Only-if-cached request failed with message {0}")]
-    RequestError(reqwest_middleware::Error),
-
-    #[error("Only-if-cached request returned non-success status code {0}")]
-    NonSuccessStatusCode(reqwest::Error),
-
-    #[error("Only-if-cached request failed to json decode with error {0}")]
-    FailedJsonDecode(reqwest::Error),
-}
-
-async fn fetch_game_from_cache(
-    client: &ClientWithMiddleware,
-    url: &str,
-) -> Result<mmolb_parsing::Game, FetchGameFromCacheError> {
-    client
-        .get(url)
-        .with_extension(http_cache_reqwest::CacheMode::OnlyIfCached)
-        .send()
-        .await
-        .map_err(FetchGameFromCacheError::RequestError)?
-        .error_for_status()
-        .map_err(FetchGameFromCacheError::NonSuccessStatusCode)?
-        .json()
-        .await
-        .map_err(FetchGameFromCacheError::FailedJsonDecode)
-}
-
-#[derive(Debug, Error)]
-enum FetchGamePartialError {
-    #[error("Uncached request failed with message {0}")]
-    RequestError(reqwest_middleware::Error),
-
-    #[error("Uncached request returned non-success status code {0}")]
-    NonSuccessStatusCode(reqwest::Error),
-
-    #[error("Uncached request failed to json decode with error {0}")]
-    FailedJsonDecode(reqwest::Error),
-}
-
-#[derive(Debug, Error)]
-pub enum FetchGameError {
-    #[error("Uncached request failed with message {0} after {1}")]
-    RequestError(reqwest_middleware::Error, FetchGameFromCacheError),
-
-    #[error("Uncached request returned non-success status code {0} after {1}")]
-    NonSuccessStatusCode(reqwest::Error, FetchGameFromCacheError),
-
-    #[error("Uncached request failed to json decode with error {0} after {1}")]
-    FailedJsonDecode(reqwest::Error, FetchGameFromCacheError),
-}
-
-impl FetchGameError {
-    fn from_partial(partial: FetchGamePartialError, cache_err: FetchGameFromCacheError) -> Self {
-        match partial {
-            FetchGamePartialError::RequestError(err) => {
-                FetchGameError::RequestError(err, cache_err)
-            }
-            FetchGamePartialError::NonSuccessStatusCode(err) => {
-                FetchGameError::NonSuccessStatusCode(err, cache_err)
-            }
-            FetchGamePartialError::FailedJsonDecode(err) => {
-                FetchGameError::FailedJsonDecode(err, cache_err)
-            }
-        }
-    }
-}
-
 async fn do_ingest(
     db: &Db,
     taxa: &Taxa,
-    client: &ClientWithMiddleware,
     config: &IngestConfig,
     shutdown: &mut Shutdown,
     ingest_start: DateTime<Utc>,
@@ -657,9 +551,7 @@ async fn do_ingest(
         let start_page = if reimport_all_games {
             None
         } else {
-            // TODO I think I'm storing the wrong page (but it'll just cause one redundant
-            //   request, and not lose data, so it's not high priority to fix)
-            db::last_completed_page(conn)
+            db::next_ingest_start_page(conn)
                 .map_err(|e| (e.into(), None))?
         };
 
@@ -678,12 +570,10 @@ async fn do_ingest(
     do_ingest_internal(
         db,
         taxa,
-        client,
         config,
         &chron,
         shutdown,
         ingest_id,
-        ingest_start,
         start_page,
     )
     .await
@@ -715,19 +605,24 @@ impl IngestStats {
 async fn do_ingest_internal(
     pool: &Db,
     taxa: &Taxa,
-    client: &ClientWithMiddleware,
     config: &IngestConfig,
     chron: &chron::Chron,
     shutdown: &mut Shutdown,
     ingest_id: i64,
-    ingest_start: DateTime<Utc>,
     start_page: Option<String>,
 ) -> Result<(i64, Option<String>), IngestFatalError> {
     info!("Recorded ingest start in database. Starting ingest...");
 
-    // TODO Update last_completed_page
-    let mut last_completed_page = start_page.clone();
-
+    // Track the page the next ingest should resume at. 
+    let mut next_ingest_start_page = start_page.clone();
+    // We have to stop updating start_next_ingest_at_page as soon as we
+    // encounter any incomplete game so we don't skip it when it 
+    // finishes.
+    let mut freeze_next_index_start_page = false;
+    
+    // For logging purposes
+    let mut pages_finished_before_freeze = 0;
+    let mut pages_finished_after_freeze = 0;
     let mut stats = IngestStats::new();
 
     info!("Beginning ingest loop");
@@ -736,52 +631,61 @@ async fn do_ingest_internal(
     let mut next_page_fut = Some(chron.games_page(start_page));
 
     loop {
-        let page = match (page_ingest_fut.take(), next_page_fut.take()) {
+        let (ingest_result, next_page) = match (page_ingest_fut.take(), next_page_fut.take()) {
             (None, None) => {
-                todo!("I think this is an error state");
+                (None, None)
             }
             (None, Some(next_page_fut)) => {
                 // This is the first iteration, so just wait for the page to be fetched
                 tokio::select! {
-                    page = next_page_fut => { page }
-                    // TODO Ensure ingest is marked as aborted
-                    _ = &mut *shutdown => { break; }
+                    next_page = next_page_fut => { (None, Some(next_page)) }
+                    _ = &mut *shutdown => { return Err(IngestFatalError::ShutdownRequested) }
                 }
             }
             (Some(page_ingest_fut), Some(next_page_fut)) => {
                 // This is a middle iteration, we need to wait for the previous page to
                 // ingest while simultaneously waiting for the next page to load
-                // This is the first iteration, so just wait for the page to be fetched
                 tokio::select! {
-                    (page_stats, page) = future::join(page_ingest_fut, next_page_fut) => {
-                        stats.add(&page_stats?);
-                        page
+                    (ingest_result, next_page) = future::join(page_ingest_fut, next_page_fut) => {
+                        (Some(ingest_result), Some(next_page))
                     }
-                    // TODO Ensure ingest is marked as aborted
-                    _ = &mut *shutdown => { break; }
+                    _ = &mut *shutdown => { return Err(IngestFatalError::ShutdownRequested) }
                 }
             }
             (Some(page_ingest_fut), None) => {
                 // This is the last iteration, we just have to wait for the last
                 // ingest to finish
                 tokio::select! {
-                    page_stats = page_ingest_fut => {
-                        stats.add(&page_stats?);
-                        break;
+                    ingest_result = page_ingest_fut => {
+                        (Some(ingest_result), None)
                     }
-                    // TODO Ensure ingest is marked as aborted
-                    _ = &mut *shutdown => { break; }
+                    _ = &mut *shutdown => { return Err(IngestFatalError::ShutdownRequested) }
                 }
             }
         };
-
-        match page {
-            Err(network_error) => {
-                // TODO Ensure ingest is marked as aborted
-                warn!("Stopping ingest early because of network error: {network_error}");
-                break;
+        
+        if let Some(ingest_result) = ingest_result {
+            let (page_stats, page_token) = ingest_result?;
+            stats.add(&page_stats);
+            freeze_next_index_start_page = freeze_next_index_start_page || stats.num_incomplete_games_skipped > 0;
+            if !freeze_next_index_start_page {
+                // Note: although next_ingest_start_page is an Option, its None has a different 
+                // meaning than page_token's None so it's incorrect to just assign page_token to it.
+                if let Some(token) = page_token {
+                    next_ingest_start_page = Some(token);
+                }
+                pages_finished_before_freeze += 1;
+            } else {
+                pages_finished_after_freeze += 1;
             }
-            Ok(page) => {
+        }
+
+        match next_page {
+            None => break, // Ingest is finished!
+            Some(Err(chron_err)) => {
+                return Err(IngestFatalError::ChronError(chron_err));
+            }
+            Some(Ok(page)) => {
                 next_page_fut = Some(chron.games_page(page.next_page.clone()));
                 page_ingest_fut = Some(ingest_page_of_games(pool, taxa, config, ingest_id, page));
             }
@@ -791,8 +695,15 @@ async fn do_ingest_internal(
     info!("{} games ingested", stats.num_games_imported);
     info!("{} incomplete games skipped", stats.num_incomplete_games_skipped);
     info!("{} games already ingested", stats.num_already_ingested_games_skipped);
+    info!("{} games already ingested", stats.num_already_ingested_games_skipped);
+    info!(
+        "{} pages of games completed this time. \
+        {} pages will be re-ingested next time to catch incomplete games.",
+        pages_finished_before_freeze,
+        pages_finished_after_freeze,
+    );
 
-    Ok((ingest_id, last_completed_page))
+    Ok((ingest_id, next_ingest_start_page))
 }
 
 fn prepare_completed_game_for_db(
@@ -862,7 +773,7 @@ async fn ingest_page_of_games<'t>(
     config: &IngestConfig,
     ingest_id: i64,
     page: ChronEntities<mmolb_parsing::Game>,
-) -> Result<IngestStats, IngestFatalError> {
+) -> Result<(IngestStats, Option<String>), IngestFatalError> {
     // These clones are here because rocket_sync_db_pools' derived
     // run() function imposes a 'static lifetime on its callback, and
     // thus we can't express "these variables must live longer than
@@ -1029,7 +940,7 @@ async fn ingest_page_of_games<'t>(
         })
     }).await?;
 
-    Ok(stats)
+    Ok((stats, page.next_page))
 }
 
 

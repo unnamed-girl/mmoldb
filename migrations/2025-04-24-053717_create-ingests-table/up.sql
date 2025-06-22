@@ -9,9 +9,9 @@ create table info.ingests (
     -- crashed in a way that prevented the database from being updated
     aborted_at timestamp without time zone,
 
-    -- The page token for the latest Chronicler page that we've fully
-    -- ingested. This is the token to use for the first API call in the
-    -- next ingest. Null indicates that we didn't make it through the
-    -- first page.
-    last_completed_page text
+    -- The next_page token that came with the latest Chronicler page that
+    -- we've fully ingested. This is the token to use for the first API
+    -- call in the next ingest. Null indicates that we didn't make it
+    -- through the first page.
+    start_next_ingest_at_page text
 )

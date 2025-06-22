@@ -15,7 +15,7 @@ pub struct Ingest {
     pub started_at: NaiveDateTime,
     pub finished_at: Option<NaiveDateTime>,
     pub aborted_at: Option<NaiveDateTime>,
-    pub last_completed_page: Option<String>,
+    pub start_next_ingest_at_page: Option<String>,
 }
 
 #[derive(Debug, Insertable)]
