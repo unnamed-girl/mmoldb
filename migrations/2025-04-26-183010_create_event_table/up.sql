@@ -72,9 +72,12 @@ create table data.games (
     away_team_emoji text not null,
     away_team_name text not null,
     away_team_id text not null,
+    final_away_score int not null,
+
     home_team_emoji text not null,
     home_team_name text not null,
-    home_team_id text not null
+    home_team_id text not null,
+    final_home_score int not null
 );
 
 create index games_ingest_id_index on data.games (ingest);

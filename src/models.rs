@@ -28,9 +28,12 @@ pub struct NewGame<'a> {
     pub away_team_emoji: &'a str,
     pub away_team_name: &'a str,
     pub away_team_id: &'a str,
+    pub final_away_score: i32,
+
     pub home_team_emoji: &'a str,
     pub home_team_name: &'a str,
     pub home_team_id: &'a str,
+    pub final_home_score: i32,
 }
 
 #[derive(Identifiable, Queryable, Selectable, Associations)]
@@ -46,9 +49,12 @@ pub struct DbGame {
     pub away_team_emoji: String,
     pub away_team_name: String,
     pub away_team_id: String,
+    pub final_away_score: i32,
+
     pub home_team_emoji: String,
     pub home_team_name: String,
     pub home_team_id: String,
+    pub final_home_score: i32,
 }
 
 #[derive(Insertable)]

@@ -801,6 +801,25 @@ struct RunnerUpdate<'g, 'a> {
     pub runner_advances_may_include_batter: Option<&'g str>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct MinimalGameState {
+    pub home_score: u8,
+    pub away_score: u8,
+    pub inning_number: u8,
+    pub inning_half: TopBottom,
+}
+
+impl From<&Game<'_>> for MinimalGameState {
+    fn from(value: &Game<'_>) -> Self {
+        MinimalGameState {
+            home_score: value.state.home_score,
+            away_score: value.state.away_score,
+            inning_number: value.state.inning_number,
+            inning_half: value.state.inning_half
+        }
+    }
+}
+
 impl<'g> Game<'g> {
     pub fn new<'a, IterT>(
         game_info: &'g GameInfo,

@@ -68,9 +68,11 @@ pub mod data {
             away_team_emoji -> Text,
             away_team_name -> Text,
             away_team_id -> Text,
+            final_away_score -> Int4,
             home_team_emoji -> Text,
             home_team_name -> Text,
             home_team_id -> Text,
+            final_home_score -> Int4,
         }
     }
 
