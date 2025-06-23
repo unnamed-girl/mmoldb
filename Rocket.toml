@@ -7,9 +7,7 @@ pool_size = 20
 timeout = 5
 
 [debug]
-#log_level = "normal"
 start_ingest_every_launch = true
-#reimport_all_games = true
 
 [debug.databases.mmoldb]
 url = "NOTE: This URL will be overridden by one computed from postgres' environment variables"
