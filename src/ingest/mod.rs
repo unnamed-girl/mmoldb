@@ -558,13 +558,15 @@ impl IngestStats {
     }
 }
 
-async fn games_page_wrapper(
+async fn fetch_games_page(
     chron: &chron::Chron,
     page: Option<String>,
     index: usize,
-) -> Result<(ChronEntities<mmolb_parsing::Game>, usize), ChronError> {
+) -> Result<(ChronEntities<mmolb_parsing::Game>, usize, f64), ChronError> {
+    let fetch_start = Utc::now();
     let page = chron.games_page(page.as_deref()).await?;
-    Ok((page, index))
+    let fetch_duration = (Utc::now() - fetch_start).as_seconds_f64();
+    Ok((page, index, fetch_duration))
 }
 
 async fn do_ingest_internal(
@@ -593,7 +595,7 @@ async fn do_ingest_internal(
     info!("Beginning ingest loop");
 
     let mut page_ingest_fut = None;
-    let mut next_page_fut = Some(games_page_wrapper(chron, start_page, 0));
+    let mut next_page_fut = Some(fetch_games_page(chron, start_page, 0));
 
     loop {
         let (ingest_result, next_page) = match (page_ingest_fut.take(), next_page_fut.take()) {
@@ -650,9 +652,9 @@ async fn do_ingest_internal(
             Some(Err(chron_err)) => {
                 return Err(IngestFatalError::ChronError(chron_err));
             }
-            Some(Ok((page, index))) => {
-                next_page_fut = Some(games_page_wrapper(chron, page.next_page.clone(), index + 1));
-                page_ingest_fut = Some(ingest_page_of_games(pool, taxa, config, ingest_id, index, page));
+            Some(Ok((page, index, fetch_duration))) => {
+                next_page_fut = Some(fetch_games_page(chron, page.next_page.clone(), index + 1));
+                page_ingest_fut = Some(ingest_page_of_games(pool, taxa, config, ingest_id, index, fetch_duration, page));
             }
         }
     }
@@ -738,6 +740,7 @@ async fn ingest_page_of_games<'t>(
     config: &IngestConfig,
     ingest_id: i64,
     page_index: usize,
+    fetch_duration: f64,
     page: ChronEntities<mmolb_parsing::Game>,
 ) -> Result<(IngestStats, Option<String>), IngestFatalError> {
     // These clones are here because rocket_sync_db_pools' derived
@@ -755,7 +758,7 @@ async fn ingest_page_of_games<'t>(
     let config = config.clone();
 
     let stats = db.run(move |conn| {
-        let start = Utc::now();
+        let save_start = Utc::now();
         let filter_finished_games_start = Utc::now();
         let raw_games = if !config.reimport_all_games {
             // Remove any games which are fully imported
@@ -902,9 +905,10 @@ async fn ingest_page_of_games<'t>(
             db::insert_additional_ingest_logs(conn, &additional_logs)?;
         }
         let insert_extra_logs_duration = (Utc::now() - insert_extra_logs_start).as_seconds_f64();
-        let total_duration = (Utc::now() - start).as_seconds_f64();
+        let save_duration = (Utc::now() - save_start).as_seconds_f64();
         
         db::insert_timings(conn, ingest_id, page_index, Timings {
+            fetch_duration,
             filter_finished_games_duration,
             parse_and_sim_duration,
             db_insert_duration,
@@ -912,7 +916,7 @@ async fn ingest_page_of_games<'t>(
             events_for_game_timings,
             check_round_trip_duration,
             insert_extra_logs_duration,
-            total_duration,
+            save_duration,
         })?;
 
         Ok::<_, IngestFatalError>(IngestStats {

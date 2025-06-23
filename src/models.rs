@@ -162,6 +162,9 @@ pub struct DbEventIngestLog {
 pub struct NewGameIngestTimings {
     pub ingest_id: i64,
     pub index: i32,
+
+    pub fetch_duration: f64,
+
     pub filter_finished_games_duration: f64,
     pub parse_and_sim_duration: f64,
     pub db_insert_duration: f64,
@@ -176,7 +179,7 @@ pub struct NewGameIngestTimings {
     pub db_fetch_for_check_post_process_duration: f64,
     pub check_round_trip_duration: f64,
     pub insert_extra_logs_duration: f64,
-    pub total_duration: f64,
+    pub save_duration: f64,
 }
 
 #[derive(Identifiable, Queryable, Selectable, Associations)]
@@ -187,6 +190,7 @@ pub struct DbGameIngestTimings {
     pub id: i64,
     pub ingest_id: i64,
     pub index: i32,
+    pub fetch_duration: f64,
     pub filter_finished_games_duration: f64,
     pub parse_and_sim_duration: f64,
     pub db_insert_duration: f64,
@@ -201,7 +205,7 @@ pub struct DbGameIngestTimings {
     pub db_fetch_for_check_duration: f64,
     pub check_round_trip_duration: f64,
     pub insert_extra_logs_duration: f64,
-    pub total_duration: f64,
+    pub save_duration: f64,
 }
 
 #[derive(Insertable)]

@@ -17,6 +17,7 @@ pub mod info {
             id -> Int8,
             ingest_id -> Int8,
             index -> Int4,
+            fetch_duration -> Float8,
             filter_finished_games_duration -> Float8,
             parse_and_sim_duration -> Float8,
             db_insert_duration -> Float8,
@@ -31,7 +32,7 @@ pub mod info {
             db_fetch_for_check_post_process_duration -> Float8,
             check_round_trip_duration -> Float8,
             insert_extra_logs_duration -> Float8,
-            total_duration -> Float8,
+            save_duration -> Float8,
         }
     }
 

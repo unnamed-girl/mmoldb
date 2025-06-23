@@ -114,6 +114,10 @@ create table info.ingest_timings (
     ingest_id bigint references info.ingests on delete cascade not null ,
     index int not null,
 
+    -- Note: The next page of games is fetched while the previous one 
+    -- is being saved, so fetch_duration overlaps with save_duration
+    fetch_duration float8 not null,
+    
     filter_finished_games_duration float8 not null,
     parse_and_sim_duration float8 not null,
     db_insert_duration float8 not null,
@@ -128,7 +132,7 @@ create table info.ingest_timings (
     db_fetch_for_check_post_process_duration float8 not null,
     check_round_trip_duration float8 not null,
     insert_extra_logs_duration float8 not null,
-    total_duration float8 not null -- overlaps everything
+    save_duration float8 not null -- overlaps everything but fetch_duration
 );
 
 -- `on delete cascade` is very slow without the appropriate index

@@ -665,7 +665,7 @@ pub fn insert_additional_ingest_logs(
     extra_ingest_logs: &[(i64, Vec<IngestLog>)],
 ) -> QueryResult<()> {
     use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
-    
+
     let game_ids = extra_ingest_logs.iter()
         .map(|(game_id, _)| game_id)
         .collect_vec();
@@ -767,6 +767,7 @@ pub fn game_and_raw_events(
 }
 
 pub struct Timings {
+    pub fetch_duration: f64,
     pub filter_finished_games_duration: f64,
     pub parse_and_sim_duration: f64,
     pub db_insert_duration: f64,
@@ -774,7 +775,7 @@ pub struct Timings {
     pub events_for_game_timings: EventsForGameTimings,
     pub check_round_trip_duration: f64,
     pub insert_extra_logs_duration: f64,
-    pub total_duration: f64,
+    pub save_duration: f64,
 }
 
 pub fn insert_timings(
@@ -786,6 +787,7 @@ pub fn insert_timings(
     NewGameIngestTimings {
         ingest_id,
         index: index as i32,
+        fetch_duration: timings.fetch_duration,
         filter_finished_games_duration: timings.filter_finished_games_duration,
         parse_and_sim_duration: timings.parse_and_sim_duration,
         db_fetch_for_check_get_game_id_duration: timings
@@ -812,7 +814,7 @@ pub fn insert_timings(
         db_fetch_for_check_duration: timings.db_fetch_for_check_duration,
         check_round_trip_duration: timings.check_round_trip_duration,
         insert_extra_logs_duration: timings.insert_extra_logs_duration,
-        total_duration: timings.total_duration,
+        save_duration: timings.save_duration,
     }
     .insert_into(crate::info_schema::info::ingest_timings::dsl::ingest_timings)
     .execute(conn)
