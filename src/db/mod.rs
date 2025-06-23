@@ -450,11 +450,9 @@ fn insert_games_internal<'e>(
         })
         .collect_vec();
 
-    info!("Pruning any existing records for {} games", game_mmolb_ids.len());
     let n_deleted_games = diesel::delete(games_dsl::games)
         .filter(games_dsl::mmolb_game_id.eq_any(game_mmolb_ids))
         .execute(conn)?;
-    info!("Deleted {} games that will be replaced", n_deleted_games);
 
     let new_games = games.iter()
         .map(|game| {
@@ -494,12 +492,10 @@ fn insert_games_internal<'e>(
         .collect_vec();
 
     let n_games_to_insert = new_games.len();
-    info!("Trying to insert {n_games_to_insert} games");
     let game_ids = diesel::insert_into(games_dsl::games)
         .values(&new_games)
         .returning(games_dsl::id)
         .get_results::<i64>(conn)?;
-    info!("Inserted {} games", game_ids.len());
 
     log_only_assert!(
         n_games_to_insert == game_ids.len(),
@@ -530,7 +526,6 @@ fn insert_games_internal<'e>(
         .collect::<Vec<_>>();
 
     let n_raw_events_to_insert = new_raw_events.len();
-    info!("Trying to insert {n_raw_events_to_insert} raw events");
     let n_raw_events_inserted = diesel::copy_from(raw_events_dsl::raw_events)
         .from_insertable(&new_raw_events)
         .execute(conn)?;
@@ -563,7 +558,6 @@ fn insert_games_internal<'e>(
         .collect_vec();
 
     let n_logs_to_insert = new_logs.len();
-    info!("Trying to insert {n_logs_to_insert} logs");
     let n_logs_inserted = diesel::copy_from(event_ingest_log_dsl::event_ingest_log)
         .from_insertable(&new_logs)
         .execute(conn)?;
@@ -582,7 +576,6 @@ fn insert_games_internal<'e>(
         .collect();
 
     let n_events_to_insert = new_events.len();
-    info!("Trying to insert {n_events_to_insert} events");
     let n_events_inserted = diesel::copy_from(events_dsl::events)
         .from_insertable(&new_events)
         .execute(conn)?;
@@ -623,7 +616,6 @@ fn insert_games_internal<'e>(
         .collect_vec();
 
     let n_baserunners_to_insert = new_baserunners.len();
-    info!("Trying to insert {n_baserunners_to_insert} baserunners");
     let n_baserunners_inserted = diesel::copy_from(baserunners_dsl::event_baserunners)
         .from_insertable(&new_baserunners)
         .execute(conn)?;
@@ -647,7 +639,6 @@ fn insert_games_internal<'e>(
         .collect_vec();
 
     let n_fielders_to_insert = new_fielders.len();
-    info!("Trying to insert {n_fielders_to_insert} fielders");
     let n_fielders_inserted = diesel::copy_from(fielders_dsl::event_fielders)
         .from_insertable(&new_fielders)
         .execute(conn)?;

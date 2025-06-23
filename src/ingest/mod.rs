@@ -36,11 +36,7 @@ fn default_ingest_period() -> u64 {
 }
 
 fn default_page_size() -> usize {
-    // Chron is currently limited to a maximum page size of 100, but
-    // it might be raised soon. If we're asking for a page size bigger
-    // than 100 when that happens, the responses will change without us
-    // changing the URL and we'll have stale pages in the cache.
-    100
+    1000
 }
 
 fn default_ingest_parallelism() -> usize {
@@ -410,14 +406,15 @@ async fn ingest_task_runner(
             }
         }
 
-        let ingest_result = do_ingest(
-            pool.clone(),
-            &taxa,
-            &config,
-            &mut shutdown,
-            ingest_start,
-        )
-        .await;
+        let ingest_result = tokio::select! {
+            ingest_result = do_ingest(pool.clone(), &taxa, &config, ingest_start) => {
+                ingest_result
+            },
+            _ = &mut shutdown => {
+                info!("Graceful shutdown during ingest");
+                return;
+            }
+        };
 
         let Some(conn) = pool.get().await else {
             let mut task_state = task.state.write().await;
@@ -524,7 +521,6 @@ async fn do_ingest(
     pool: ConnectionPool<Db, PgConnection>,
     taxa: &Taxa,
     config: &IngestConfig,
-    shutdown: &mut Shutdown,
     ingest_start: DateTime<Utc>,
 ) -> Result<(i64, Option<String>), (IngestFatalError, Option<i64>)> {
     info!("Ingest at {ingest_start} starting");
@@ -567,7 +563,6 @@ async fn do_ingest(
         taxa,
         config,
         &chron,
-        shutdown,
         ingest_id,
         start_page,
     )
@@ -576,7 +571,8 @@ async fn do_ingest(
 }
 
 struct IngestStats {
-    pub num_incomplete_games_skipped: usize,
+    pub num_ongoing_games_skipped: usize,
+    pub num_terminal_incomplete_games_skipped: usize,
     pub num_already_ingested_games_skipped: usize,
     pub num_games_imported: usize,
 }
@@ -584,14 +580,16 @@ struct IngestStats {
 impl IngestStats {
     pub fn new() -> Self {
         Self {
-            num_incomplete_games_skipped: 0,
+            num_ongoing_games_skipped: 0,
+            num_terminal_incomplete_games_skipped: 0,
             num_already_ingested_games_skipped: 0,
             num_games_imported: 0,
         }
     }
 
     pub fn add(&mut self, other: &IngestStats) {
-        self.num_incomplete_games_skipped += other.num_incomplete_games_skipped;
+        self.num_ongoing_games_skipped += other.num_ongoing_games_skipped;
+        self.num_terminal_incomplete_games_skipped += other.num_terminal_incomplete_games_skipped;
         self.num_already_ingested_games_skipped += other.num_already_ingested_games_skipped;
         self.num_games_imported += other.num_games_imported;
     }
@@ -613,7 +611,6 @@ async fn do_ingest_internal(
     taxa: &Taxa,
     config: &IngestConfig,
     chron: &chron::Chron,
-    shutdown: &mut Shutdown,
     ingest_id: i64,
     start_page: Option<String>,
 ) -> Result<(i64, Option<String>), IngestFatalError> {
@@ -630,11 +627,11 @@ async fn do_ingest_internal(
     let mut pages_finished_before_freeze = 0;
     let mut pages_finished_after_freeze = 0;
     let mut stats = IngestStats::new();
-    
+
     // TODO Encapsulate this better
     let mut finish_ingest_page = |page_stats, page_token| {
         stats.add(&page_stats);
-        freeze_next_index_start_page = freeze_next_index_start_page || stats.num_incomplete_games_skipped > 0;
+        freeze_next_index_start_page = freeze_next_index_start_page || stats.num_ongoing_games_skipped > 0;
         if !freeze_next_index_start_page {
             // Note: although next_ingest_start_page is an Option, its None has a different
             // meaning than page_token's None so it's incorrect to just assign page_token to it.
@@ -646,8 +643,6 @@ async fn do_ingest_internal(
             pages_finished_after_freeze += 1;
         }
     };
-
-    info!("Beginning ingest loop");
 
     let mut ingests_in_progress = VecDeque::new();
     let mut next_page_fut = Some(fetch_games_page(chron, start_page, 0));
@@ -682,8 +677,8 @@ async fn do_ingest_internal(
     }
 
     info!("{} games ingested", stats.num_games_imported);
-    info!("{} incomplete games skipped", stats.num_incomplete_games_skipped);
-    info!("{} games already ingested", stats.num_already_ingested_games_skipped);
+    info!("{} ongoing games skipped", stats.num_ongoing_games_skipped);
+    info!("{} terminal incomplete (bugged) games skipped", stats.num_terminal_incomplete_games_skipped);
     info!("{} games already ingested", stats.num_already_ingested_games_skipped);
     info!(
         "{} pages of games completed this time. \
@@ -773,6 +768,7 @@ async fn ingest_page_of_games<'t>(
     let stats = conn.run(move |conn| {
         let save_start = Utc::now();
         let filter_finished_games_start = Utc::now();
+        let num_items = page.items.len();
         let raw_games = if !config.reimport_all_games {
             // Remove any games which are fully imported
             let mut is_finished = db::is_finished(conn, page.items.iter().map(|e| e.entity_id.as_str()).collect())?
@@ -799,7 +795,6 @@ async fn ingest_page_of_games<'t>(
         };
         let filter_finished_games_duration = (Utc::now() - filter_finished_games_start).as_seconds_f64();
 
-        info!("{} raw games", raw_games.len());
         let parse_and_sim_start = Utc::now();
         let games = raw_games.iter()
             .filter_map(|entity| {
@@ -837,7 +832,7 @@ async fn ingest_page_of_games<'t>(
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        let num_incomplete_games_skipped = games.iter()
+        let num_ongoing_games_skipped = games.iter()
             .filter(|g| {
                 match g {
                     GameForDb::Incomplete { .. } => { true }
@@ -845,16 +840,19 @@ async fn ingest_page_of_games<'t>(
                 }
             })
             .count();
-        let num_already_ingested_games_skipped = raw_games.len() - games.len();
-        let num_games_imported = games.len() - num_incomplete_games_skipped;
-        info!("Ingesting {} games, ignoring {} already-ingested games", games.len(), raw_games.len() - games.len());
+        let num_already_ingested_games_skipped = num_items - raw_games.len();
+        let num_terminal_incomplete_games_skipped = raw_games.len() - games.len();
+        let num_games_imported = games.len() - num_ongoing_games_skipped;
+        info!(
+            "Ingesting {num_games_imported} games, ignoring {num_already_ingested_games_skipped} \
+            already-ingested games, ignoring {num_ongoing_games_skipped} games in progress, and \
+            skipping {num_terminal_incomplete_games_skipped} terminal incomplete games.",
+        );
         let parse_and_sim_duration = (Utc::now() - parse_and_sim_start).as_seconds_f64();
 
         let db_insert_start = Utc::now();
         db::insert_games(conn, &taxa, ingest_id, &games)?;
         let db_insert_duration = (Utc::now() - db_insert_start).as_seconds_f64();
-
-        info!("Chunk ingested");
 
         // Immediately turn around and fetch all the games we just inserted,
         // so we can verify that they round-trip correctly.
@@ -945,7 +943,8 @@ async fn ingest_page_of_games<'t>(
         })?;
 
         Ok::<_, IngestFatalError>(IngestStats {
-            num_incomplete_games_skipped,
+            num_ongoing_games_skipped,
+            num_terminal_incomplete_games_skipped,
             num_already_ingested_games_skipped,
             num_games_imported,
         })
