@@ -162,12 +162,8 @@ impl Chron {
             }
 
             if entities.items.len() != self.page_size {
-                // This warning should be sufficiently annoying to discourage people from putting
-                // a page size higher than the max chron will allow
-                warn!(
-                    "Chron page length did not match the requested count, but this is not the last \
-                    page. Requested {}, received {}.", self.page_size, entities.items.len(),
-                );
+                info!("Not caching page {page:?} because it's the last page");
+                return Ok(entities);
             }
 
             let has_incomplete_game = entities.items.iter()
