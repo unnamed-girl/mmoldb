@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use humansize::{format_size, DECIMAL};
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -57,6 +58,29 @@ enum VersionedCacheEntry<T> {
     V0(T),
 }
 
+pub trait GameExt {
+
+    /// Returns true for any game which will never be updated. This includes all
+    /// finished games and a set of games from s0d60 that the sim lost track of
+    /// and will never be finished.
+    fn is_terminal(&self) -> bool;
+
+    /// True for any game in the "Completed" state
+    fn is_completed(&self) -> bool;
+}
+
+impl GameExt for mmolb_parsing::Game {
+    fn is_terminal(&self) -> bool {
+        // There are some games from season 0 that aren't completed and never
+        // will be.
+        self.season == 0 || self.is_completed()
+    }
+
+    fn is_completed(&self) -> bool {
+        self.state == "Complete"
+    }
+}
+
 impl Chron {
     pub fn new<P: AsRef<std::path::Path>>(
         cache_path: P,
@@ -67,7 +91,10 @@ impl Chron {
         let cache = sled::open(cache_path)?;
         if cache.was_recovered() {
             match cache.size_on_disk() {
-                Ok(size) => { info!("Opened existing {size}-byte cache at {cache_path:?}") }
+                Ok(size) => {
+                    let size_str = format_size(size, DECIMAL);
+                    info!("Opened existing {size_str} cache at {cache_path:?}");
+                }
                 Err(err) => { info!("Opened existing cache at {cache_path:?}. Error retrieving size: {err}") }
             }
         } else {
@@ -133,7 +160,7 @@ impl Chron {
                 info!("Not caching page {page:?} because it's the last page");
                 return Ok(entities);
             }
-            
+
             if entities.items.len() != self.page_size {
                 // This warning should be sufficiently annoying to discourage people from putting
                 // a page size higher than the max chron will allow
@@ -144,9 +171,9 @@ impl Chron {
             }
 
             let has_incomplete_game = entities.items.iter()
-                .any(|item| item.data.state != "Complete");
+                .any(|item| !item.data.is_terminal());
             if has_incomplete_game {
-                info!("Not caching page {page:?} because it contains at least one incomplete game");
+                info!("Not caching page {page:?} because it contains at least one non-terminal game");
                 return Ok(entities);
             }
 

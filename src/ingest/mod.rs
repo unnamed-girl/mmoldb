@@ -23,7 +23,7 @@ use itertools::{Itertools, izip};
 use thiserror::Error;
 
 // First party dependencies
-use crate::ingest::chron::{ChronEntities, ChronEntity, ChronError};
+use crate::ingest::chron::{ChronEntities, ChronEntity, ChronError, GameExt};
 use crate::db::{CompletedGameForDb, GameForDb, RowToEventError, Taxa, Timings};
 use crate::ingest::sim::{Game, SimFatalError};
 use crate::{Db, db};
@@ -741,7 +741,7 @@ async fn ingest_page_of_games<'t>(
     ingest_id: i64,
     page_index: usize,
     fetch_duration: f64,
-    page: ChronEntities<mmolb_parsing::Game>,
+    mut page: ChronEntities<mmolb_parsing::Game>,
 ) -> Result<(IngestStats, Option<String>), IngestFatalError> {
     // These clones are here because rocket_sync_db_pools' derived
     // run() function imposes a 'static lifetime on its callback, and
@@ -756,18 +756,29 @@ async fn ingest_page_of_games<'t>(
     //   out of config).
     let taxa = taxa.clone();
     let config = config.clone();
+    
+    page.items.sort_by(|a, b| a.entity_id.cmp(&b.entity_id));
 
     let stats = db.run(move |conn| {
         let save_start = Utc::now();
         let filter_finished_games_start = Utc::now();
         let raw_games = if !config.reimport_all_games {
             // Remove any games which are fully imported
-            let is_finished = db::is_finished(conn, page.items.iter().map(|e| e.entity_id.as_str()).collect())?;
-            iter::zip(page.items, is_finished)
-                .flat_map(|(game, is_finished)| {
-                    if is_finished {
-                        None
+            let mut is_finished = db::is_finished(conn, page.items.iter().map(|e| e.entity_id.as_str()).collect())?
+                .into_iter()
+                .peekable();
+            page.items.into_iter()
+                .filter_map(|game| {
+                    if let Some((_, finished)) = is_finished.next_if(|(id, _)| id == &game.entity_id) {
+                        if finished {
+                            // Game is finished, don't import it again
+                            None
+                        } else {
+                            // Game is not finished, do import it again
+                            Some(game)
+                        }
                     } else {
+                        // Game is not in the db, import it for the first time
                         Some(game)
                     }
                 })
@@ -777,15 +788,16 @@ async fn ingest_page_of_games<'t>(
         };
         let filter_finished_games_duration = (Utc::now() - filter_finished_games_start).as_seconds_f64();
 
+        info!("{} raw games", raw_games.len());
         let parse_and_sim_start = Utc::now();
         let games = raw_games.iter()
-            .map(|entity| {
-                Ok::<_, IngestFatalError>(if entity.data.state != "Complete" {
+            .filter_map(|entity| {
+                Some(Ok::<_, IngestFatalError>(if !entity.data.is_terminal() {
                     GameForDb::Incomplete {
                         game_id: &entity.entity_id,
                         raw_game: &entity.data,
                     }
-                } else {
+                } else if entity.data.is_completed() {
                     match prepare_completed_game_for_db(entity) {
                         Ok(game) => {
                             GameForDb::Completed(game)
@@ -808,7 +820,9 @@ async fn ingest_page_of_games<'t>(
                             }
                         }
                     }
-                })
+                } else {
+                    return None
+                }))
             })
             .collect::<Result<Vec<_>, _>>()?;
 

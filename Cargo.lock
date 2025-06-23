@@ -1701,6 +1701,7 @@ dependencies = [
  "enum-map",
  "futures",
  "http-cache-reqwest",
+ "humansize",
  "itertools",
  "log",
  "mmolb_parsing",

@@ -30,12 +30,13 @@ pub fn ingest_count(conn: &mut PgConnection) -> QueryResult<i64> {
     dsl::ingests.count().get_result(conn)
 }
 
-pub fn is_finished(conn: &mut PgConnection, ids: Vec<&str>) -> QueryResult<Vec<bool>> {
+pub fn is_finished(conn: &mut PgConnection, ids: Vec<&str>) -> QueryResult<Vec<(String, bool)>> {
     use crate::data_schema::data::games::dsl;
     
     dsl::games
         .filter(dsl::mmolb_game_id.eq_any(ids))
-        .select(dsl::is_finished)
+        .select((dsl::mmolb_game_id, dsl::is_finished))
+        .order_by(dsl::mmolb_game_id)
         .get_results(conn)
 }
 
