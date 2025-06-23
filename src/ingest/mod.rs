@@ -15,11 +15,14 @@ use rocket::tokio::task::JoinHandle;
 use rocket::{Orbit, Rocket, Shutdown, tokio, figment};
 use serde::Deserialize;
 use std::{iter, mem};
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use diesel::PgConnection;
 use futures::{future};
 use itertools::{Itertools, izip};
+use rocket_sync_db_pools::{Connection, ConnectionPool};
 use thiserror::Error;
 
 // First party dependencies
@@ -40,6 +43,16 @@ fn default_page_size() -> usize {
     100
 }
 
+fn default_ingest_parallelism() -> usize {
+    match std::thread::available_parallelism() {
+        Ok(parallelism) => parallelism.into(),
+        Err(err) => {
+            warn!("Unable to detect available parallelism (falling back to 1): {}", err);
+            1
+        }
+    }
+}
+
 #[derive(Clone, Deserialize)]
 // Not sure if I need this because I also depend on serde, but it
 // probably doesn't hurt
@@ -53,6 +66,8 @@ struct IngestConfig {
     start_ingest_every_launch: bool,
     #[serde(default = "default_page_size")]
     game_list_page_size: usize,
+    #[serde(default = "default_ingest_parallelism")]
+    ingest_parallelism: usize,
     cache_path: PathBuf,
 }
 
@@ -60,6 +75,9 @@ struct IngestConfig {
 pub enum IngestSetupError {
     #[error("Database error during ingest setup: {0}")]
     DbSetupError(#[from] diesel::result::Error),
+
+    #[error("Couldn't get a database connection")]
+    CouldNotGetConnection,
 
     #[error("Ingest task transitioned away from NotStarted before liftoff")]
     LeftNotStartedTooEarly,
@@ -76,11 +94,17 @@ pub enum IngestFatalError {
     #[error("Couldn't open HTTP cache database: {0}")]
     OpenCacheDbError(#[from] sled::Error),
 
+    #[error("Couldn't get a database connection")]
+    CouldNotGetConnection,
+
     #[error(transparent)]
     ChronError(#[from] ChronError),
 
     #[error(transparent)]
     DbError(#[from] diesel::result::Error),
+
+    #[error(transparent)]
+    JoinError(#[from] tokio::task::JoinError),
     
     #[error("User requested early termination")]
     ShutdownRequested,
@@ -167,7 +191,7 @@ impl Fairing for IngestFairing {
     }
 
     async fn on_liftoff(&self, rocket: &Rocket<Orbit>) {
-        let Some(pool) = Db::get_one(rocket).await else {
+        let Some(pool) = Db::pool(rocket) else {
             error!("Cannot launch ingest task: Rocket is not managing a database pool!");
             return;
         };
@@ -209,7 +233,7 @@ impl Fairing for IngestFairing {
 
         let shutdown = rocket.shutdown();
 
-        match launch_ingest_task(pool, config, task.clone(), shutdown).await {
+        match launch_ingest_task(pool.clone(), config, task.clone(), shutdown).await {
             Ok(handle) => {
                 *task.state.write().await = IngestTaskState::Idle(handle);
                 notify.notify_waiters();
@@ -251,12 +275,16 @@ impl Fairing for IngestFairing {
 // the ingest task. Errors in setup are propagated to the caller.
 // Errors in the task itself are handled within the task.
 async fn launch_ingest_task(
-    db: Db,
+    pool: ConnectionPool<Db, PgConnection>,
     config: IngestConfig,
     task: IngestTask,
     shutdown: Shutdown,
 ) -> Result<JoinHandle<()>, IngestSetupError> {
-    let (taxa, previous_ingest_start_time) = db.run(move |conn| {
+    let Some(conn) = pool.get().await else {
+        return Err(IngestSetupError::CouldNotGetConnection)
+    };
+
+    let (taxa, previous_ingest_start_time) = conn.run(move |conn| {
         let taxa = Taxa::new(conn)?;
 
         let previous_ingest_start_time = if config.start_ingest_every_launch {
@@ -270,7 +298,7 @@ async fn launch_ingest_task(
     }).await?;
 
     Ok(tokio::spawn(ingest_task_runner(
-        db,
+        pool,
         taxa,
         config,
         task,
@@ -280,7 +308,7 @@ async fn launch_ingest_task(
 }
 
 async fn ingest_task_runner(
-    db: Db,
+    pool: ConnectionPool<Db, PgConnection>,
     taxa: Taxa,
     config: IngestConfig,
     task: IngestTask,
@@ -383,7 +411,7 @@ async fn ingest_task_runner(
         }
 
         let ingest_result = do_ingest(
-            &db,
+            pool.clone(),
             &taxa,
             &config,
             &mut shutdown,
@@ -391,7 +419,15 @@ async fn ingest_task_runner(
         )
         .await;
 
-        db.run(move |conn| {
+        let Some(conn) = pool.get().await else {
+            let mut task_state = task.state.write().await;
+            *task_state = IngestTaskState::ExitedWithError(
+                IngestFatalError::CouldNotGetConnection,
+            );
+            return;
+        };
+
+        conn.run(move |conn| {
             match ingest_result {
                 Ok((ingest_id, start_next_ingest_at_page)) => {
                     let ingest_end = Utc::now();
@@ -485,7 +521,7 @@ async fn ingest_task_runner(
 }
 
 async fn do_ingest(
-    db: &Db,
+    pool: ConnectionPool<Db, PgConnection>,
     taxa: &Taxa,
     config: &IngestConfig,
     shutdown: &mut Shutdown,
@@ -501,9 +537,12 @@ async fn do_ingest(
 
     info!("Initialized chron");
 
+    let conn= pool.get().await
+        .ok_or_else(|| (IngestFatalError::CouldNotGetConnection, None))?;
+
     // For lifetime reasons
     let reimport_all_games = config.reimport_all_games;
-    let (start_page, ingest_id) = db.run(move |conn| {
+    let (start_page, ingest_id) = conn.run(move |conn| {
         let start_page = if reimport_all_games {
             None
         } else {
@@ -524,7 +563,7 @@ async fn do_ingest(
     info!("Finished first db block");
 
     do_ingest_internal(
-        db,
+        pool,
         taxa,
         config,
         &chron,
@@ -570,7 +609,7 @@ async fn fetch_games_page(
 }
 
 async fn do_ingest_internal(
-    pool: &Db,
+    pool: ConnectionPool<Db, PgConnection>,
     taxa: &Taxa,
     config: &IngestConfig,
     chron: &chron::Chron,
@@ -591,72 +630,55 @@ async fn do_ingest_internal(
     let mut pages_finished_before_freeze = 0;
     let mut pages_finished_after_freeze = 0;
     let mut stats = IngestStats::new();
+    
+    // TODO Encapsulate this better
+    let mut finish_ingest_page = |page_stats, page_token| {
+        stats.add(&page_stats);
+        freeze_next_index_start_page = freeze_next_index_start_page || stats.num_incomplete_games_skipped > 0;
+        if !freeze_next_index_start_page {
+            // Note: although next_ingest_start_page is an Option, its None has a different
+            // meaning than page_token's None so it's incorrect to just assign page_token to it.
+            if let Some(token) = page_token {
+                next_ingest_start_page = Some(token);
+            }
+            pages_finished_before_freeze += 1;
+        } else {
+            pages_finished_after_freeze += 1;
+        }
+    };
 
     info!("Beginning ingest loop");
 
-    let mut page_ingest_fut = None;
+    let mut ingests_in_progress = VecDeque::new();
     let mut next_page_fut = Some(fetch_games_page(chron, start_page, 0));
 
-    loop {
-        let (ingest_result, next_page) = match (page_ingest_fut.take(), next_page_fut.take()) {
-            (None, None) => {
-                (None, None)
-            }
-            (None, Some(next_page_fut)) => {
-                // This is the first iteration, so just wait for the page to be fetched
-                tokio::select! {
-                    next_page = next_page_fut => { (None, Some(next_page)) }
-                    _ = &mut *shutdown => { return Err(IngestFatalError::ShutdownRequested) }
-                }
-            }
-            (Some(page_ingest_fut), Some(next_page_fut)) => {
-                // This is a middle iteration, we need to wait for the previous page to
-                // ingest while simultaneously waiting for the next page to load
-                tokio::select! {
-                    (ingest_result, next_page) = future::join(page_ingest_fut, next_page_fut) => {
-                        (Some(ingest_result), Some(next_page))
-                    }
-                    _ = &mut *shutdown => { return Err(IngestFatalError::ShutdownRequested) }
-                }
-            }
-            (Some(page_ingest_fut), None) => {
-                // This is the last iteration, we just have to wait for the last
-                // ingest to finish
-                tokio::select! {
-                    ingest_result = page_ingest_fut => {
-                        (Some(ingest_result), None)
-                    }
-                    _ = &mut *shutdown => { return Err(IngestFatalError::ShutdownRequested) }
-                }
-            }
-        };
-        
-        if let Some(ingest_result) = ingest_result {
-            let (page_stats, page_token) = ingest_result?;
-            stats.add(&page_stats);
-            freeze_next_index_start_page = freeze_next_index_start_page || stats.num_incomplete_games_skipped > 0;
-            if !freeze_next_index_start_page {
-                // Note: although next_ingest_start_page is an Option, its None has a different 
-                // meaning than page_token's None so it's incorrect to just assign page_token to it.
-                if let Some(token) = page_token {
-                    next_ingest_start_page = Some(token);
-                }
-                pages_finished_before_freeze += 1;
-            } else {
-                pages_finished_after_freeze += 1;
-            }
+    while let Some(page_fut) = next_page_fut.take() {
+        let (page, index, fetch_duration) = page_fut.await?;
+        if let Some(next_page) = page.next_page.clone() {
+            next_page_fut = Some(fetch_games_page(chron, Some(next_page), index + 1));
         }
 
-        match next_page {
-            None => { break; }, // Ingest is finished!
-            Some(Err(chron_err)) => {
-                return Err(IngestFatalError::ChronError(chron_err));
-            }
-            Some(Ok((page, index, fetch_duration))) => {
-                next_page_fut = Some(fetch_games_page(chron, page.next_page.clone(), index + 1));
-                page_ingest_fut = Some(ingest_page_of_games(pool, taxa, config, ingest_id, index, fetch_duration, page));
-            }
+        while ingests_in_progress.len() >= config.ingest_parallelism {
+            // Need to pop and process to make space in the queue
+            let (page_stats, page_token) = ingests_in_progress.pop_front()
+                .expect("We just checked the len")
+                .await??;
+            finish_ingest_page(page_stats, page_token);
         }
+
+        // Now there's space in the queue to push a new ingest
+        // tokio::spawn makes it start making progress before it's awaited
+        let pool = pool.clone();
+        let taxa = taxa.clone();
+        let config = config.clone();
+        ingests_in_progress.push_back(tokio::spawn(
+            ingest_page_of_games(pool, taxa, config, ingest_id, index, fetch_duration, page)
+        ));
+    }
+
+    while let Some(ingest_fut) = ingests_in_progress.pop_front() {
+        let (page_stats, page_token) = ingest_fut.await??;
+        finish_ingest_page(page_stats, page_token);
     }
 
     info!("{} games ingested", stats.num_games_imported);
@@ -735,31 +757,20 @@ fn prepare_completed_game_for_db(
 }
 
 async fn ingest_page_of_games<'t>(
-    db: &Db,
-    taxa: &'t Taxa,
-    config: &IngestConfig,
+    pool: ConnectionPool<Db, PgConnection>,
+    taxa: Taxa,
+    config: IngestConfig,
     ingest_id: i64,
     page_index: usize,
     fetch_duration: f64,
     mut page: ChronEntities<mmolb_parsing::Game>,
 ) -> Result<(IngestStats, Option<String>), IngestFatalError> {
-    // These clones are here because rocket_sync_db_pools' derived
-    // run() function imposes a 'static lifetime on its callback, and
-    // thus we can't express "these variables must live longer than
-    // this callback" to the type system. Cloning isn't the only
-    // solution (Arc would also work), but these objects are small
-    // enough that cloning is a negligible-cost workaround to the
-    // lifetime issue. They're also both frozen after launch, so
-    // there's no risk of getting out of sync.
-    // TODO Encapsulate these variables into some sort of Context
-    //   object (and maybe take the opportunity to lift cache_path
-    //   out of config).
-    let taxa = taxa.clone();
-    let config = config.clone();
-    
     page.items.sort_by(|a, b| a.entity_id.cmp(&b.entity_id));
 
-    let stats = db.run(move |conn| {
+    let conn = pool.get().await
+        .ok_or_else(|| IngestFatalError::CouldNotGetConnection)?;
+
+    let stats = conn.run(move |conn| {
         let save_start = Utc::now();
         let filter_finished_games_start = Utc::now();
         let raw_games = if !config.reimport_all_games {
