@@ -1,9 +1,5 @@
 create schema data;
 create schema taxa;
-create schema info;
-
--- TODO should this be in info instead?
-alter table ingests set schema data;
 
 create table taxa.event_type (
     id bigserial primary key not null,
@@ -63,7 +59,7 @@ create table taxa.pitch_type (
 create table data.games (
     -- bookkeeping
     id bigserial primary key not null,
-    ingest bigserial references data.ingests not null,
+    ingest bigserial references info.ingests not null,
     mmolb_game_id text not null unique, -- note: unique causes an index to be built
 
     -- game metadata
@@ -74,7 +70,10 @@ create table data.games (
     away_team_id text not null,
     home_team_emoji text not null,
     home_team_name text not null,
-    home_team_id text not null
+    home_team_id text not null,
+
+    -- Indicates whether this game has been ingested
+    is_finished bool not null
 );
 
 create index games_ingest_id_index on data.games (ingest);
@@ -84,48 +83,60 @@ create table info.raw_events (
     id bigserial primary key not null,
     game_id bigserial references data.games on delete cascade not null,
     game_event_index int not null,
+    unique (game_id, game_event_index),
 
     -- event data
     event_text text not null
 );
 
+-- `on delete cascade` is very slow without the appropriate index
+create index raw_events_game_id on info.raw_events (game_id);
+
 create table info.event_ingest_log (
     -- bookkeeping
     id bigserial primary key not null,
-    raw_event_id bigserial references info.raw_events on delete cascade not null,
+    game_id bigserial references data.games on delete cascade not null,
+    game_event_index int not null,
+    log_index int not null,
+    foreign key (game_id, game_event_index) references info.raw_events (game_id, game_event_index),
 
     -- log data
-    log_order int not null,
     log_level int not null,
     log_text text not null
 );
 
--- Without this, deleting a game is super slow
-create index event_ingest_log_raw_event_id_index on info.event_ingest_log (raw_event_id);
+-- `on delete cascade` is very slow without the appropriate index
+create index event_ingest_log_game_id on info.event_ingest_log (game_id);
 
-create table info.game_ingest_timing (
+create table info.ingest_timings (
     -- bookkeeping
     id bigserial primary key not null,
-    game_id bigserial references data.games on delete cascade not null,
+    ingest_id bigint references info.ingests on delete cascade not null ,
+    index int not null,
 
-    check_already_ingested_duration float8 not null,
-    network_duration float8 not null,
-    parse_duration float8 not null,
-    sim_duration float8 not null,
+    -- Note: The next page of games is fetched while the previous one 
+    -- is being saved, so fetch_duration overlaps with save_duration
+    fetch_duration float8 not null,
+    
+    filter_finished_games_duration float8 not null,
+    parse_and_sim_duration float8 not null,
     db_insert_duration float8 not null,
-    db_fetch_for_check_duration float8 not null,
+    db_fetch_for_check_duration float8 not null, -- overlaps
     db_fetch_for_check_get_game_id_duration float8 not null,
     db_fetch_for_check_get_events_duration float8 not null,
+    db_fetch_for_check_group_events_duration float8 not null,
     db_fetch_for_check_get_runners_duration float8 not null,
     db_fetch_for_check_group_runners_duration float8 not null,
     db_fetch_for_check_get_fielders_duration float8 not null,
     db_fetch_for_check_group_fielders_duration float8 not null,
     db_fetch_for_check_post_process_duration float8 not null,
-    db_duration float8 not null,
     check_round_trip_duration float8 not null,
     insert_extra_logs_duration float8 not null,
-    total_duration float8 not null
+    save_duration float8 not null -- overlaps everything but fetch_duration
 );
+
+-- `on delete cascade` is very slow without the appropriate index
+create index game_ingest_timing_ingest_id on info.ingest_timings (ingest_id);
 
 create table data.events (
     -- bookkeeping
@@ -191,6 +202,7 @@ create table data.events (
 --     constraint fair_ball_direction_null_sync check ((fair_ball_event_index is not null) = (fair_ball_direction is not null))
  );
 
+-- `on delete cascade` is very slow without the appropriate index
 create index events_game_id_index on data.events (game_id);
 
 create table data.event_baserunners (
@@ -231,6 +243,7 @@ create table data.event_baserunners (
     steal bool not null -- this records all ATTEMPTED steals. identify failed steals by looking at is_out
 );
 
+-- `on delete cascade` is very slow without the appropriate index
 create index event_baserunners_event_id_index on data.event_baserunners (event_id);
 
 create table data.event_fielders (
@@ -245,4 +258,5 @@ create table data.event_fielders (
     perfect_catch bool -- null indicates this was not a catch
 );
 
+-- `on delete cascade` is very slow without the appropriate index
 create index event_fielders_event_id_index on data.event_fielders (event_id);

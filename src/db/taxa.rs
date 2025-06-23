@@ -2,10 +2,10 @@ use paste::paste;
 
 use diesel::QueryResult;
 use enum_map::EnumMap;
-use rocket_db_pools::diesel::{AsyncPgConnection, RunQueryDsl};
+use diesel::{PgConnection, RunQueryDsl};
 use std::collections::HashSet;
 use super::taxa_macro::*;
-use rocket_db_pools::diesel::prelude::*;
+use rocket_sync_db_pools::diesel::prelude::*;
 
 taxa! {
     #[
@@ -479,6 +479,7 @@ impl From<mmolb_parsing::enums::PitchType> for TaxaPitchType {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Taxa {
     event_type_mapping: EnumMap<TaxaEventType, i64>,
     hit_type_mapping: EnumMap<TaxaHitType, i64>,
@@ -491,16 +492,16 @@ pub struct Taxa {
 }
 
 impl Taxa {
-    pub async fn new(conn: &mut AsyncPgConnection) -> QueryResult<Self> {
+    pub fn new(conn: &mut PgConnection) -> QueryResult<Self> {
         Ok(Self {
-            event_type_mapping: TaxaEventType::make_id_mapping(conn).await?,
-            hit_type_mapping: TaxaHitType::make_id_mapping(conn).await?,
-            position_mapping: TaxaPosition::make_id_mapping(conn).await?,
-            fair_ball_type_mapping: TaxaFairBallType::make_id_mapping(conn).await?,
-            base_mapping: TaxaBase::make_id_mapping(conn).await?,
-            base_description_format_mapping: TaxaBaseDescriptionFormat::make_id_mapping(conn).await?,
-            fielding_error_type_mapping: TaxaFieldingErrorType::make_id_mapping(conn).await?,
-            pitch_type_mapping: TaxaPitchType::make_id_mapping(conn).await?,
+            event_type_mapping: TaxaEventType::make_id_mapping(conn)?,
+            hit_type_mapping: TaxaHitType::make_id_mapping(conn)?,
+            position_mapping: TaxaPosition::make_id_mapping(conn)?,
+            fair_ball_type_mapping: TaxaFairBallType::make_id_mapping(conn)?,
+            base_mapping: TaxaBase::make_id_mapping(conn)?,
+            base_description_format_mapping: TaxaBaseDescriptionFormat::make_id_mapping(conn)?,
+            fielding_error_type_mapping: TaxaFieldingErrorType::make_id_mapping(conn)?,
+            pitch_type_mapping: TaxaPitchType::make_id_mapping(conn)?,
         })
     }
 

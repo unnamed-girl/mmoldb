@@ -1,4 +1,5 @@
 volumes:
+  http-cache:
   postgres-data:
 
 services:
@@ -6,6 +7,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    volumes:
+      - http-cache:${HTTP_CACHE_DIR}
     env_file:
         - .env
 

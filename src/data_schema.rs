@@ -67,29 +67,18 @@ pub mod data {
             home_team_emoji -> Text,
             home_team_name -> Text,
             home_team_id -> Text,
-        }
-    }
-
-    diesel::table! {
-        data.ingests (id) {
-            id -> Int8,
-            started_at -> Timestamp,
-            finished_at -> Nullable<Timestamp>,
-            aborted_at -> Nullable<Timestamp>,
-            latest_completed_season -> Nullable<Int4>,
+            is_finished -> Bool,
         }
     }
 
     diesel::joinable!(event_baserunners -> events (event_id));
     diesel::joinable!(event_fielders -> events (event_id));
     diesel::joinable!(events -> games (game_id));
-    diesel::joinable!(games -> ingests (ingest));
 
     diesel::allow_tables_to_appear_in_same_query!(
         event_baserunners,
         event_fielders,
         events,
         games,
-        ingests,
     );
 }

@@ -40,13 +40,13 @@ pub struct GameContext {
 impl GameContext {
     pub fn from_db(
         games: impl IntoIterator<Item = (DbGame, i64, i64, i64)>,
-        uri_builder: impl Fn(i64) -> String,
+        uri_builder: impl Fn(&str) -> String,
     ) -> Vec<Self> {
         games
             .into_iter()
             .map(
                 |(game, num_warnings, num_errors, num_critical)| GameContext {
-                    uri: uri_builder(game.id),
+                    uri: uri_builder(&game.mmolb_game_id),
                     season: game.season,
                     day: game.day,
                     away_team_emoji: game.away_team_emoji,

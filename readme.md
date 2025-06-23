@@ -30,6 +30,24 @@ compose directly.
    be built if necessary and `-d` makes it run in the background.
 5. Visit localhost:42424 to see the MMOLDB status page.
 
+Updating
+--------
+
+Updating typically requires rebuilding your database, which is currently a 
+manual process:
+
+1. `git pull` to fetch the changes
+2. `docker compose -f docker-compose-prod.yml down` to stop the running 
+   containers. Do _not_ add the `-v` flag as was previously recommended -- that
+   will remove the HTTP cache as well as the database itself, and will make 
+   your database rebuild significantly slower.
+3. `docker compose -f docker-compose-prod.yml build` to rebuild the container.
+   If you don't do this you won't see the changes.
+4. `docker volume rm mmoldb_postgres-data` to remove the database volume. Note 
+   that this is a raw docker command, not a docker compose command, so it 
+   doesn't need the `-f docker-compose-prod.yml` part.
+5. Run the app again using steps 3-5 of the install instructions.
+
 Debug
 -----
 
