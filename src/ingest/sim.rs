@@ -410,6 +410,7 @@ struct EventDetailBuilder<'g> {
     steals: Vec<BaseSteal<&'g str>>,
     runner_added: Option<(&'g str, TaxaBase)>,
     runners_out: Vec<RunnerOut<&'g str>>,
+    batter_scores: bool,
 }
 
 impl<'g> EventDetailBuilder<'g> {
@@ -497,6 +498,11 @@ impl<'g> EventDetailBuilder<'g> {
         }
 
         me
+    }
+
+    fn set_batter_scores(mut self) -> Self {
+        self.batter_scores = true;
+        self
     }
 
     fn runner_changes(
@@ -724,6 +730,26 @@ impl<'g> EventDetailBuilder<'g> {
             }),
         );
 
+        // TODO Replace the batter_name arg with this and see if anything breaks
+        let batter_name = if let MaybePlayer::Player(batter) = &self.raw_event.batter {
+            batter
+        } else {
+            // TODO Correct error handling
+            panic!("Must have a batter when building an EventDetail");
+        };
+
+        // Finally, on a home run the batter scores
+        if self.batter_scores {
+            baserunners.push(EventDetailRunner {
+                name: batter_name,
+                base_before: None,
+                base_after: TaxaBase::Home,
+                is_out: false,
+                base_description_format: None,
+                is_steal: false,
+            })
+        }
+
         // Check that we processed every change to existing runners
         let extra_steals = steals.collect::<Vec<_>>();
         if !extra_steals.is_empty() {
@@ -758,12 +784,7 @@ impl<'g> EventDetailBuilder<'g> {
             count_strikes: game.state.count_strikes,
             outs_before: self.prev_game_state.outs,
             outs_after: game.state.outs,
-            batter_name: if let MaybePlayer::Player(batter) = &self.raw_event.batter {
-                batter
-            } else {
-                // TODO Correct error handling
-                panic!("Must have a batter when building an EventDetail");
-            },
+            batter_name,
             pitcher_name: if let MaybePlayer::Player(pitcher) = &self.raw_event.pitcher {
                 pitcher
             } else {
@@ -1146,6 +1167,7 @@ impl<'g> Game<'g> {
             steals: Vec::new(),
             runner_added: None,
             runners_out: Vec::new(),
+            batter_scores: false,
         }
     }
 
@@ -2037,13 +2059,14 @@ impl<'g> Game<'g> {
                         ..Default::default()
                     }, ingest_logs);
                     // Also the only situation where you have a score
-                    // without the runner
+                    // without an existing runner
                     self.add_runs_to_batting_team(1);
                     self.finish_pa(batter_name);
 
                     detail_builder
                         .fair_ball(fair_ball)
                         .runner_changes(Vec::new(), scores.clone())
+                        .set_batter_scores()
                         .build_some(self, batter_name, ingest_logs, TaxaEventType::HomeRun)
                 },
                 [ParsedEventMessageDiscriminants::DoublePlayCaught]
@@ -2870,7 +2893,14 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                 advances: self.advances(false),
             },
             TaxaEventType::HomeRun => {
-                let scores = self.scores();
+                let mut scores = self.scores();
+                // I add the batter to `scores` (because they do), but MMOLDB doesn't list
+                // them, so I need to take them out to round-trip successfully. The batter
+                // is always the last entry in scores.
+                // If I supported emitting warnings from this function, I would emit one if
+                // there's no scores or if the last score doesn't match the batter's name.
+                scores.pop();
+
                 let grand_slam = scores.len() == 3;
                 ParsedEventMessage::HomeRun {
                     batter: self.batter_name.as_ref(),
