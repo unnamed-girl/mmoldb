@@ -21,6 +21,7 @@ use std::path::PathBuf;
 use rocket::figment::map;
 use rocket_sync_db_pools::database;
 use serde::Deserialize;
+use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 
 #[database("mmoldb")]
 struct Db(PgConnection);
@@ -53,7 +54,7 @@ async fn run_migrations(rocket: Rocket<Build>) -> Rocket<Build> {
         .expect("mmoldb database connection information was not found in Rocket.toml");
 
     rocket::tokio::task::spawn_blocking(move || {
-        diesel::PgConnection::establish(&config.url)
+        PgConnection::establish(&config.url)
             .expect("Failed to connect to mmoldb database during migrations")
             .run_pending_migrations(MIGRATIONS)
             .expect("Failed to apply migrations");
@@ -85,6 +86,11 @@ fn get_figment_with_constructed_db_url() -> figment::Figment {
     } else {
         panic!("One of POSTGRES_PASSWORD or POSTGRES_PASSWORD_FILE must be provided");
     };
+    
+    // Must percent encode password.
+    // The return type of utf8_percent_encode implements Display so we can skip the to_string call
+    // and provide it directly to the format!().
+    let password = utf8_percent_encode(&password, NON_ALPHANUMERIC);
 
     let url = format!("postgres://{}:{}@db/{}", postgres_config.user, password, postgres_config.db);
     rocket::Config::figment()
