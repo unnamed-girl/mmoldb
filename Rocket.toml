@@ -1,5 +1,6 @@
 [default]
 port = 42424  # Must match the port forwarded in .devcontainer/devcontainer.json
+log_level = "normal"
 
 [default.databases.mmoldb]
 url = "NOTE: This URL will be overridden by one computed from postgres' environment variables"
@@ -8,6 +9,7 @@ timeout = 5
 
 [debug]
 start_ingest_every_launch = true
+reimport_all_games = true
 
 [debug.databases.mmoldb]
 url = "NOTE: This URL will be overridden by one computed from postgres' environment variables"
