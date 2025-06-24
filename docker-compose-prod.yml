@@ -6,6 +6,14 @@ secrets:
   db_admin_password:
     file: .db_admin_password
 
+# Control the subnet so we can match it in pg_hba.conf
+networks:
+  default:
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.142.0.0/16
+
 services:
   app:
     build:
@@ -21,12 +29,19 @@ services:
       - "42424:42424"
   db:
     image: postgres:latest
+    command: ["postgres", "-c", "config_file=/etc/postgresql.conf"]
     restart: unless-stopped
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./pg_conf/pg_hba.conf:/etc/postgresql/pg_hba.conf
+      - ./pg_conf/postgresql.conf:/etc/postgresql.conf
     secrets:
       - db_admin_password
     env_file:
         - .env-prod
     ports:
       - "42416:5432"
+    # Usage limits to prevent DOS on prod
+    cpus: 4
+    mem_limit: 4g
+    memswap_limit: 4g
