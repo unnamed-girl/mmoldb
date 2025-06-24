@@ -18,6 +18,7 @@ use rocket_dyn_templates::Template;
 use rocket_dyn_templates::tera::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use log::info;
 use rocket::figment::map;
 use rocket_sync_db_pools::database;
 use serde::Deserialize;
@@ -86,13 +87,44 @@ fn get_figment_with_constructed_db_url() -> figment::Figment {
     } else {
         panic!("One of POSTGRES_PASSWORD or POSTGRES_PASSWORD_FILE must be provided");
     };
+
+    // Postgres (or something else in my Postgres pipeline) will _truncate_ the
+    // password at the first newline. I don't want to mimic that behavior, 
+    // because it could lead to people using vastly less secure passwords than 
+    // they intended to. I can trim a trailing newline without losing (a 
+    // meaningful amount of) entropy, which I will do because the trailing 
+    // newline convention is so strong the user might not even realize they 
+    // have one. But if there are any other newlines in the string, I just exit 
+    // with an error. 
+    let password = if let Some(pw) = password.strip_suffix("\n") {
+        pw
+    } else {
+        &password
+    };
     
+    if password.contains("\n") {
+        // Print this error in the most direct way to maximize the chances that the
+        // user can figure out what's going on
+        eprintln!(
+            "Postgres admin password contains a non-terminal newline. This password will be \
+            insecurely truncated. Please try again with a password that does not contain non-\
+            terminal newlines."
+        );
+        // Also panic with the same message
+        panic!(
+            "Postgres admin password contains a non-terminal newline. This password will be \
+            insecurely truncated. Please try again with a password that does not contain non-\
+            terminal newlines."
+        );
+    }
+
     // Must percent encode password.
     // The return type of utf8_percent_encode implements Display so we can skip the to_string call
     // and provide it directly to the format!().
     let password = utf8_percent_encode(&password, NON_ALPHANUMERIC);
 
     let url = format!("postgres://{}:{}@db/{}", postgres_config.user, password, postgres_config.db);
+    println!("Postgres connection string: {url}");
     rocket::Config::figment()
         .merge(("databases", map!["mmoldb" => map!["url" => url]]))
 }

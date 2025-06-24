@@ -6,19 +6,21 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
    && apt-get -y install clang lld \
    && apt-get autoremove -y && apt-get clean -y
 
+RUN cargo install cargo-build-dependencies
+
 FROM base AS setup
 
 WORKDIR /code
 RUN cargo init
 COPY Cargo.toml /code/Cargo.toml
-RUN cargo fetch
-COPY . /code
+COPY Cargo.lock /code/Cargo.lock
+RUN cargo fetch --manifest-path /code/Cargo.toml --locked
+RUN cargo build-dependencies --release  # third-party tool
 
 FROM setup AS builder
 
-# this is supposed to also have --offline but for some reason the `cargo fetch`
-# step earlier isn't grabbing mmolb_parsing properly
-RUN cargo build --release
+COPY . /code
+RUN cargo build --release --offline
 
 FROM debian:bookworm
 
@@ -33,6 +35,7 @@ EXPOSE 42424
 COPY --from=builder /code/target/release/mmoldb /mmoldb
 
 # Rocket app depends on some files in the code
+# TODO Only copy necessary files
 COPY . /code
 WORKDIR "/code"
 
