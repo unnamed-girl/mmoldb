@@ -124,7 +124,6 @@ fn get_figment_with_constructed_db_url() -> figment::Figment {
     let password = utf8_percent_encode(&password, NON_ALPHANUMERIC);
 
     let url = format!("postgres://{}:{}@db/{}", postgres_config.user, password, postgres_config.db);
-    println!("Postgres connection string: {url}");
     rocket::Config::figment()
         .merge(("databases", map!["mmoldb" => map!["url" => url]]))
 }
