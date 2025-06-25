@@ -2342,6 +2342,16 @@ impl<'g> Game<'g> {
                 ParsedEventMessage::WeatherDeliveryDiscard { .. } => {
                     // TODO Don't ignore weather delivery discard
                     None
+                },
+                [ParsedEventMessageDiscriminants::WeatherShipment]
+                ParsedEventMessage::WeatherShipment { .. } => {
+                    // TODO Don't ignore weather shipment
+                    None
+                },
+                [ParsedEventMessageDiscriminants::WeatherSpecialDelivery]
+                ParsedEventMessage::WeatherSpecialDelivery { .. } => {
+                    // TODO Don't ignore weather shipment
+                    None
                 }
             ),
             GamePhase::Finished => game_event!((previous_event, event)),
