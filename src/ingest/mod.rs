@@ -64,6 +64,8 @@ struct IngestConfig {
     game_list_page_size: usize,
     #[serde(default = "default_ingest_parallelism")]
     ingest_parallelism: usize,
+    #[serde(default)]
+    cache_http_responses: bool,
     cache_path: PathBuf,
 }
 
@@ -528,7 +530,7 @@ async fn do_ingest(
     // The only thing that errors here is opening the http cache, which
     // could be worked around by just not caching. I don't currently support
     // running without a cache but it could be added fairly easily.
-    let chron = chron::Chron::new(&config.cache_path, config.game_list_page_size)
+    let chron = chron::Chron::new(config.cache_http_responses, &config.cache_path, config.game_list_page_size)
         .map_err(|err| (err.into(), None))?;
 
     info!("Initialized chron");

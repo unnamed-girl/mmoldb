@@ -47,7 +47,7 @@ pub struct ChronEntity<EntityT> {
 }
 
 pub struct Chron {
-    cache: sled::Db,
+    cache: Option<sled::Db>,
     client: reqwest::Client,
     page_size: usize,
     page_size_string: String,
@@ -83,23 +83,30 @@ impl GameExt for mmolb_parsing::Game {
 
 impl Chron {
     pub fn new<P: AsRef<std::path::Path>>(
+        use_cache: bool,
         cache_path: P,
         page_size: usize,
     ) -> Result<Self, sled::Error> {
-        info!("Opening cache db. This can be very slow, which is a known issue.");
-        let cache_path = cache_path.as_ref();
-        let cache = sled::open(cache_path)?;
-        if cache.was_recovered() {
-            match cache.size_on_disk() {
-                Ok(size) => {
-                    let size_str = format_size(size, DECIMAL);
-                    info!("Opened existing {size_str} cache at {cache_path:?}");
+        let cache = if use_cache {
+            info!("Opening cache db. This can be very slow, which is a known issue.");
+            let cache_path = cache_path.as_ref();
+            let cache = sled::open(cache_path)?;
+            if cache.was_recovered() {
+                match cache.size_on_disk() {
+                    Ok(size) => {
+                        let size_str = format_size(size, DECIMAL);
+                        info!("Opened existing {size_str} cache at {cache_path:?}");
+                    }
+                    Err(err) => { info!("Opened existing cache at {cache_path:?}. Error retrieving size: {err}") }
                 }
-                Err(err) => { info!("Opened existing cache at {cache_path:?}. Error retrieving size: {err}") }
+            } else {
+                info!("Created new cache at {cache_path:?}");
             }
+
+            Some(cache)
         } else {
-            info!("Created new cache at {cache_path:?}");
-        }
+            None
+        };
         
         Ok(Self {
             cache,
@@ -122,7 +129,11 @@ impl Chron {
     }
 
     fn get_cached<T: for<'d> Deserialize<'d>>(&self, key: &str) -> Result<Option<T>, ChronError> {
-        let Some(cache_entry) = self.cache.get(key).map_err(ChronError::CacheGetError)? else {
+        let Some(cache) = &self.cache else {
+            return Ok(None);
+        };
+        
+        let Some(cache_entry) = cache.get(key).map_err(ChronError::CacheGetError)? else {
             return Ok(None)
         };
 
@@ -130,7 +141,7 @@ impl Chron {
             Ok(versions) => versions,
             Err(err) => {
                 warn!("Cache entry could not be decoded: {:?}. Removing it from the cache.", err);
-                self.cache.remove(key).map_err(ChronError::CacheRemoveError)?;
+                cache.remove(key).map_err(ChronError::CacheRemoveError)?;
                 return Ok(None);
             }
         };
@@ -155,6 +166,10 @@ impl Chron {
             let entities: ChronEntities<mmolb_parsing::Game> = response.json()
                 .await
                 .map_err(ChronError::RequestDeserializeError)?;
+            
+            let Some(cache) = &self.cache else {
+                return Ok(entities)
+            };
 
             if entities.next_page.is_none() {
                 info!("Not caching page {page:?} because it's the last page");
@@ -179,7 +194,7 @@ impl Chron {
             // Save to cache
             let entities_bin = rmp_serde::to_vec(&cache_entry)
                 .map_err(ChronError::CacheSerializeError)?;
-            self.cache.insert(url.as_str(), entities_bin.as_slice()).map_err(ChronError::CachePutError)?;
+            cache.insert(url.as_str(), entities_bin.as_slice()).map_err(ChronError::CachePutError)?;
 
             // Immediately fetch again from cache to verify everything is working
             let entities = self.get_cached(&url.as_str())
@@ -189,9 +204,11 @@ impl Chron {
             Ok(entities)
         };
         
-        // Fetches are already so slow that cache flushing should be a drop in the bucket. Non-fetch
-        // requests shouldn't dirty the cache at all and so this should be near-instant.
-        self.cache.flush().map_err(ChronError::CacheFlushError)?;
+        if let Some(cache) = &self.cache {
+            // Fetches are already so slow that cache flushing should be a drop in the bucket. Non-fetch
+            // requests shouldn't dirty the cache at all and so this should be near-instant.
+            cache.flush().map_err(ChronError::CacheFlushError)?;
+        }
         
         result
     }
