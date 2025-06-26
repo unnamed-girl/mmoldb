@@ -7,10 +7,10 @@ pub use to_db_format::RowToEventError;
 
 // Third-party imports
 use std::{iter, collections::HashMap};
-use diesel::{PgConnection, prelude::*, sql_types::*};
+use diesel::{PgConnection, prelude::*, sql_types::*, sql_query};
 use chrono::{DateTime, NaiveDateTime, Utc};
+use diesel::query_builder::SqlQuery;
 use itertools::{Itertools, PeekingNext};
-use log::info;
 use mmolb_parsing::ParsedEventMessage;
 
 // First-party imports
@@ -96,7 +96,7 @@ pub struct IngestWithGameCount {
 }
 
 pub fn latest_ingests(conn: &mut PgConnection) -> QueryResult<Vec<IngestWithGameCount>> {
-    diesel::sql_query(
+    sql_query(
         "
         select i.id, i.started_at, i.finished_at, i.aborted_at, count(g.mmolb_game_id) as num_games
         from info.ingests i
@@ -162,13 +162,53 @@ macro_rules! log_only_assert {
     };
 }
 
+#[derive(QueryableByName)]
+#[diesel(table_name = crate::data_schema::data::games)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
 pub(crate) struct GameWithIssueCounts {
+    #[diesel(embed)]
     pub game: DbGame,
+    #[diesel(sql_type = Int8)]
     pub warnings_count: i64,
+    #[diesel(sql_type = Int8)]
     pub errors_count: i64,
+    #[diesel(sql_type = Int8)]
     pub critical_count: i64,
 }
 
+pub fn games_list_base() -> SqlQuery {
+    sql_query("
+        with counts as (select
+                l.game_id,
+                sum(case when l.log_level = 0 then 1 else 0 end) as critical_count,
+                sum(case when l.log_level = 1 then 1 else 0 end) as errors_count,
+                sum(case when l.log_level = 2 then 1 else 0 end) as warnings_count
+            from info.event_ingest_log l
+            where l.log_level < 3
+            group by l.game_id
+        )
+        select
+            g.*,
+            coalesce(counts.critical_count, 0) as critical_count,
+            coalesce(counts.errors_count, 0) as errors_count,
+            coalesce(counts.warnings_count, 0) as warnings_count
+        from data.games g
+            left join counts on g.id = counts.game_id
+    ")
+}
+
+pub fn games_list() -> SqlQuery {
+    // Just get the query into a context where you can "and" on where
+    games_list_base().sql("where 1=1")
+}
+
+pub fn games_with_issues_list() -> SqlQuery {
+    games_list_base().sql("
+        where counts.critical_count > 0 or counts.error_count > 0 or counts.warning_count > 0
+    ")
+}
+
+#[deprecated]
  fn add_issue_counts_to_games(
     conn: &mut PgConnection,
     games: Vec<DbGame>,
@@ -270,30 +310,38 @@ pub(crate) struct PageOfGames {
     // layer is whether that previous page is the first page, whose token is None
     pub previous_page: Option<Option<String>>,
 }
-
-pub fn page_of_games(conn: &mut PgConnection, page_size: usize, after_game_id: Option<&str>) -> QueryResult<PageOfGames> {
-    use crate::data_schema::data::games::dsl as games_dsl;
-
+pub fn page_of_games_generic(
+    conn: &mut PgConnection,
+    page_size: usize,
+    after_game_id: Option<&str>,
+    base_query: SqlQuery,
+) -> QueryResult<PageOfGames> {
     // Get N + 1 games so we know if this is the last page or not
     let (mut games, previous_page) = if let Some(after_game_id) = after_game_id {
-        let games = games_dsl::games
-            .filter(games_dsl::mmolb_game_id.gt(after_game_id))
-            .order_by(games_dsl::mmolb_game_id.asc())
-            .limit(page_size as i64 + 1)
-            .get_results::<DbGame>(conn)?;
+        // base_query must have left off in the middle of a `where`
+        let games = base_query.clone().sql("
+            and g.mmolb_game_id > $1
+            order by g.mmolb_game_id asc
+            limit $2
+        ")
+            .bind::<Text, _>(after_game_id)
+            .bind::<Integer, _>(page_size as i32 + 1)
+            .get_results::<GameWithIssueCounts>(conn)?;
 
         // Previous page is the one page_size games before this
         // Get N + 1 games so we know if this is the first page or not
-        let mut preceding_pages = games_dsl::games
-            .filter(games_dsl::mmolb_game_id.le(&after_game_id))
-            .order_by(games_dsl::mmolb_game_id.desc())
-            .limit(page_size as i64 + 1)
-            .select(games_dsl::mmolb_game_id)
-            .get_results::<String>(conn)?;
+        let preceding_pages = base_query.sql("
+            and g.mmolb_game_id <= $1
+            order by g.mmolb_game_id desc
+            limit $2
+        ")
+            .bind::<Text, _>(after_game_id)
+            .bind::<Integer, _>(page_size as i32 + 1)
+            .get_results::<GameWithIssueCounts>(conn)?;
 
         let preceding_page = if preceding_pages.len() > page_size {
             // Then the preceding page is not the first page
-            Some(preceding_pages.pop())
+            Some(preceding_pages.into_iter().last().map(|g| g.game.mmolb_game_id))
         } else {
             // Then the preceding page is the first page
             Some(None)
@@ -302,10 +350,12 @@ pub fn page_of_games(conn: &mut PgConnection, page_size: usize, after_game_id: O
         (games, preceding_page)
 
     } else {
-        let games = games_dsl::games
-            .order_by(games_dsl::mmolb_game_id)
-            .limit(page_size as i64 + 1)
-            .get_results::<DbGame>(conn)?;
+        let games = base_query.sql("
+            order by g.mmolb_game_id asc
+            limit $1
+        ")
+            .bind::<Integer, _>(page_size as i32 + 1)
+            .get_results::<GameWithIssueCounts>(conn)?;
 
         // None after_game_id => this is the first page => there is no previous page
         (games, None)
@@ -316,31 +366,28 @@ pub fn page_of_games(conn: &mut PgConnection, page_size: usize, after_game_id: O
         // Then this is not the last page
         games.truncate(page_size);
         // The page token is the last game that is actually shown
-        games.last().map(|g| g.mmolb_game_id.clone())
+        games.last().map(|g| g.game.mmolb_game_id.clone())
     } else {
         // Then this is the last page
         None
     };
 
-    if let Some(next_page) = next_page.as_ref() {
-        // Previous page is the one page_size games before this
-        let mut preceding_of_next = games_dsl::games
-            .filter(games_dsl::mmolb_game_id.le(next_page))
-            .order_by(games_dsl::mmolb_game_id.desc())
-            .limit(page_size as i64 + 1)
-            .select(games_dsl::mmolb_game_id)
-            .get_results::<String>(conn)?;
-        
-        let game_ids = games.iter().map(|g| &g.mmolb_game_id).collect_vec();
-        
-        info!("This page ({} total): {game_ids:?}", game_ids.len());
-        info!("Previous-of-next page ({} total): {preceding_of_next:?}", preceding_of_next.len());
-    }
-
-    let games = add_issue_counts_to_games(conn, games)?;
-
     Ok(PageOfGames { games, next_page, previous_page })
 }
+
+pub fn page_of_games(
+    conn: &mut PgConnection,
+    page_size: usize,
+    after_game_id: Option<&str>,
+) -> QueryResult<PageOfGames> {
+    page_of_games_generic(
+        conn,
+        page_size,
+        after_game_id,
+        games_list(),
+    )
+}
+
 
 pub struct EventsForGameTimings {
     pub get_game_ids_duration: f64,

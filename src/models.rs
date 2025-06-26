@@ -34,7 +34,7 @@ pub struct NewGame<'a> {
     pub is_finished: bool,
 }
 
-#[derive(Identifiable, Queryable, Selectable, Associations)]
+#[derive(Identifiable, Queryable, Selectable, Associations, QueryableByName)]
 #[diesel(belongs_to(DbIngest, foreign_key = ingest))]
 #[diesel(table_name = crate::data_schema::data::games)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
