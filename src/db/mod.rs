@@ -208,97 +208,29 @@ pub fn games_with_issues_list() -> SqlQuery {
     ")
 }
 
-#[deprecated]
- fn add_issue_counts_to_games(
-    conn: &mut PgConnection,
-    games: Vec<DbGame>,
-) -> QueryResult<Vec<GameWithIssueCounts>> {
-    use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
-    use crate::info_schema::info::raw_events::dsl as raw_event_dsl;
-
-    let game_ids = games.iter().map(|g| g.id).collect::<Vec<i64>>();
-
-    fn count_log_level(
-        conn: &mut PgConnection,
-        game_ids: &Vec<i64>,
-        level: i32,
-    ) -> QueryResult<Vec<(i64, i64)>> {
-        raw_event_dsl::raw_events
-            .filter(raw_event_dsl::game_id.eq_any(game_ids))
-            .left_join(event_ingest_log_dsl::event_ingest_log.on(event_ingest_log_dsl::game_id.eq(raw_event_dsl::game_id).and(event_ingest_log_dsl::game_event_index.eq(raw_event_dsl::game_event_index))))
-            .filter(event_ingest_log_dsl::log_level.eq(level))
-            .group_by(raw_event_dsl::game_id)
-            .select((raw_event_dsl::game_id, diesel::dsl::count_star()))
-            .order_by(raw_event_dsl::game_id)
-            .get_results::<(i64, i64)>(conn)
-    }
-
-    let mut num_warnings = count_log_level(conn, &game_ids, 2)?
-        .into_iter()
-        .peekable();
-    let mut num_errors = count_log_level(conn, &game_ids, 1)?
-        .into_iter()
-        .peekable();
-    let mut num_critical = count_log_level(conn, &game_ids, 0)?
-        .into_iter()
-        .peekable();
-
-    let games = games
-        .into_iter()
-        .map(|game| {
-            let warnings_count = num_warnings
-                .peeking_next(|(id, _)| *id == game.id)
-                .map_or(0, |(_, n)| n);
-            let errors_count = num_errors
-                .peeking_next(|(id, _)| *id == game.id)
-                .map_or(0, |(_, n)| n);
-            let critical_count = num_critical
-                .peeking_next(|(id, _)| *id == game.id)
-                .map_or(0, |(_, n)| n);
-
-            GameWithIssueCounts {
-                game,
-                warnings_count,
-                errors_count,
-                critical_count,
-            }
-        })
-        .collect();
-
-    log_only_assert!(
-        num_warnings.next().is_none(),
-        "db::ingest_with_games failed to match at least one warnings count with its event",
-    );
-    log_only_assert!(
-        num_errors.next().is_none(),
-        "db::ingest_with_games failed to match at least one errors count with its event",
-    );
-    log_only_assert!(
-        num_critical.next().is_none(),
-        "db::ingest_with_games failed to match at least one critical count with its event",
-    );
-
-    Ok(games)
+pub fn games_from_ingest_list(ingest_id: i64) -> SqlQuery {
+    // TODO This is bad! This should be a prepared query! But with a
+    //   prepared query I can't bind a value and then keep appending
+    //   more sql. The TODO here is to figure out how to get rid of
+    //   this format! without making the code way more complicated.
+    games_list_base().sql(format!("
+        where g.ingest = {ingest_id}
+    "))
 }
 
 pub fn ingest_with_games(
     conn: &mut PgConnection,
     for_ingest_id: i64,
-) -> QueryResult<(DbIngest, Vec<GameWithIssueCounts>)> {
-    use crate::data_schema::data::games::dsl as game_dsl;
+    page_size: usize,
+    after_game_id: Option<&str>,
+) -> QueryResult<(DbIngest, PageOfGames)> {
     use crate::info_schema::info::ingests::dsl as ingest_dsl;
 
     let ingest = ingest_dsl::ingests
         .filter(ingest_dsl::id.eq(for_ingest_id))
         .get_result::<DbIngest>(conn)?;
 
-    let games = DbGame::belonging_to(&ingest)
-        // The .select is not necessary but yields better compile errors
-        .select(DbGame::as_select())
-        .order_by(game_dsl::id)
-        .get_results::<DbGame>(conn)?;
-
-    let games = add_issue_counts_to_games(conn, games)?;
+    let games = page_of_games_generic(conn, page_size, after_game_id, games_from_ingest_list(for_ingest_id))?;
 
     Ok((ingest, games))
 }

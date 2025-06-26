@@ -21,7 +21,7 @@
 
         {% if ingest.games %}
         <ul class="games">
-            {{ games_include::games(games=ingest.games) }}
+            {{ games_include::games(games=ingest.games, previous_page_url=previous_page_url, next_page_url=next_page_url) }}
         </ul>
         {% else %}
         <p class="no-games">No games</p>

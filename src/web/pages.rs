@@ -94,6 +94,15 @@ pub async fn game_page(mmolb_game_id: String, db: Db) -> Result<Template, AppErr
 
 #[get("/ingest/<ingest_id>")]
 pub async fn ingest_page(ingest_id: i64, db: Db) -> Result<Template, AppError> {
+    paginated_ingest(ingest_id, None, db).await
+}
+
+#[get("/ingest/<ingest_id>/page/<after_game_id>")]
+pub async fn paginated_ingest_page(ingest_id: i64, after_game_id: String, db: Db) -> Result<Template, AppError> {
+    paginated_ingest(ingest_id, Some(after_game_id), db).await
+}
+
+async fn paginated_ingest(ingest_id: i64, after_game_id: Option<String>, db: Db) -> Result<Template, AppError> {
     #[derive(Serialize)]
     struct IngestContext {
         id: i64,
@@ -104,14 +113,21 @@ pub async fn ingest_page(ingest_id: i64, db: Db) -> Result<Template, AppError> {
     }
 
     let (ingest, games) = db.run(move |conn| {
-        db::ingest_with_games(conn, ingest_id)
+        db::ingest_with_games(conn, ingest_id, PAGE_OF_GAMES_SIZE, after_game_id.as_deref())
     }).await?;
+    
+    let games_context = paginated_games_context(
+        games,
+        |game_id| uri!(paginated_ingest_page(ingest_id, game_id)).to_string(),
+        || uri!(ingest_page(ingest_id)).to_string(),
+    );
+    
     let ingest = IngestContext {
         id: ingest.id,
         started_at: (&ingest.started_at).into(),
         finished_at: ingest.finished_at.as_ref().map(Into::into),
         aborted_at: ingest.aborted_at.as_ref().map(Into::into),
-        games: GameContext::from_db(games, |game_id| uri!(game_page(game_id)).to_string()),
+        games: games_context.games,
     };
 
     Ok(Template::render(
@@ -119,8 +135,11 @@ pub async fn ingest_page(ingest_id: i64, db: Db) -> Result<Template, AppError> {
         context! {
             index_url: uri!(index_page()),
             ingest: ingest,
+            next_page_url: games_context.next_page_url,
+            previous_page_url: games_context.previous_page_url,
         },
     ))
+
 }
 
 #[get("/games/page/<after_game_id>")]
@@ -138,32 +157,41 @@ async fn paginated_games(after_game_id: Option<String>, db: Db) -> Result<Templa
         conn.transaction(|conn| db::page_of_games(conn, PAGE_OF_GAMES_SIZE, after_game_id.as_deref()))
     }).await?;
     
-    Ok(format_paginated_games(
-        page,
-        |game_id| uri!(paginated_games_page(game_id)).to_string(),
-        || uri!(games_page()).to_string(),
+    Ok(Template::render(
+    "games",
+        paginated_games_context(
+            page,
+            |game_id| uri!(paginated_games_page(game_id)).to_string(),
+            || uri!(games_page()).to_string(),
+        )
     ))
 }
 
-fn format_paginated_games(
+#[derive(Serialize)]
+struct PaginatedGamesContext<'a> {
+    index_url: String,
+    subhead: &'a str,
+    games: Vec<GameContext>,
+    next_page_url: Option<String>,
+    previous_page_url: Option<String>,
+}
+
+fn paginated_games_context(
     page: PageOfGames,
     paginated_uri_builder: impl Fn(&str) -> String,
     non_paginated_uri_builder: impl Fn() -> String,
-) -> Template {
-    Template::render(
-        "games",
-        context! {
-            index_url: uri!(index_page()),
-            subhead: "Games",
-            games: GameContext::from_db(page.games, |game_id| uri!(game_page(game_id)).to_string()),
-            next_page_url: page.next_page.as_deref().map(&paginated_uri_builder),
-            previous_page_url: page.previous_page
-                .map(|previous_page| match previous_page {
-                    Some(page) => paginated_uri_builder(&page),
-                    None => non_paginated_uri_builder(),
-                }),
-        },
-    )
+) -> PaginatedGamesContext<'static> {
+    PaginatedGamesContext {
+        index_url: uri!(index_page()).to_string(),
+        subhead: "Games",
+        games: GameContext::from_db(page.games, |game_id| uri!(game_page(game_id)).to_string()),
+        next_page_url: page.next_page.as_deref().map(&paginated_uri_builder),
+        previous_page_url: page.previous_page
+            .map(|previous_page| match previous_page {
+                Some(page) => paginated_uri_builder(&page),
+                None => non_paginated_uri_builder(),
+            }),
+    }
 }
 
 #[get("/games-with-issues/page/<after_game_id>")]
@@ -181,10 +209,13 @@ async fn paginated_games_with_issues(after_game_id: Option<String>, db: Db) -> R
         conn.transaction(|conn| db::page_of_games_with_issues(conn, PAGE_OF_GAMES_SIZE, after_game_id.as_deref()))
     }).await?;
 
-    Ok(format_paginated_games(
-        page,
-        |game_id| uri!(paginated_games_with_issues_page(game_id)).to_string(),
-        || uri!(games_with_issues_page()).to_string(),
+    Ok(Template::render(
+        "games",
+        paginated_games_context(
+            page,
+            |game_id| uri!(paginated_games_with_issues_page(game_id)).to_string(),
+            || uri!(games_with_issues_page()).to_string(),
+        )
     ))
 }
 

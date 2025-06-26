@@ -1,4 +1,5 @@
-{% macro games(games) %}
+{# TODO: There's now a PaginatedGamesContext struct in pages.rs, this macro should just accept that instead of its three constituent parts separately #}
+{% macro games(games, previous_page_url, next_page_url) %}
 {% for game in games %}
     <li class="game">
         <a href="{{ game.uri }}">
@@ -22,4 +23,17 @@
         </a>
     </li>
 {% endfor %}
+
+{% if previous_page_url or next_page_url %}
+    <div class="pagination">
+        {% if previous_page_url %}
+            <a class="previous-page" href="{{ previous_page_url }}">Previous page</a>
+        {% endif %}
+
+        {% if next_page_url %}
+            <a class="next-page" href="{{ next_page_url }}">Next page</a>
+        {% endif %}
+    </div>
+{% endif %}
+
 {% endmacro %}
