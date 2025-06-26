@@ -12,14 +12,14 @@ FROM base AS setup
 
 WORKDIR /code
 RUN cargo init
-COPY Cargo.toml /code/Cargo.toml
-COPY Cargo.lock /code/Cargo.lock
+COPY ../Cargo.toml /code/Cargo.toml
+COPY ../Cargo.lock /code/Cargo.lock
 RUN cargo fetch --manifest-path /code/Cargo.toml --locked
 RUN cargo build-dependencies --release  # third-party tool
 
 FROM setup AS builder
 
-COPY . /code
+COPY .. /code
 RUN cargo build --release --offline
 
 FROM debian:bookworm
@@ -36,7 +36,7 @@ COPY --from=builder /code/target/release/mmoldb /mmoldb
 
 # Rocket app depends on some files in the code
 # TODO Only copy necessary files
-COPY . /code
+COPY .. /code
 WORKDIR "/code"
 
 CMD [ "/mmoldb" ]

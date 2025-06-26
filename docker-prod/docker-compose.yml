@@ -4,7 +4,7 @@ volumes:
 
 secrets:
   db_admin_password:
-    file: .db_admin_password
+    file: ../.db_admin_password
 
 # Control the subnet so we can match it in pg_hba.conf
 networks:
@@ -17,14 +17,15 @@ networks:
 services:
   app:
     build:
-      context: .
-      dockerfile: Dockerfile-prod
+      context: ..
+      # This path is relative to the root
+      dockerfile: docker-prod/Dockerfile
     volumes:
       - http-cache:/etc/mmoldb-http-cache
     secrets:
       - db_admin_password
     env_file:
-        - .env-prod
+        - .env
     ports:
       - "42424:42424"
   db:
@@ -38,7 +39,7 @@ services:
     secrets:
       - db_admin_password
     env_file:
-        - .env-prod
+        - .env
     ports:
       - "42416:5432"
     # Usage limits to prevent DOS on prod
