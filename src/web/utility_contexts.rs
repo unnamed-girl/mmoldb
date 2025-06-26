@@ -2,6 +2,7 @@ use crate::models::DbGame;
 use chrono::{NaiveDateTime, TimeZone, Utc};
 use chrono_humanize::HumanTime;
 use rocket::serde::Serialize;
+use crate::db::GameWithIssueCounts;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FormattedDateContext {
@@ -39,25 +40,25 @@ pub struct GameContext {
 
 impl GameContext {
     pub fn from_db(
-        games: impl IntoIterator<Item = (DbGame, i64, i64, i64)>,
+        games: impl IntoIterator<Item = GameWithIssueCounts>,
         uri_builder: impl Fn(&str) -> String,
     ) -> Vec<Self> {
         games
             .into_iter()
             .map(
-                |(game, num_warnings, num_errors, num_critical)| GameContext {
-                    uri: uri_builder(&game.mmolb_game_id),
-                    season: game.season,
-                    day: game.day,
-                    away_team_emoji: game.away_team_emoji,
-                    away_team_name: game.away_team_name,
-                    away_team_id: game.away_team_id,
-                    home_team_emoji: game.home_team_emoji,
-                    home_team_name: game.home_team_name,
-                    home_team_id: game.home_team_id,
-                    num_warnings,
-                    num_errors,
-                    num_critical,
+                |g| GameContext {
+                    uri: uri_builder(&g.game.mmolb_game_id),
+                    season: g.game.season,
+                    day: g.game.day,
+                    away_team_emoji: g.game.away_team_emoji,
+                    away_team_name: g.game.away_team_name,
+                    away_team_id: g.game.away_team_id,
+                    home_team_emoji: g.game.home_team_emoji,
+                    home_team_name: g.game.home_team_name,
+                    home_team_id: g.game.home_team_id,
+                    num_warnings: g.warnings_count,
+                    num_errors: g.errors_count,
+                    num_critical: g.critical_count,
                 },
             )
             .collect()

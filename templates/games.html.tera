@@ -22,6 +22,18 @@
         {% else %}
         <p class="no-games">No games</p>
         {% endif %}
+
+        {% if previous_page_url or next_page_url %}
+        <div class="pagination">
+            {% if previous_page_url %}
+            <a class="previous-page" href="{{ previous_page_url }}">Previous page</a>
+            {% endif %}
+
+            {% if next_page_url %}
+            <a class="next-page" href="{{ next_page_url }}">Next page</a>
+            {% endif %}
+        </div>
+        {% endif %}
     </section>
 </body>
 </html>

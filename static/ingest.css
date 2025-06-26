@@ -57,3 +57,14 @@
 .num-critical {
     background: var(--ingest-critical-color);
 }
+
+/* .card is a specificity hack */
+.card .pagination {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 12px;
+}
+
+.pagination a {
+    padding: 0 20px;
+}

@@ -161,10 +161,18 @@ macro_rules! log_only_assert {
         }
     };
 }
- fn add_log_levels_to_games(
+
+pub(crate) struct GameWithIssueCounts {
+    pub game: DbGame,
+    pub warnings_count: i64,
+    pub errors_count: i64,
+    pub critical_count: i64,
+}
+
+ fn add_issue_counts_to_games(
     conn: &mut PgConnection,
     games: Vec<DbGame>,
-) -> QueryResult<Vec<(DbGame, i64, i64, i64)>> {
+) -> QueryResult<Vec<GameWithIssueCounts>> {
     use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
     use crate::info_schema::info::raw_events::dsl as raw_event_dsl;
 
@@ -198,16 +206,22 @@ macro_rules! log_only_assert {
     let games = games
         .into_iter()
         .map(|game| {
-            let warnings = num_warnings
+            let warnings_count = num_warnings
                 .peeking_next(|(id, _)| *id == game.id)
                 .map_or(0, |(_, n)| n);
-            let errors = num_errors
+            let errors_count = num_errors
                 .peeking_next(|(id, _)| *id == game.id)
                 .map_or(0, |(_, n)| n);
-            let critical = num_critical
+            let critical_count = num_critical
                 .peeking_next(|(id, _)| *id == game.id)
                 .map_or(0, |(_, n)| n);
-            (game, warnings, errors, critical)
+
+            GameWithIssueCounts {
+                game,
+                warnings_count,
+                errors_count,
+                critical_count,
+            }
         })
         .collect();
 
@@ -230,7 +244,7 @@ macro_rules! log_only_assert {
 pub fn ingest_with_games(
     conn: &mut PgConnection,
     for_ingest_id: i64,
-) -> QueryResult<(DbIngest, Vec<(DbGame, i64, i64, i64)>)> {
+) -> QueryResult<(DbIngest, Vec<GameWithIssueCounts>)> {
     use crate::data_schema::data::games::dsl as game_dsl;
     use crate::info_schema::info::ingests::dsl as ingest_dsl;
 
@@ -244,19 +258,88 @@ pub fn ingest_with_games(
         .order_by(game_dsl::id)
         .get_results::<DbGame>(conn)?;
 
-    let games = add_log_levels_to_games(conn, games)?;
+    let games = add_issue_counts_to_games(conn, games)?;
 
     Ok((ingest, games))
 }
 
-pub fn all_games(conn: &mut PgConnection) -> QueryResult<Vec<(DbGame, i64, i64, i64)>> {
+pub(crate) struct PageOfGames {
+    pub games: Vec<GameWithIssueCounts>,
+    pub next_page: Option<String>,
+    // Nested option: The outer layer is whether there is a previous page. The inner
+    // layer is whether that previous page is the first page, whose token is None
+    pub previous_page: Option<Option<String>>,
+}
+
+pub fn page_of_games(conn: &mut PgConnection, page_size: usize, after_game_id: Option<&str>) -> QueryResult<PageOfGames> {
     use crate::data_schema::data::games::dsl as games_dsl;
 
-    let games = games_dsl::games
-        .order_by(games_dsl::id)
-        .get_results::<DbGame>(conn)?;
+    // Get N + 1 games so we know if this is the last page or not
+    let (mut games, previous_page) = if let Some(after_game_id) = after_game_id {
+        let games = games_dsl::games
+            .filter(games_dsl::mmolb_game_id.gt(after_game_id))
+            .order_by(games_dsl::mmolb_game_id.asc())
+            .limit(page_size as i64 + 1)
+            .get_results::<DbGame>(conn)?;
 
-    add_log_levels_to_games(conn, games)
+        // Previous page is the one page_size games before this
+        // Get N + 1 games so we know if this is the first page or not
+        let mut preceding_pages = games_dsl::games
+            .filter(games_dsl::mmolb_game_id.le(&after_game_id))
+            .order_by(games_dsl::mmolb_game_id.desc())
+            .limit(page_size as i64 + 1)
+            .select(games_dsl::mmolb_game_id)
+            .get_results::<String>(conn)?;
+
+        let preceding_page = if preceding_pages.len() > page_size {
+            // Then the preceding page is not the first page
+            Some(preceding_pages.pop())
+        } else {
+            // Then the preceding page is the first page
+            Some(None)
+        };
+
+        (games, preceding_page)
+
+    } else {
+        let games = games_dsl::games
+            .order_by(games_dsl::mmolb_game_id)
+            .limit(page_size as i64 + 1)
+            .get_results::<DbGame>(conn)?;
+
+        // None after_game_id => this is the first page => there is no previous page
+        (games, None)
+    };
+
+
+    let next_page = if games.len() > page_size {
+        // Then this is not the last page
+        games.truncate(page_size);
+        // The page token is the last game that is actually shown
+        games.last().map(|g| g.mmolb_game_id.clone())
+    } else {
+        // Then this is the last page
+        None
+    };
+
+    if let Some(next_page) = next_page.as_ref() {
+        // Previous page is the one page_size games before this
+        let mut preceding_of_next = games_dsl::games
+            .filter(games_dsl::mmolb_game_id.le(next_page))
+            .order_by(games_dsl::mmolb_game_id.desc())
+            .limit(page_size as i64 + 1)
+            .select(games_dsl::mmolb_game_id)
+            .get_results::<String>(conn)?;
+        
+        let game_ids = games.iter().map(|g| &g.mmolb_game_id).collect_vec();
+        
+        info!("This page ({} total): {game_ids:?}", game_ids.len());
+        info!("Previous-of-next page ({} total): {preceding_of_next:?}", preceding_of_next.len());
+    }
+
+    let games = add_issue_counts_to_games(conn, games)?;
+
+    Ok(PageOfGames { games, next_page, previous_page })
 }
 
 pub struct EventsForGameTimings {
