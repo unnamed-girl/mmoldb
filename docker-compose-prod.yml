@@ -44,4 +44,4 @@ services:
     # Usage limits to prevent DOS on prod
     cpus: 4
     mem_limit: 4g
-    memswap_limit: 4g
+    memswap_limit: 8g
