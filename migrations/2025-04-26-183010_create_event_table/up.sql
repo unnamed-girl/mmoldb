@@ -107,6 +107,8 @@ create table info.event_ingest_log (
 
 -- `on delete cascade` is very slow without the appropriate index
 create index event_ingest_log_game_id on info.event_ingest_log (game_id);
+-- dramatically speeds up a query used on the home page
+create index event_ingest_log_log_level_index on info.event_ingest_log (log_level);
 
 create table info.ingest_timings (
     -- bookkeeping
