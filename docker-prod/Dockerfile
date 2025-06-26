@@ -12,14 +12,17 @@ FROM base AS setup
 
 WORKDIR /code
 RUN cargo init
-COPY ../Cargo.toml /code/Cargo.toml
-COPY ../Cargo.lock /code/Cargo.lock
+COPY ../.cargo /code/.cargo
+COPY ../Cargo.toml ../Cargo.lock /code/
 RUN cargo fetch --manifest-path /code/Cargo.toml --locked
 RUN cargo build-dependencies --release  # third-party tool
 
 FROM setup AS builder
 
-COPY .. /code
+# Yes, I do need all these separate copies. No, I'm not happy about it.
+COPY ../build.rs /code/
+COPY ../migrations /code/migrations
+COPY ../src /code/src
 RUN cargo build --release --offline
 
 FROM debian:bookworm
@@ -34,9 +37,13 @@ EXPOSE 42424
 
 COPY --from=builder /code/target/release/mmoldb /mmoldb
 
+WORKDIR /code
+
 # Rocket app depends on some files in the code
-# TODO Only copy necessary files
-COPY .. /code
-WORKDIR "/code"
+# NOTE: You can't combine the folder copies into one or they will be flattened.
+# There's no easy way to disable this behavior: https://stackoverflow.com/questions/37715224/copy-multiple-directories-with-one-command
+COPY ../static /code/static
+COPY ../templates /code/templates
+COPY ../Rocket.toml /code
 
 CMD [ "/mmoldb" ]
