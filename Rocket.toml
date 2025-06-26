@@ -1,17 +1,82 @@
+# This configuration file is for Rocket, the web framework that powers the 
+# mmoldb website and ingest. It also contains several mmoldb-specific
+# configuration parameters.
+#
+# This config file has a [default] section and a [debug] section. The [default]
+# section always applies, no matter how you run mmoldb. If you're running in
+# debug mode, any values in the the [debug] section override the corresponding
+# values in the [default] section. In release mode the values in the [debug]
+# section are ignored. If you don't know what mode you're running in, it's
+# probably release.
+
 [default]
-port = 42424  # Must match the port forwarded in .devcontainer/devcontainer.json
+# The port to listen on. This must match the port that docker exposes, which is
+# configured in either .devcontainer/devcontainer.json (for the devcontainer
+# setup) or docker-prod/docker-config.yml (for the plain docker compose setup).
+port = 42424
 log_level = "normal"
+
+#
+# MMOLDB optional configuration parameters. The values are all set to the 
+# default value for that parameter. To change the value from its default, 
+# uncomment its line and change its value to your new value.
+#
+
+# Time between ingests, in seconds
+# ingest_period_sec = 1800
+
+# Start an ingest every time the app launches, even if it's been less than
+# ingest_period_sec seconds since the last ingest. 
+# start_ingest_every_launch = false
+
+# Delete and recreate the records for every game. The default behavior is
+# to skip any games that have already been imported.
+# reimport_all_games = false
+
+# Change the number of games to request from chron at a time. Max supported
+# value is 1000. Decreasing this value can improve memory usage during ingest
+# at the cost of speed.
+# Note: If you change this, and you have http response caching enabled, you
+# will get a duplicate copy of every event in your cache. There is currently
+# no way to delete just the old cache entries. If you want to delete the
+# entire cache you can do that by deleting the mmoldb_http-cache volume.
+# game_list_page_size = 1000
+
+# The number of pages of games to ingest simultaneously. By default this
+# is set to the thread count of your cpu. Decreasing the value can improve
+# memory and cpu usage during ingest at the cost of speed.
+# Note: This value must be lower than pool_size, otherwise your ingests
+# will fail because they try to use more connections than are available.
+# See the note on pool_size.
+# ingest_parallelism = 
+
+# Whether to cache the HTTP responses returned from chron. This can speed
+# up database rebuilds at the cost of disk space and memory usage.
+# Currently disabled by default because of unreasonably high memory usage.
+# The default may be changed in the future.
+# cache_http_responses = false
 
 [default.databases.mmoldb]
 url = "NOTE: This URL will be overridden by one computed from postgres' environment variables"
-pool_size = 20
+# Number of postgres connections that will be shared between the web app and
+# the ingest. If this is lower than ingest_parallelism, ingest may fail due
+# to not being able to get a connection. If it is exactly equal to ingest
+# parallelism it may still fail because it's competing with the web app for
+# connections. This must be lower than max_connections in your postgresql.conf 
+# or the app will fail to launch because it tries to open more connections 
+# than the database will allow. Note that there are different postgresql.conf
+# locations for the dev container setup vs. the plain docker compose setup.
+pool_size = 50
 timeout = 5
 
 [debug]
 start_ingest_every_launch = true
 reimport_all_games = true
 
+# For some reason the database configuration needs to be repeated for debug 
+# mode. I don't know why. That's not how this is supposed to work.
 [debug.databases.mmoldb]
 url = "NOTE: This URL will be overridden by one computed from postgres' environment variables"
-pool_size = 20
+# See note on pool_size under [default.databases.mmoldb]
+pool_size = 50
 timeout = 5

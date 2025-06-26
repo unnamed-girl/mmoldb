@@ -57,15 +57,16 @@ struct IngestConfig {
     #[serde(default = "default_ingest_period")]
     ingest_period_sec: u64,
     #[serde(default)]
-    reimport_all_games: bool,
-    #[serde(default)]
     start_ingest_every_launch: bool,
+    #[serde(default)]
+    reimport_all_games: bool,
     #[serde(default = "default_page_size")]
     game_list_page_size: usize,
     #[serde(default = "default_ingest_parallelism")]
     ingest_parallelism: usize,
     #[serde(default)]
     cache_http_responses: bool,
+    // cache_path gets overwritten in code. Don't set it in Rocket.toml.
     cache_path: PathBuf,
 }
 
