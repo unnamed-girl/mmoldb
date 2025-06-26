@@ -15,20 +15,26 @@ devcontainers work myself so I won't give any more information than that.
 The other option, which I can provide more support for, is using docker 
 compose directly.
 
+First-run Setup
+---------------
+
 1. Install [docker-compose][docker-compose]. The installation instructions 
    for docker-compose will also install docker for you.
 2. Create the file `.db_admin_password` at the root of this repo, with a secure
    password as the file's contents. 
-3. From the root `mmoldb` directory, start the database container: 
-   `docker compose -f docker-compose-prod.yml up -d db`. This command will
-   run the database container in the background (remove `-d` if you want it to
-   run in the foreground). It will build the container first if necessary.
-4. Once the database is up (you can verify that it's up by running 
-   `docker compose -f docker-compose-prod.yml logs db` and looking for 
-   "database system is ready to accept connections"), run the app:
-   `docker compose -f docker-compose-prod.yml up -d app`. As before, it will
+
+Running
+-------
+
+1. From the root `mmoldb` directory, start the database container: 
+   `docker compose up -d db`. This command will run the database container in 
+   the background (remove `-d` if you want it to run in the foreground). It 
+   will build the container first if necessary.
+2. Once the database is up (you can verify that it's up by running 
+   `docker compose logs db` and looking for "database system is ready to accept 
+   connections"), run the app: `docker compose up -d app`. As before, it will
    be built if necessary and `-d` makes it run in the background.
-5. Visit localhost:42424 to see the MMOLDB status page.
+3. Visit localhost:42424 to see the MMOLDB status page.
 
 Updating
 --------
@@ -37,15 +43,13 @@ Updating typically requires rebuilding your database, which is currently a
 manual process:
 
 1. `git pull` to fetch the changes
-2. `docker compose -f docker-compose-prod.yml down` to stop the running 
-   containers. Do _not_ add the `-v` flag as was previously recommended -- that
-   will remove the HTTP cache as well as the database itself, and will make 
-   your database rebuild significantly slower.
-3. `docker compose -f docker-compose-prod.yml build` to rebuild the container.
-   If you don't do this you won't see the changes.
-4. `docker volume rm mmoldb_postgres-data` to remove the database volume. Note 
-   that this is a raw docker command, not a docker compose command, so it 
-   doesn't need the `-f docker-compose-prod.yml` part.
+2. `docker compose down` to stop the running containers. Do _not_ add the `-v` 
+   flag as was previously recommended -- that will remove the HTTP cache as 
+   well as the database itself, and will make your database rebuild 
+   significantly slower.
+3. `docker compose build` to rebuild the container. If you don't do this you 
+   won't see the changes.
+4. `docker volume rm mmoldb_postgres-data` to remove the database volume.
 5. Run the app again using steps 3-5 of the install instructions.
 
 Debug
