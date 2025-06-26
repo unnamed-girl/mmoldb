@@ -8,6 +8,7 @@ pub fn routes() -> Vec<rocket::Route> {
         pages::games_page,
         pages::paginated_games_page,
         pages::games_with_issues_page,
+        pages::paginated_games_with_issues_page,
         pages::debug_no_games_page,
         pages::ingest_page,
         pages::game_page,

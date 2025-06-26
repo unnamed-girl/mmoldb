@@ -7,6 +7,7 @@ use crate::ingest::{IngestStatus, IngestTask};
 use crate::web::error::AppError;
 use crate::web::utility_contexts::{FormattedDateContext, GameContext};
 use crate::{Db, db};
+use crate::db::PageOfGames;
 
 const PAGE_OF_GAMES_SIZE: usize = 100;
 
@@ -136,45 +137,54 @@ async fn paginated_games(after_game_id: Option<String>, db: Db) -> Result<Templa
     let page = db.run(move |conn| {
         conn.transaction(|conn| db::page_of_games(conn, PAGE_OF_GAMES_SIZE, after_game_id.as_deref()))
     }).await?;
+    
+    Ok(format_paginated_games(
+        page,
+        |game_id| uri!(paginated_games_page(game_id)).to_string(),
+        || uri!(games_page()).to_string(),
+    ))
+}
 
-    Ok(Template::render(
+fn format_paginated_games(
+    page: PageOfGames,
+    paginated_uri_builder: impl Fn(&str) -> String,
+    non_paginated_uri_builder: impl Fn() -> String,
+) -> Template {
+    Template::render(
         "games",
         context! {
             index_url: uri!(index_page()),
             subhead: "Games",
             games: GameContext::from_db(page.games, |game_id| uri!(game_page(game_id)).to_string()),
-            next_page_url: page.next_page
-                .map(|next_page| uri!(paginated_games_page(next_page))),
+            next_page_url: page.next_page.as_deref().map(&paginated_uri_builder),
             previous_page_url: page.previous_page
                 .map(|previous_page| match previous_page {
-                    Some(page) => uri!(paginated_games_page(page)),
-                    None => uri!(games_page()),
+                    Some(page) => paginated_uri_builder(&page),
+                    None => non_paginated_uri_builder(),
                 }),
         },
-    ))
+    )
+}
+
+#[get("/games-with-issues/page/<after_game_id>")]
+pub async fn paginated_games_with_issues_page(after_game_id: String, db: Db) -> Result<Template, AppError> {
+    paginated_games_with_issues(Some(after_game_id), db).await
 }
 
 #[get("/games-with-issues")]
 pub async fn games_with_issues_page(db: Db) -> Result<Template, AppError> {
-    // TODO Get rid of this query + filter and replace it with a query
-    //   that only returns what I need
-    let page = db.run(|conn| {
-        conn.transaction(|conn| db::page_of_games(conn, todo!(), todo!()))
+    paginated_games_with_issues(None, db).await
+}
+
+async fn paginated_games_with_issues(after_game_id: Option<String>, db: Db) -> Result<Template, AppError> {
+    let page = db.run(move |conn| {
+        conn.transaction(|conn| db::page_of_games_with_issues(conn, PAGE_OF_GAMES_SIZE, after_game_id.as_deref()))
     }).await?;
 
-    let games = page.games
-        .into_iter()
-        .filter(|g| {
-            g.warnings_count != 0 || g.errors_count != 0 || g.critical_count != 0
-        });
-
-    Ok(Template::render(
-        "games",
-        context! {
-            index_url: uri!(index_page()),
-            subhead: "Games with issues",
-            games: GameContext::from_db(games, |game_id| uri!(game_page(game_id)).to_string()),
-        },
+    Ok(format_paginated_games(
+        page,
+        |game_id| uri!(paginated_games_with_issues_page(game_id)).to_string(),
+        || uri!(games_with_issues_page()).to_string(),
     ))
 }
 

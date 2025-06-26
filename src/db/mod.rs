@@ -204,7 +204,7 @@ pub fn games_list() -> SqlQuery {
 
 pub fn games_with_issues_list() -> SqlQuery {
     games_list_base().sql("
-        where counts.critical_count > 0 or counts.error_count > 0 or counts.warning_count > 0
+        where counts.critical_count > 0 or counts.errors_count > 0 or counts.warnings_count > 0
     ")
 }
 
@@ -385,6 +385,20 @@ pub fn page_of_games(
         page_size,
         after_game_id,
         games_list(),
+    )
+}
+
+// This function names means "page of games that have issues", not "page of `GameWithIssues`s".
+pub fn page_of_games_with_issues(
+    conn: &mut PgConnection,
+    page_size: usize,
+    after_game_id: Option<&str>,
+) -> QueryResult<PageOfGames> {
+    page_of_games_generic(
+        conn,
+        page_size,
+        after_game_id,
+        games_with_issues_list(),
     )
 }
 
