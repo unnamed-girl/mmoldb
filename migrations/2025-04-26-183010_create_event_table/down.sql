@@ -5,6 +5,7 @@ drop table info.game_ingest_timing;
 drop table info.event_ingest_log;
 drop table info.raw_events;
 drop table data.games;
+drop table data.weather;
 drop table taxa.fielding_error_type;
 drop table taxa.base_description_format;
 drop table taxa.base;

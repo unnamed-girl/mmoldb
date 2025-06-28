@@ -56,6 +56,14 @@ create table taxa.pitch_type (
     unique (name)
 );
 
+create table data.weather (
+    id bigserial primary key not null,
+    name text not null,
+    emoji text not null,
+    tooltip text not null,
+    unique (name, emoji, tooltip)
+);
+
 create table data.games (
     -- bookkeeping
     id bigserial primary key not null,
@@ -63,6 +71,7 @@ create table data.games (
     mmolb_game_id text not null unique, -- note: unique causes an index to be built
 
     -- game metadata
+    weather bigint references data.weather not null,
     season int not null,
     day int not null,
     away_team_emoji text not null,

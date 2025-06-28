@@ -19,10 +19,29 @@ pub struct DbIngest {
 }
 
 #[derive(Debug, Insertable)]
+#[diesel(table_name = crate::data_schema::data::weather)]
+pub struct NewWeather<'a> {
+    pub name: &'a str,
+    pub emoji: &'a str,
+    pub tooltip: &'a str,
+}
+
+#[derive(Identifiable, Queryable, Selectable, QueryableByName)]
+#[diesel(table_name = crate::data_schema::data::weather)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct DbWeather {
+    pub id: i64,
+    pub name: String,
+    pub emoji: String,
+    pub tooltip: String,
+}
+
+#[derive(Debug, Insertable)]
 #[diesel(table_name = crate::data_schema::data::games)]
 pub struct NewGame<'a> {
     pub ingest: i64,
     pub mmolb_game_id: &'a str,
+    pub weather: i64,
     pub season: i32,
     pub day: i32,
     pub away_team_emoji: &'a str,

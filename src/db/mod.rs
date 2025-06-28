@@ -6,12 +6,14 @@ mod taxa_macro;
 pub use to_db_format::RowToEventError;
 
 // Third-party imports
-use std::{iter, collections::HashMap};
+use std::iter;
 use diesel::{PgConnection, prelude::*, sql_types::*, sql_query};
 use chrono::{DateTime, NaiveDateTime, Utc};
+use diesel::connection::DefaultLoadingMode;
 use diesel::query_builder::SqlQuery;
-use itertools::{Itertools, PeekingNext};
+use itertools::Itertools;
 use mmolb_parsing::ParsedEventMessage;
+use hashbrown::{Equivalent, HashMap};
 
 // First-party imports
 pub use crate::db::taxa::{
@@ -19,10 +21,7 @@ pub use crate::db::taxa::{
     TaxaFairBallType, TaxaFieldingErrorType, TaxaHitType, TaxaPitchType, TaxaPosition,
 };
 use crate::ingest::{EventDetail, IngestLog};
-use crate::models::{
-    DbEvent, DbEventIngestLog, DbFielder, DbGame, DbRawEvent, DbRunner, DbIngest, NewEventIngestLog,
-    NewGame, NewGameIngestTimings, NewIngest, NewRawEvent,
-};
+use crate::models::{DbEvent, DbEventIngestLog, DbFielder, DbGame, DbRawEvent, DbRunner, DbIngest, NewEventIngestLog, NewGame, NewGameIngestTimings, NewIngest, NewRawEvent, NewWeather, DbWeather};
 
 pub fn ingest_count(conn: &mut PgConnection) -> QueryResult<i64> {
     use crate::info_schema::info::ingests::dsl;
@@ -492,6 +491,15 @@ pub(crate) enum GameForDb<'g> {
     Completed(CompletedGameForDb<'g>),
 }
 
+impl<'g> GameForDb<'g> {
+    pub fn raw(&self) -> (&'g str, &'g mmolb_parsing::Game) {
+        match self {
+            GameForDb::Incomplete { game_id, raw_game } => (*game_id, raw_game),
+            GameForDb::Completed(game) => { (&game.id, &game.raw_game) }
+        }
+    }
+}
+
 pub fn insert_games(
     conn: &mut PgConnection,
     taxa: &Taxa,
@@ -513,6 +521,7 @@ fn insert_games_internal<'e>(
     use crate::data_schema::data::event_fielders::dsl as fielders_dsl;
     use crate::data_schema::data::events::dsl as events_dsl;
     use crate::data_schema::data::games::dsl as games_dsl;
+    use crate::data_schema::data::weather::dsl as weather_dsl;
     use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
     use crate::info_schema::info::raw_events::dsl as raw_events_dsl;
     
@@ -520,49 +529,119 @@ fn insert_games_internal<'e>(
     // game, but even in release mode we may need to delete partial games and replace them with
     // full games.
     let game_mmolb_ids = games.iter()
-        .map(|g| match g {
-            GameForDb::Incomplete { game_id, .. } => { *game_id }
-            GameForDb::Completed(game) => { game.id }
-        })
+        .map(GameForDb::raw)
+        .map(|(id, _)| id)
         .collect_vec();
 
     let n_deleted_games = diesel::delete(games_dsl::games)
         .filter(games_dsl::mmolb_game_id.eq_any(game_mmolb_ids))
         .execute(conn)?;
 
+    // Get or create weather
+    // Note: Based on what I read online, trying an insert and catching unique
+    // violations causes db bloat. There are (surprisingly complicated) ways to
+    // do a get-or-create in one query, but for simplicity I'm just going to
+    // do it as two queries and rely on the transaction to handle conflicts
+
+    // Get all weathers. Weather table shouldn't be too big so this
+    // should be fine. TODO Cache weather LUT
+
+    // Uses hashbrown::HashMap because the std HashMap has a limitation on
+    // tuples of references
+    #[derive(Hash, Eq, PartialEq)]
+    struct UniqueWeather {
+        name: String,
+        emoji: String,
+        tooltip: String,
+    }
+
+    impl Into<UniqueWeather> for DbWeather {
+        fn into(self) -> UniqueWeather {
+            UniqueWeather {
+                name: self.name,
+                emoji: self.emoji,
+                tooltip: self.tooltip,
+            }
+        }
+    }
+
+    impl Equivalent<UniqueWeather> for (&str, &str, &str) {
+        fn equivalent(&self, key: &UniqueWeather) -> bool {
+            self.0 == key.name && self.1 == key.emoji && self.2 == key.tooltip
+        }
+    }
+
+    let mut weather_table = weather_dsl::weather
+        .select(DbWeather::as_select())
+        .load_iter::<DbWeather, DefaultLoadingMode>(conn)?
+        .map_ok(|weather| {
+            let id = weather.id; // Lifetime reasons
+            (weather.into(), id)
+        })
+        .collect::<QueryResult<HashMap<UniqueWeather, i64>>>()?;
+
+    let new_weathers = games.iter()
+        .map(GameForDb::raw)
+        .filter_map(|(_, raw_game)| {
+            if weather_table.contains_key(&(
+                raw_game.weather.name.as_str(),
+                raw_game.weather.emoji.as_str(),
+                raw_game.weather.tooltip.as_str(),
+            )) {
+                None
+            } else {
+                Some(NewWeather {
+                    name: &raw_game.weather.name,
+                    emoji: &raw_game.weather.emoji,
+                    tooltip: &raw_game.weather.tooltip,
+                })
+            }
+        })
+        .unique_by(|w| (w.name, w.emoji, w.tooltip))
+        .collect_vec();
+
+    let inserted_weathers = diesel::insert_into(weather_dsl::weather)
+        .values(&new_weathers)
+        .returning(DbWeather::as_returning())
+        .get_results::<DbWeather>(conn)?;
+
+    weather_table.extend(
+        inserted_weathers.into_iter()
+            .map(|weather| {
+                let id = weather.id; // Lifetime reasons
+                (weather.into(), id)
+            })
+    );
+
+    // Make immutable
+    let weather_table = weather_table;
+
     let new_games = games.iter()
         .map(|game| {
-            match game {
-                GameForDb::Incomplete { game_id, raw_game } => {
-                    NewGame {
-                        ingest: ingest_id,
-                        mmolb_game_id: game_id,
-                        season: raw_game.season as i32,
-                        day: raw_game.day as i32,
-                        away_team_emoji: &raw_game.away_team_emoji,
-                        away_team_name: &raw_game.away_team_name,
-                        away_team_id: &raw_game.away_team_id,
-                        home_team_emoji: &raw_game.home_team_emoji,
-                        home_team_name: &raw_game.home_team_name,
-                        home_team_id: &raw_game.home_team_id,
-                        is_finished: false,
-                    }
-                }
-                GameForDb::Completed(game) => {
-                    NewGame {
-                        ingest: ingest_id,
-                        mmolb_game_id: &game.id,
-                        season: game.raw_game.season as i32,
-                        day: game.raw_game.day as i32,
-                        away_team_emoji: &game.raw_game.away_team_emoji,
-                        away_team_name: &game.raw_game.away_team_name,
-                        away_team_id: &game.raw_game.away_team_id,
-                        home_team_emoji: &game.raw_game.home_team_emoji,
-                        home_team_name: &game.raw_game.home_team_name,
-                        home_team_id: &game.raw_game.home_team_id,
-                        is_finished: true,
-                    }
-                }
+            let (game_id, raw_game) = game.raw();
+            let Some(weather_id) = weather_table.get(&(
+                raw_game.weather.name.as_str(),
+                raw_game.weather.emoji.as_str(),
+                raw_game.weather.tooltip.as_str(),
+            )) else {
+                panic!(
+                    "Weather was not found in weather_table. This is a bug: preceding code should \
+                    have populated weather_table with any new weathers in this batch of games.",
+                );
+            };
+            NewGame {
+                ingest: ingest_id,
+                mmolb_game_id: game_id,
+                season: raw_game.season as i32,
+                day: raw_game.day as i32,
+                weather: *weather_id,
+                away_team_emoji: &raw_game.away_team_emoji,
+                away_team_name: &raw_game.away_team_name,
+                away_team_id: &raw_game.away_team_id,
+                home_team_emoji: &raw_game.home_team_emoji,
+                home_team_name: &raw_game.home_team_name,
+                home_team_id: &raw_game.home_team_id,
+                is_finished: false,
             }
         })
         .collect_vec();

@@ -59,6 +59,7 @@ pub mod data {
             id -> Int8,
             ingest -> Int8,
             mmolb_game_id -> Text,
+            weather -> Int8,
             season -> Int4,
             day -> Int4,
             away_team_emoji -> Text,
@@ -71,14 +72,25 @@ pub mod data {
         }
     }
 
+    diesel::table! {
+        data.weather (id) {
+            id -> Int8,
+            name -> Text,
+            emoji -> Text,
+            tooltip -> Text,
+        }
+    }
+
     diesel::joinable!(event_baserunners -> events (event_id));
     diesel::joinable!(event_fielders -> events (event_id));
     diesel::joinable!(events -> games (game_id));
+    diesel::joinable!(games -> weather (weather));
 
     diesel::allow_tables_to_appear_in_same_query!(
         event_baserunners,
         event_fielders,
         events,
         games,
+        weather,
     );
 }
