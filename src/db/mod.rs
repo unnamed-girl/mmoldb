@@ -29,7 +29,7 @@ pub fn ingest_count(conn: &mut PgConnection) -> QueryResult<i64> {
     dsl::ingests.count().get_result(conn)
 }
 
-pub fn is_finished(conn: &mut PgConnection, ids: Vec<&str>) -> QueryResult<Vec<(String, bool)>> {
+pub fn is_finished(conn: &mut PgConnection, ids: &[&str]) -> QueryResult<Vec<(String, bool)>> {
     use crate::data_schema::data::games::dsl;
     
     dsl::games
@@ -78,6 +78,19 @@ pub fn next_ingest_start_page(
         .first(conn)
         .optional()
         .map(Option::flatten)
+}
+
+pub fn update_next_ingest_start_page(
+    conn: &mut PgConnection,
+    ingest_id: i64,
+    next_ingest_start_page: Option<String>,
+) -> QueryResult<usize> {
+    use crate::info_schema::info::ingests::dsl as ingests_dsl;
+
+    diesel::update(ingests_dsl::ingests)
+        .filter(ingests_dsl::id.eq(ingest_id))
+        .set(ingests_dsl::start_next_ingest_at_page.eq(next_ingest_start_page))
+        .execute(conn)
 }
 
 #[derive(QueryableByName)]
