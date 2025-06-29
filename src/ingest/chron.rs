@@ -88,7 +88,10 @@ impl Chron {
         page_size: usize,
     ) -> Result<Self, sled::Error> {
         let cache = if use_cache {
-            info!("Opening cache db. This can be very slow, which is a known issue.");
+            info!(
+                "Opening cache db. This can be very, very slow for unknown reasons. Contributions \
+                to speed up the cache db would be greatly appreciated.",
+            );
             let cache_path = cache_path.as_ref();
             let cache = sled::open(cache_path)?;
             if cache.was_recovered() {

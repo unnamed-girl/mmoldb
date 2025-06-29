@@ -439,24 +439,24 @@ async fn ingest_task_runner(
                             );
                         }
                         Err(err) => {
-                            warn!("Failed to mark game ingest as finished: {}", err);
+                            error!("Failed to mark game ingest as finished: {}", err);
                         }
                     }
                 }
                 Err((err, ingest_id)) => {
                     if let Some(ingest_id) = ingest_id {
-                        warn!(
+                        error!(
                             "Fatal error in game ingest: {}. This ingest is aborted.",
                             err
                         );
                         match db::mark_ingest_aborted(conn, ingest_id, Utc::now()) {
                             Ok(()) => {}
                             Err(err) => {
-                                warn!("Failed to mark game ingest as aborted: {}", err);
+                                error!("Failed to mark game ingest as aborted: {}", err);
                             }
                         }
                     } else {
-                        warn!(
+                        error!(
                             "Fatal error in game ingest before adding ingest to database: {}. \
                             This ingest is aborted.",
                             err,

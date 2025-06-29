@@ -1,7 +1,9 @@
 mod taxa;
 mod to_db_format;
 mod taxa_macro;
+mod weather;
 
+use std::collections::HashMap;
 // Reexports
 pub use to_db_format::RowToEventError;
 
@@ -9,11 +11,12 @@ pub use to_db_format::RowToEventError;
 use std::iter;
 use diesel::{PgConnection, prelude::*, sql_types::*, sql_query};
 use chrono::{DateTime, NaiveDateTime, Utc};
-use diesel::connection::DefaultLoadingMode;
 use diesel::query_builder::SqlQuery;
+use diesel::result::DatabaseErrorKind;
+use diesel::result::Error::DatabaseError;
 use itertools::Itertools;
+use log::warn;
 use mmolb_parsing::ParsedEventMessage;
-use hashbrown::{Equivalent, HashMap};
 
 // First-party imports
 pub use crate::db::taxa::{
@@ -513,12 +516,24 @@ impl<'g> GameForDb<'g> {
     }
 }
 
+pub(crate) struct InsertGamesTimings {
+    pub delete_old_games_duration: f64,
+    pub update_weather_table_duration: f64,
+    pub insert_games_duration: f64,
+    pub insert_raw_events_duration: f64,
+    pub insert_logs_duration: f64,
+    pub insert_events_duration: f64,
+    pub get_event_ids_duration: f64,
+    pub insert_baserunners_duration: f64,
+    pub insert_fielders_duration: f64,
+}
+
 pub fn insert_games(
     conn: &mut PgConnection,
     taxa: &Taxa,
     ingest_id: i64,
     games: &[GameForDb],
-) -> QueryResult<Vec<i64>> {
+) -> QueryResult<InsertGamesTimings> {
     conn.transaction(|conn| {
         insert_games_internal(conn, taxa, ingest_id, games)
     })
@@ -529,106 +544,33 @@ fn insert_games_internal<'e>(
     taxa: &Taxa,
     ingest_id: i64,
     games: &[GameForDb],
-) -> QueryResult<Vec<i64>> {
+) -> QueryResult<InsertGamesTimings> {
     use crate::data_schema::data::event_baserunners::dsl as baserunners_dsl;
     use crate::data_schema::data::event_fielders::dsl as fielders_dsl;
     use crate::data_schema::data::events::dsl as events_dsl;
     use crate::data_schema::data::games::dsl as games_dsl;
-    use crate::data_schema::data::weather::dsl as weather_dsl;
     use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
     use crate::info_schema::info::raw_events::dsl as raw_events_dsl;
     
     // First delete all games. If particular debug settings are turned on this may happen for every
     // game, but even in release mode we may need to delete partial games and replace them with
     // full games.
+    let delete_old_games_start = Utc::now();
     let game_mmolb_ids = games.iter()
         .map(GameForDb::raw)
         .map(|(id, _)| id)
         .collect_vec();
 
-    let n_deleted_games = diesel::delete(games_dsl::games)
+    diesel::delete(games_dsl::games)
         .filter(games_dsl::mmolb_game_id.eq_any(game_mmolb_ids))
         .execute(conn)?;
+    let delete_old_games_duration = (Utc::now() - delete_old_games_start).as_seconds_f64();
 
-    // Get or create weather
-    // Note: Based on what I read online, trying an insert and catching unique
-    // violations causes db bloat. There are (surprisingly complicated) ways to
-    // do a get-or-create in one query, but for simplicity I'm just going to
-    // do it as two queries and rely on the transaction to handle conflicts
+    let update_weather_table_start = Utc::now();
+    let weather_table = weather::create_weather_table(conn, games)?;
+    let update_weather_table_duration = (Utc::now() - update_weather_table_start).as_seconds_f64();
 
-    // Get all weathers. Weather table shouldn't be too big so this
-    // should be fine. TODO Cache weather LUT
-
-    // Uses hashbrown::HashMap because the std HashMap has a limitation on
-    // tuples of references
-    #[derive(Hash, Eq, PartialEq)]
-    struct UniqueWeather {
-        name: String,
-        emoji: String,
-        tooltip: String,
-    }
-
-    impl Into<UniqueWeather> for DbWeather {
-        fn into(self) -> UniqueWeather {
-            UniqueWeather {
-                name: self.name,
-                emoji: self.emoji,
-                tooltip: self.tooltip,
-            }
-        }
-    }
-
-    impl Equivalent<UniqueWeather> for (&str, &str, &str) {
-        fn equivalent(&self, key: &UniqueWeather) -> bool {
-            self.0 == key.name && self.1 == key.emoji && self.2 == key.tooltip
-        }
-    }
-
-    let mut weather_table = weather_dsl::weather
-        .select(DbWeather::as_select())
-        .load_iter::<DbWeather, DefaultLoadingMode>(conn)?
-        .map_ok(|weather| {
-            let id = weather.id; // Lifetime reasons
-            (weather.into(), id)
-        })
-        .collect::<QueryResult<HashMap<UniqueWeather, i64>>>()?;
-
-    let new_weathers = games.iter()
-        .map(GameForDb::raw)
-        .filter_map(|(_, raw_game)| {
-            if weather_table.contains_key(&(
-                raw_game.weather.name.as_str(),
-                raw_game.weather.emoji.as_str(),
-                raw_game.weather.tooltip.as_str(),
-            )) {
-                None
-            } else {
-                Some(NewWeather {
-                    name: &raw_game.weather.name,
-                    emoji: &raw_game.weather.emoji,
-                    tooltip: &raw_game.weather.tooltip,
-                })
-            }
-        })
-        .unique_by(|w| (w.name, w.emoji, w.tooltip))
-        .collect_vec();
-
-    let inserted_weathers = diesel::insert_into(weather_dsl::weather)
-        .values(&new_weathers)
-        .returning(DbWeather::as_returning())
-        .get_results::<DbWeather>(conn)?;
-
-    weather_table.extend(
-        inserted_weathers.into_iter()
-            .map(|weather| {
-                let id = weather.id; // Lifetime reasons
-                (weather.into(), id)
-            })
-    );
-
-    // Make immutable
-    let weather_table = weather_table;
-
+    let insert_games_start = Utc::now();
     let new_games = games.iter()
         .map(|game| {
             let (game_id, raw_game) = game.raw();
@@ -678,7 +620,9 @@ fn insert_games_internal<'e>(
             GameForDb::Completed(game) => { Some((game_id, game)) }
         })
         .collect_vec();
+    let insert_games_duration = (Utc::now() - insert_games_start).as_seconds_f64();
 
+    let insert_raw_events_start = Utc::now();
     let new_raw_events = games.iter()
         .flat_map(|(game_id, game)| {
             game.raw_game.event_log.iter()
@@ -703,7 +647,9 @@ fn insert_games_internal<'e>(
         "Raw events insert should have inserted {} rows, but it inserted {}",
         n_raw_events_to_insert, n_raw_events_inserted,
     );
+    let insert_raw_events_duration = (Utc::now() - insert_raw_events_start).as_seconds_f64();
 
+    let insert_logs_start = Utc::now();
     let new_logs = games.iter()
         .flat_map(|(game_id, game)| {
             game.logs.iter()
@@ -735,7 +681,9 @@ fn insert_games_internal<'e>(
         "Event ingest logs insert should have inserted {} rows, but it inserted {}",
         n_logs_to_insert, n_logs_inserted,
     );
+    let insert_logs_duration = (Utc::now() - insert_logs_start).as_seconds_f64();
 
+    let insert_events_start = Utc::now();
     let new_events: Vec<_> = games.iter()
         .flat_map(|(game_id, game)| {
             game.events.iter()
@@ -753,7 +701,9 @@ fn insert_games_internal<'e>(
         "Events insert should have inserted {} rows, but it inserted {}",
         n_events_to_insert, n_events_inserted,
     );
+    let insert_events_duration = (Utc::now() - insert_logs_start).as_seconds_f64();
 
+    let get_event_ids_start = Utc::now();
     // Postgres' copy doesn't support returning ids, but we need them, so we query them from scratch
     let event_ids = events_dsl::events
         .filter(events_dsl::game_id.eq_any(&game_ids))
@@ -770,7 +720,9 @@ fn insert_games_internal<'e>(
             group.map(|(_, event_id)| event_id).collect_vec(),
         ))
         .collect_vec();
+    let get_event_ids_duration = (Utc::now() - get_event_ids_start).as_seconds_f64();
 
+    let insert_baserunners_start = Utc::now();
     let new_baserunners = iter::zip(&event_ids_by_game, &games)
         .flat_map(|((game_id_a, event_ids), (game_id_b, game))| {
             assert_eq!(game_id_a, *game_id_b);
@@ -793,7 +745,9 @@ fn insert_games_internal<'e>(
         "Event baserunners insert should have inserted {} rows, but it inserted {}",
         n_baserunners_to_insert, n_baserunners_inserted,
     );
+    let insert_baserunners_duration = (Utc::now() - insert_baserunners_start).as_seconds_f64();
 
+    let insert_fielders_start = Utc::now();
     let new_fielders = iter::zip(&event_ids_by_game, &games)
         .flat_map(|((game_id_a, event_ids), (game_id_b, game))| {
             assert_eq!(game_id_a, *game_id_b);
@@ -816,8 +770,19 @@ fn insert_games_internal<'e>(
         "Event fielders insert should have inserted {} rows, but it inserted {}",
         n_fielders_to_insert, n_fielders_inserted,
     );
+    let insert_fielders_duration = (Utc::now() - insert_fielders_start).as_seconds_f64();
 
-    Ok(game_ids)
+    Ok(InsertGamesTimings {
+        delete_old_games_duration,
+        update_weather_table_duration,
+        insert_games_duration,
+        insert_raw_events_duration,
+        insert_logs_duration,
+        insert_events_duration,
+        get_event_ids_duration,
+        insert_baserunners_duration,
+        insert_fielders_duration,
+    })
 }
 
 pub fn insert_additional_ingest_logs(
@@ -931,6 +896,7 @@ pub struct Timings {
     pub filter_finished_games_duration: f64,
     pub parse_and_sim_duration: f64,
     pub db_insert_duration: f64,
+    pub db_insert_timings: InsertGamesTimings,
     pub db_fetch_for_check_duration: f64,
     pub events_for_game_timings: EventsForGameTimings,
     pub check_round_trip_duration: f64,
@@ -971,6 +937,15 @@ pub fn insert_timings(
             .events_for_game_timings
             .post_process_duration,
         db_insert_duration: timings.db_insert_duration,
+        db_insert_delete_old_games_duration: timings.db_insert_timings.delete_old_games_duration,
+        db_insert_update_weather_table_duration: timings.db_insert_timings.update_weather_table_duration,
+        db_insert_insert_games_duration: timings.db_insert_timings.insert_games_duration,
+        db_insert_insert_raw_events_duration: timings.db_insert_timings.insert_raw_events_duration,
+        db_insert_insert_logs_duration: timings.db_insert_timings.insert_logs_duration,
+        db_insert_insert_events_duration: timings.db_insert_timings.insert_events_duration,
+        db_insert_get_event_ids_duration: timings.db_insert_timings.get_event_ids_duration,
+        db_insert_insert_baserunners_duration: timings.db_insert_timings.insert_baserunners_duration,
+        db_insert_insert_fielders_duration: timings.db_insert_timings.insert_fielders_duration,
         db_fetch_for_check_duration: timings.db_fetch_for_check_duration,
         check_round_trip_duration: timings.check_round_trip_duration,
         insert_extra_logs_duration: timings.insert_extra_logs_duration,

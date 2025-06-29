@@ -26,7 +26,7 @@ pub struct NewWeather<'a> {
     pub tooltip: &'a str,
 }
 
-#[derive(Identifiable, Queryable, Selectable, QueryableByName)]
+#[derive(Debug, Identifiable, Queryable, Selectable, QueryableByName)]
 #[diesel(table_name = crate::data_schema::data::weather)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct DbWeather {
@@ -187,6 +187,15 @@ pub struct NewGameIngestTimings {
     pub filter_finished_games_duration: f64,
     pub parse_and_sim_duration: f64,
     pub db_insert_duration: f64,
+    pub db_insert_delete_old_games_duration: f64,
+    pub db_insert_update_weather_table_duration: f64,
+    pub db_insert_insert_games_duration: f64,
+    pub db_insert_insert_raw_events_duration: f64,
+    pub db_insert_insert_logs_duration: f64,
+    pub db_insert_insert_events_duration: f64,
+    pub db_insert_get_event_ids_duration: f64,
+    pub db_insert_insert_baserunners_duration: f64,
+    pub db_insert_insert_fielders_duration: f64,
     pub db_fetch_for_check_duration: f64,
     pub db_fetch_for_check_get_game_id_duration: f64,
     pub db_fetch_for_check_get_events_duration: f64,

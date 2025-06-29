@@ -131,8 +131,19 @@ create table info.ingest_timings (
     
     filter_finished_games_duration float8 not null,
     parse_and_sim_duration float8 not null,
-    db_insert_duration float8 not null,
-    db_fetch_for_check_duration float8 not null, -- overlaps
+    
+    db_insert_duration float8 not null, -- overlaps all the other db_insert_duration
+    db_insert_delete_old_games_duration float8 not null,
+    db_insert_update_weather_table_duration float8 not null,
+    db_insert_insert_games_duration float8 not null,
+    db_insert_insert_raw_events_duration float8 not null,
+    db_insert_insert_logs_duration float8 not null,
+    db_insert_insert_events_duration float8 not null,
+    db_insert_get_event_ids_duration float8 not null,
+    db_insert_insert_baserunners_duration float8 not null,
+    db_insert_insert_fielders_duration float8 not null,
+    
+    db_fetch_for_check_duration float8 not null, -- overlaps all the other db_fetch_for_check
     db_fetch_for_check_get_game_id_duration float8 not null,
     db_fetch_for_check_get_events_duration float8 not null,
     db_fetch_for_check_group_events_duration float8 not null,
@@ -141,6 +152,7 @@ create table info.ingest_timings (
     db_fetch_for_check_get_fielders_duration float8 not null,
     db_fetch_for_check_group_fielders_duration float8 not null,
     db_fetch_for_check_post_process_duration float8 not null,
+    
     check_round_trip_duration float8 not null,
     insert_extra_logs_duration float8 not null,
     save_duration float8 not null -- overlaps everything but fetch_duration

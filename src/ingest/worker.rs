@@ -113,7 +113,7 @@ impl IngestWorker {
         let parse_and_sim_duration = (Utc::now() - parse_and_sim_start).as_seconds_f64();
 
         let db_insert_start = Utc::now();
-        db::insert_games(conn, &self.taxa, self.ingest_id, &games_for_db)?;
+        let db_insert_timings = db::insert_games(conn, &self.taxa, self.ingest_id, &games_for_db)?;
         let db_insert_duration = (Utc::now() - db_insert_start).as_seconds_f64();
 
         // Immediately turn around and fetch all the games we just inserted,
@@ -197,6 +197,7 @@ impl IngestWorker {
             filter_finished_games_duration,
             parse_and_sim_duration,
             db_insert_duration,
+            db_insert_timings,
             db_fetch_for_check_duration,
             events_for_game_timings,
             check_round_trip_duration,
