@@ -15,6 +15,11 @@ devcontainers work myself so I won't give any more information than that.
 The other option, which I can provide more support for, is using docker 
 compose directly.
 
+Note: It was previously necessary to add `-f docker-compose-prod.yml` to all
+docker compose commands. That is no longer necessary, and in fact if you do
+that you will get an error. You don't need any `-f` any more. (If for some
+reason you really want one, now use `-f docker-prod/docker-compose.yml`.)
+
 First-run Setup
 ---------------
 
@@ -50,7 +55,7 @@ manual process:
 3. `docker compose build` to rebuild the container. If you don't do this you 
    won't see the changes.
 4. `docker volume rm mmoldb_postgres-data` to remove the database volume.
-5. Run the app again using steps 3-5 of the install instructions.
+5. Run the app again using the "Running" instructions.
 
 Debug
 -----
@@ -77,6 +82,13 @@ If you want to stop running the containers *and* delete the database, add the
 mmoldb is not designed to be a primary source for MMOLB data, so it should 
 always be safe to delete the database. All that's required to rebuild it is
 time and the availability of the actual primary sources.
+
+Contributing
+------------
+
+Contributions are very welcome! There are guides on how to contribute specific
+things in the `contributing` folder. Contributions that contribute additional
+guides are also welcome.
 
 [mmolb]: https://mmolb.com/
 [mmoldb]: https://mmoldb.beiju.me/
