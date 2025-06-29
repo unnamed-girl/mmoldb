@@ -1,5 +1,5 @@
-mod sim;
 mod chron;
+mod sim;
 mod worker;
 
 // Reexports
@@ -8,31 +8,31 @@ pub use sim::{EventDetail, EventDetailFielder, EventDetailRunner, IngestLog};
 // Third party dependencies
 use chrono::{DateTime, TimeZone, Utc};
 use chrono_humanize::HumanTime;
+use diesel::PgConnection;
+use itertools::Itertools;
 use log::{error, info, warn};
 use rocket::fairing::{Fairing, Info, Kind};
 use rocket::tokio::sync::{Notify, RwLock};
 use rocket::tokio::task::JoinHandle;
-use rocket::{Orbit, Rocket, Shutdown, tokio, figment};
+use rocket::{Orbit, Rocket, Shutdown, figment, tokio};
+use rocket_sync_db_pools::ConnectionPool;
 use serde::Deserialize;
-use std::mem;
 use std::collections::VecDeque;
+use std::mem;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use diesel::PgConnection;
-use itertools::Itertools;
-use rocket_sync_db_pools::ConnectionPool;
 use thiserror::Error;
 
 // First party dependencies
-use crate::ingest::chron::{ChronEntities, ChronEntity, ChronError, GameExt};
 use crate::db::{CompletedGameForDb, GameForDb, RowToEventError, Taxa, Timings};
+use crate::ingest::chron::{ChronEntities, ChronEntity, ChronError, GameExt};
 use crate::ingest::sim::{Game, SimFatalError};
-use crate::{Db, db};
 use crate::ingest::worker::{IngestWorker, IngestWorkerInProgress};
+use crate::{Db, db};
 
 fn default_ingest_period() -> u64 {
-    30 * 60  // 30 minutes, expressed in seconds
+    30 * 60 // 30 minutes, expressed in seconds
 }
 
 fn default_page_size() -> usize {
@@ -43,7 +43,10 @@ fn default_ingest_parallelism() -> usize {
     match std::thread::available_parallelism() {
         Ok(parallelism) => parallelism.into(),
         Err(err) => {
-            warn!("Unable to detect available parallelism (falling back to 1): {}", err);
+            warn!(
+                "Unable to detect available parallelism (falling back to 1): {}",
+                err
+            );
             1
         }
     }
@@ -89,7 +92,7 @@ pub enum IngestFatalError {
 
     #[error("Ingest task transitioned to NotStarted state from some other state")]
     ReenteredNotStarted,
-    
+
     #[error("Couldn't open HTTP cache database: {0}")]
     OpenCacheDbError(#[from] sled::Error),
 
@@ -104,7 +107,7 @@ pub enum IngestFatalError {
 
     #[error(transparent)]
     JoinError(#[from] tokio::task::JoinError),
-    
+
     #[error("User requested early termination")]
     ShutdownRequested,
 }
@@ -204,8 +207,9 @@ impl Fairing for IngestFairing {
             error!("Cannot launch ingest task: HTTP_CACHE_DIR environment variable is not set");
             return;
         };
-        
-        let augmented_figment = rocket.figment()
+
+        let augmented_figment = rocket
+            .figment()
             .clone() // Might be able to get away without this but. eh
             .join(("cache_path", cache_path));
         let config = match augmented_figment.extract() {
@@ -280,21 +284,22 @@ async fn launch_ingest_task(
     shutdown: Shutdown,
 ) -> Result<JoinHandle<()>, IngestSetupError> {
     let Some(conn) = pool.get().await else {
-        return Err(IngestSetupError::CouldNotGetConnection)
+        return Err(IngestSetupError::CouldNotGetConnection);
     };
 
-    let (taxa, previous_ingest_start_time) = conn.run(move |conn| {
-        let taxa = Taxa::new(conn)?;
+    let (taxa, previous_ingest_start_time) = conn
+        .run(move |conn| {
+            let taxa = Taxa::new(conn)?;
 
-        let previous_ingest_start_time = if config.start_ingest_every_launch {
-            None
-        } else {
-            db::latest_ingest_start_time(conn)?
-                .map(|t| Utc.from_utc_datetime(&t))
-        };
+            let previous_ingest_start_time = if config.start_ingest_every_launch {
+                None
+            } else {
+                db::latest_ingest_start_time(conn)?.map(|t| Utc.from_utc_datetime(&t))
+            };
 
-        Ok::<_, IngestSetupError>((taxa, previous_ingest_start_time))
-    }).await?;
+            Ok::<_, IngestSetupError>((taxa, previous_ingest_start_time))
+        })
+        .await?;
 
     Ok(tokio::spawn(ingest_task_runner(
         pool,
@@ -421,50 +426,52 @@ async fn ingest_task_runner(
 
         let Some(conn) = pool.get().await else {
             let mut task_state = task.state.write().await;
-            *task_state = IngestTaskState::ExitedWithError(
-                IngestFatalError::CouldNotGetConnection,
-            );
+            *task_state = IngestTaskState::ExitedWithError(IngestFatalError::CouldNotGetConnection);
             return;
         };
 
-        conn.run(move |conn| {
-            match ingest_result {
-                Ok((ingest_id, start_next_ingest_at_page)) => {
-                    let ingest_end = Utc::now();
-                    match db::mark_ingest_finished(conn, ingest_id, ingest_end, start_next_ingest_at_page.as_deref()) {
-                        Ok(()) => {
-                            info!(
-                                "Marked ingest {ingest_id} finished {:#}.",
-                                HumanTime::from(ingest_end - ingest_start),
-                            );
-                        }
-                        Err(err) => {
-                            error!("Failed to mark game ingest as finished: {}", err);
-                        }
+        conn.run(move |conn| match ingest_result {
+            Ok((ingest_id, start_next_ingest_at_page)) => {
+                let ingest_end = Utc::now();
+                match db::mark_ingest_finished(
+                    conn,
+                    ingest_id,
+                    ingest_end,
+                    start_next_ingest_at_page.as_deref(),
+                ) {
+                    Ok(()) => {
+                        info!(
+                            "Marked ingest {ingest_id} finished {:#}.",
+                            HumanTime::from(ingest_end - ingest_start),
+                        );
                     }
-                }
-                Err((err, ingest_id)) => {
-                    if let Some(ingest_id) = ingest_id {
-                        error!(
-                            "Fatal error in game ingest: {}. This ingest is aborted.",
-                            err
-                        );
-                        match db::mark_ingest_aborted(conn, ingest_id, Utc::now()) {
-                            Ok(()) => {}
-                            Err(err) => {
-                                error!("Failed to mark game ingest as aborted: {}", err);
-                            }
-                        }
-                    } else {
-                        error!(
-                            "Fatal error in game ingest before adding ingest to database: {}. \
-                            This ingest is aborted.",
-                            err,
-                        );
+                    Err(err) => {
+                        error!("Failed to mark game ingest as finished: {}", err);
                     }
                 }
             }
-        }).await;
+            Err((err, ingest_id)) => {
+                if let Some(ingest_id) = ingest_id {
+                    error!(
+                        "Fatal error in game ingest: {}. This ingest is aborted.",
+                        err
+                    );
+                    match db::mark_ingest_aborted(conn, ingest_id, Utc::now()) {
+                        Ok(()) => {}
+                        Err(err) => {
+                            error!("Failed to mark game ingest as aborted: {}", err);
+                        }
+                    }
+                } else {
+                    error!(
+                        "Fatal error in game ingest before adding ingest to database: {}. \
+                            This ingest is aborted.",
+                        err,
+                    );
+                }
+            }
+        })
+        .await;
 
         // Try to transition from running to idle, with lots of
         // recovery behaviors
@@ -531,46 +538,45 @@ async fn do_ingest(
     // The only thing that errors here is opening the http cache, which
     // could be worked around by just not caching. I don't currently support
     // running without a cache but it could be added fairly easily.
-    let chron = chron::Chron::new(config.cache_http_responses, &config.cache_path, config.game_list_page_size)
-        .map_err(|err| (err.into(), None))?;
+    let chron = chron::Chron::new(
+        config.cache_http_responses,
+        &config.cache_path,
+        config.game_list_page_size,
+    )
+    .map_err(|err| (err.into(), None))?;
 
     info!("Initialized chron");
 
-    let conn= pool.get().await
+    let conn = pool
+        .get()
+        .await
         .ok_or_else(|| (IngestFatalError::CouldNotGetConnection, None))?;
 
     // For lifetime reasons
     let reimport_all_games = config.reimport_all_games;
-    let (start_page, ingest_id) = conn.run(move |conn| {
-        let start_page = if reimport_all_games {
-            None
-        } else {
-            db::next_ingest_start_page(conn)
-                .map_err(|e| (e.into(), None))?
-        };
+    let (start_page, ingest_id) = conn
+        .run(move |conn| {
+            let start_page = if reimport_all_games {
+                None
+            } else {
+                db::next_ingest_start_page(conn).map_err(|e| (e.into(), None))?
+            };
 
-        info!("Got last completed page");
+            info!("Got last completed page");
 
-        let ingest_id = db::start_ingest(conn, ingest_start)
-            .map_err(|e| (e.into(), None))?;
+            let ingest_id = db::start_ingest(conn, ingest_start).map_err(|e| (e.into(), None))?;
 
-        info!("Inserted new ingest");
+            info!("Inserted new ingest");
 
-        Ok((start_page, ingest_id))
-    }).await?;
+            Ok((start_page, ingest_id))
+        })
+        .await?;
 
     info!("Finished first db block");
 
-    do_ingest_internal(
-        pool,
-        taxa,
-        config,
-        &chron,
-        ingest_id,
-        start_page,
-    )
-    .await
-    .map_err(|e| (e.into(), Some(ingest_id)))
+    do_ingest_internal(pool, taxa, config, &chron, ingest_id, start_page)
+        .await
+        .map_err(|e| (e.into(), Some(ingest_id)))
 }
 
 struct IngestStats {
@@ -670,7 +676,8 @@ async fn do_ingest_internal(
         // Get a worker
         let worker = if ingests_in_progress.front().map_or(false, |i| i.is_ready()) {
             // If the frontmost ingest is already done, we can just reuse its worker
-            let outcome = ingests_in_progress.pop_front()
+            let outcome = ingests_in_progress
+                .pop_front()
                 .expect("This branch should never be entered if ingests_in_progress is empty")
                 .into_future()
                 .await?;
@@ -685,7 +692,8 @@ async fn do_ingest_internal(
             // in principle, we could reuse it. However, it's important that
             // finish_ingest_page be called for each page *in order*, which
             // makes implementation of out-of-order worker reuse non-trivial.
-            let outcome = ingests_in_progress.pop_front()
+            let outcome = ingests_in_progress
+                .pop_front()
                 .expect("There must be ingests in the queue if the worker limit has been reached")
                 .into_future()
                 .await?;
@@ -696,9 +704,10 @@ async fn do_ingest_internal(
         // Try to the last completed page in the db
         if let Some(conn) = pool.get().await {
             let page = page_progress.next_ingest_start_page.clone();
-            if let Err(err) = conn.run(move |conn| {
-                db::update_next_ingest_start_page(conn, ingest_id, page)
-            }).await {
+            if let Err(err) = conn
+                .run(move |conn| db::update_next_ingest_start_page(conn, ingest_id, page))
+                .await
+            {
                 warn!("Failed to update next ingest start page. Error: {:?}", err);
             }
         } else {
@@ -716,16 +725,27 @@ async fn do_ingest_internal(
         // Worker gets dropped here
     }
 
-    info!("Ingest finished using {actual_parallelism}/{} workers", config.ingest_parallelism);
+    info!(
+        "Ingest finished using {actual_parallelism}/{} workers",
+        config.ingest_parallelism
+    );
     info!("{} games ingested", page_progress.stats.num_games_imported);
-    info!("{} ongoing games skipped", page_progress.stats.num_ongoing_games_skipped);
-    info!("{} terminal incomplete (bugged) games skipped", page_progress.stats.num_terminal_incomplete_games_skipped);
-    info!("{} games already ingested", page_progress.stats.num_already_ingested_games_skipped);
+    info!(
+        "{} ongoing games skipped",
+        page_progress.stats.num_ongoing_games_skipped
+    );
+    info!(
+        "{} terminal incomplete (bugged) games skipped",
+        page_progress.stats.num_terminal_incomplete_games_skipped
+    );
+    info!(
+        "{} games already ingested",
+        page_progress.stats.num_already_ingested_games_skipped
+    );
     info!(
         "{} pages of games finalized this time. \
         {} pages will be re-ingested next time to catch incomplete games.",
-        page_progress.pages_finished_before_freeze,
-        page_progress.pages_finished_after_freeze,
+        page_progress.pages_finished_before_freeze, page_progress.pages_finished_after_freeze,
     );
 
     Ok((ingest_id, page_progress.next_ingest_start_page))

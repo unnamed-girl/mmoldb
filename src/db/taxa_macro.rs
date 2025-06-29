@@ -122,8 +122,8 @@ macro_rules! taxa_as_insertable_impl {
 macro_rules! taxa {
     (
         #[
-            schema = $schema:path, 
-            table = $table:path, 
+            schema = $schema:path,
+            table = $table:path,
             id_column = $id_column:path
             $(, derive = ($($derive:ident),* $(,)?))?
             $(,)?
@@ -140,4 +140,4 @@ macro_rules! taxa {
     };
 }
 
-pub use {taxa, taxa_main_enum, taxa_insertable_enum, taxa_as_insertable_impl};
+pub use {taxa, taxa_as_insertable_impl, taxa_insertable_enum, taxa_main_enum};

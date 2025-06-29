@@ -1,10 +1,10 @@
-use crate::db::{weather, GameForDb};
+use crate::db::{GameForDb, weather};
 use crate::models::{DbWeather, NewWeather};
 use diesel::connection::DefaultLoadingMode;
 use diesel::prelude::*;
-use diesel::{QueryResult, RunQueryDsl};
 use diesel::result::DatabaseErrorKind;
 use diesel::result::Error::DatabaseError;
+use diesel::{QueryResult, RunQueryDsl};
 use hashbrown::{Equivalent, HashMap};
 use itertools::Itertools;
 use log::{info, warn};
@@ -37,7 +37,10 @@ impl Equivalent<UniqueWeather> for (&str, &str, &str) {
 
 pub(super) type WeatherTable = HashMap<UniqueWeather, i64>;
 
-pub(super) fn create_weather_table(conn: &mut PgConnection, games: &[GameForDb]) -> QueryResult<WeatherTable> {
+pub(super) fn create_weather_table(
+    conn: &mut PgConnection,
+    games: &[GameForDb],
+) -> QueryResult<WeatherTable> {
     let weather_table = loop {
         match create_weather_table_inner(conn, games)? {
             OrRetry::Result(weather_table) => break weather_table,
@@ -55,7 +58,10 @@ enum OrRetry<T> {
     Retry,
 }
 
-fn create_weather_table_inner(conn: &mut PgConnection, games: &[GameForDb]) -> QueryResult<OrRetry<WeatherTable>> {
+fn create_weather_table_inner(
+    conn: &mut PgConnection,
+    games: &[GameForDb],
+) -> QueryResult<OrRetry<WeatherTable>> {
     use crate::data_schema::data::weather::dsl as weather_dsl;
     // Get or create weather
     // Note: Based on what I read online, trying an insert and catching unique
@@ -76,7 +82,8 @@ fn create_weather_table_inner(conn: &mut PgConnection, games: &[GameForDb]) -> Q
 
     info!("Read weather table: {:#?}", weather_table);
 
-    let new_weathers = games.iter()
+    let new_weathers = games
+        .iter()
         .map(GameForDb::raw)
         .filter_map(|(_, raw_game)| {
             if weather_table.contains_key(&(
@@ -117,13 +124,10 @@ fn create_weather_table_inner(conn: &mut PgConnection, games: &[GameForDb]) -> Q
 
         info!("Inserted new weathers: {:#?}", inserted_weathers);
 
-        weather_table.extend(
-            inserted_weathers.into_iter()
-                .map(|weather| {
-                    let id = weather.id; // Lifetime reasons
-                    (weather.into(), id)
-                })
-        );
+        weather_table.extend(inserted_weathers.into_iter().map(|weather| {
+            let id = weather.id; // Lifetime reasons
+            (weather.into(), id)
+        }));
 
         info!("Updated weather table: {:#?}", weather_table);
     }

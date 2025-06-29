@@ -9,11 +9,14 @@ use mmolb_parsing::enums::{
     Base, BaseNameVariant, BatterStat, Distance, FairBallDestination, FairBallType, FoulType,
     GameOverMessage, HomeAway, NowBattingStats, StrikeType, TopBottom,
 };
-use mmolb_parsing::parsed_event::{BaseSteal, FieldingAttempt, ParsedEventMessageDiscriminants, PositionedPlayer, RunnerAdvance, RunnerOut, StartOfInningPitcher};
-use std::collections::{HashMap, VecDeque};
-use std::fmt::{Write};
-use std::fmt::{Debug, Formatter};
 use mmolb_parsing::game::MaybePlayer;
+use mmolb_parsing::parsed_event::{
+    BaseSteal, FieldingAttempt, ParsedEventMessageDiscriminants, PositionedPlayer, RunnerAdvance,
+    RunnerOut, StartOfInningPitcher,
+};
+use std::collections::{HashMap, VecDeque};
+use std::fmt::Write;
+use std::fmt::{Debug, Formatter};
 use strum::IntoDiscriminant;
 use thiserror::Error;
 
@@ -101,7 +104,10 @@ pub struct IngestLogs {
 
 impl IngestLogs {
     pub fn new(game_event_index: i32) -> Self {
-        Self { game_event_index, logs: Vec::new() }
+        Self {
+            game_event_index,
+            logs: Vec::new(),
+        }
     }
 
     pub fn critical(&mut self, s: impl Into<String>) {
@@ -170,7 +176,7 @@ struct FairBall {
     game_event_index: usize,
     fair_ball_type: FairBallType,
     fair_ball_destination: FairBallDestination,
-    pitch: Option<Pitch>
+    pitch: Option<Pitch>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -482,8 +488,8 @@ impl<'g> EventDetailBuilder<'g> {
     }
 
     fn fielders_with_perfect_catch(
-        self, 
-        fielders: impl IntoIterator<Item = PositionedPlayer<&'g str>>, 
+        self,
+        fielders: impl IntoIterator<Item = PositionedPlayer<&'g str>>,
         perfect_catch: bool,
         ingest_logs: &mut IngestLogs,
     ) -> Self {
@@ -1760,11 +1766,13 @@ impl<'g> Game<'g> {
                 },
             ),
             GamePhase::ExpectPitch(batter_name) => {
-                let pitch = raw_event.pitch.as_ref().and_then(|p| Some(Pitch {
-                    pitch_speed: p.speed,
-                    pitch_type: *p.pitch_type.inner()?,
-                    pitch_zone: p.zone
-                }));
+                let pitch = raw_event.pitch.as_ref().and_then(|p| {
+                    Some(Pitch {
+                        pitch_speed: p.speed,
+                        pitch_type: *p.pitch_type.inner()?,
+                        pitch_zone: p.zone,
+                    })
+                });
 
                 if raw_event.pitch.is_none() {
                     ingest_logs.error("Event is mising a pitch");
@@ -1991,7 +1999,7 @@ impl<'g> Game<'g> {
                     }, ingest_logs);
                     self.add_out();
                     self.finish_pa(batter_name);
-                    
+
                     detail_builder
                         .fair_ball(fair_ball)
                         .fielders_with_perfect_catch(fielders.clone(), *perfect, ingest_logs)
@@ -2882,14 +2890,15 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
             TaxaEventType::GroundedOut => {
                 let fielders = self.fielders();
                 let perfect = if let Some(first_fielder) = self.fielders.first() {
-                    first_fielder.is_perfect_catch
-                        .ok_or_else(|| ToParsedError::MissingPerfectCatch {
+                    first_fielder.is_perfect_catch.ok_or_else(|| {
+                        ToParsedError::MissingPerfectCatch {
                             event_type: self.detail_type,
-                        })?
+                        }
+                    })?
                 } else {
                     false
                 };
-                
+
                 ParsedEventMessage::GroundedOut {
                     batter: self.batter_name.as_ref(),
                     fielders,
@@ -2897,7 +2906,7 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                     advances: self.advances(false),
                     perfect,
                 }
-            },
+            }
             TaxaEventType::Walk => ParsedEventMessage::Walk {
                 batter: self.batter_name.as_ref(),
                 scores: self.scores(),

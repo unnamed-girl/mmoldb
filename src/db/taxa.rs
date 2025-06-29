@@ -1,11 +1,11 @@
 use paste::paste;
 
-use diesel::QueryResult;
-use enum_map::EnumMap;
-use diesel::{PgConnection, RunQueryDsl};
-use std::collections::HashSet;
 use super::taxa_macro::*;
+use diesel::QueryResult;
+use diesel::{PgConnection, RunQueryDsl};
+use enum_map::EnumMap;
 use rocket_sync_db_pools::diesel::prelude::*;
+use std::collections::HashSet;
 
 taxa! {
     #[

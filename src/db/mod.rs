@@ -1,6 +1,6 @@
 mod taxa;
-mod to_db_format;
 mod taxa_macro;
+mod to_db_format;
 mod weather;
 
 use std::collections::HashMap;
@@ -8,15 +8,15 @@ use std::collections::HashMap;
 pub use to_db_format::RowToEventError;
 
 // Third-party imports
-use std::iter;
-use diesel::{PgConnection, prelude::*, sql_types::*, sql_query};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use diesel::query_builder::SqlQuery;
 use diesel::result::DatabaseErrorKind;
 use diesel::result::Error::DatabaseError;
+use diesel::{PgConnection, prelude::*, sql_query, sql_types::*};
 use itertools::Itertools;
 use log::warn;
 use mmolb_parsing::ParsedEventMessage;
+use std::iter;
 
 // First-party imports
 pub use crate::db::taxa::{
@@ -24,7 +24,10 @@ pub use crate::db::taxa::{
     TaxaFairBallType, TaxaFieldingErrorType, TaxaHitType, TaxaPitchType, TaxaPosition,
 };
 use crate::ingest::{EventDetail, IngestLog};
-use crate::models::{DbEvent, DbEventIngestLog, DbFielder, DbGame, DbRawEvent, DbRunner, DbIngest, NewEventIngestLog, NewGame, NewGameIngestTimings, NewIngest, NewRawEvent, NewWeather, DbWeather};
+use crate::models::{
+    DbEvent, DbEventIngestLog, DbFielder, DbGame, DbIngest, DbRawEvent, DbRunner, DbWeather,
+    NewEventIngestLog, NewGame, NewGameIngestTimings, NewIngest, NewRawEvent, NewWeather,
+};
 
 pub fn ingest_count(conn: &mut PgConnection) -> QueryResult<i64> {
     use crate::info_schema::info::ingests::dsl;
@@ -34,7 +37,7 @@ pub fn ingest_count(conn: &mut PgConnection) -> QueryResult<i64> {
 
 pub fn is_finished(conn: &mut PgConnection, ids: &[&str]) -> QueryResult<Vec<(String, bool)>> {
     use crate::data_schema::data::games::dsl;
-    
+
     dsl::games
         .filter(dsl::mmolb_game_id.eq_any(ids))
         .select((dsl::mmolb_game_id, dsl::is_finished))
@@ -57,9 +60,7 @@ pub fn game_with_issues_count(conn: &mut PgConnection) -> QueryResult<i64> {
         .get_result(conn)
 }
 
-pub fn latest_ingest_start_time(
-    conn: &mut PgConnection,
-) -> QueryResult<Option<NaiveDateTime>> {
+pub fn latest_ingest_start_time(conn: &mut PgConnection) -> QueryResult<Option<NaiveDateTime>> {
     use crate::info_schema::info::ingests::dsl::*;
 
     ingests
@@ -69,9 +70,7 @@ pub fn latest_ingest_start_time(
         .optional()
 }
 
-pub fn next_ingest_start_page(
-    conn: &mut PgConnection,
-) -> QueryResult<Option<String>> {
+pub fn next_ingest_start_page(conn: &mut PgConnection) -> QueryResult<Option<String>> {
     use crate::info_schema::info::ingests::dsl::*;
 
     ingests
@@ -132,7 +131,7 @@ pub fn start_ingest(conn: &mut PgConnection, at: DateTime<Utc>) -> QueryResult<i
     }
     .insert_into(ingests)
     .returning(id)
-    .get_result(conn) 
+    .get_result(conn)
 }
 
 pub fn mark_ingest_finished(
@@ -147,13 +146,13 @@ pub fn mark_ingest_finished(
         .set((
             dsl::finished_at.eq(at.naive_utc()),
             dsl::start_next_ingest_at_page.eq(start_next_ingest_at_page),
-         ))
+        ))
         .execute(conn)
         .map(|_| ())
 }
 
-// It is assumed that an aborted ingest won't have a later 
-// latest_completed_season than the previous ingest. That is not 
+// It is assumed that an aborted ingest won't have a later
+// latest_completed_season than the previous ingest. That is not
 // necessarily true, but it's inconvenient to refactor the code to
 // support it.
 pub fn mark_ingest_aborted(
@@ -192,7 +191,8 @@ pub(crate) struct GameWithIssueCounts {
 }
 
 pub fn games_list_base() -> SqlQuery {
-    sql_query("
+    sql_query(
+        "
         with counts as (select
                 l.game_id,
                 sum(case when l.log_level = 0 then 1 else 0 end) as critical_count,
@@ -209,7 +209,8 @@ pub fn games_list_base() -> SqlQuery {
             coalesce(counts.warnings_count, 0) as warnings_count
         from data.games g
             left join counts on g.id = counts.game_id
-    ")
+    ",
+    )
 }
 
 pub fn games_list() -> SqlQuery {
@@ -218,9 +219,9 @@ pub fn games_list() -> SqlQuery {
 }
 
 pub fn games_with_issues_list() -> SqlQuery {
-    games_list_base().sql("
-        where counts.critical_count > 0 or counts.errors_count > 0 or counts.warnings_count > 0
-    ")
+    games_list_base().sql(
+        "where counts.critical_count > 0 or counts.errors_count > 0 or counts.warnings_count > 0",
+    )
 }
 
 pub fn games_from_ingest_list(ingest_id: i64) -> SqlQuery {
@@ -228,9 +229,9 @@ pub fn games_from_ingest_list(ingest_id: i64) -> SqlQuery {
     //   prepared query I can't bind a value and then keep appending
     //   more sql. The TODO here is to figure out how to get rid of
     //   this format! without making the code way more complicated.
-    games_list_base().sql(format!("
-        where g.ingest = {ingest_id}
-    "))
+    games_list_base().sql(format!(
+        "where g.ingest = {ingest_id}"
+    ))
 }
 
 pub fn ingest_with_games(
@@ -245,7 +246,12 @@ pub fn ingest_with_games(
         .filter(ingest_dsl::id.eq(for_ingest_id))
         .get_result::<DbIngest>(conn)?;
 
-    let games = page_of_games_generic(conn, page_size, after_game_id, games_from_ingest_list(for_ingest_id))?;
+    let games = page_of_games_generic(
+        conn,
+        page_size,
+        after_game_id,
+        games_from_ingest_list(for_ingest_id),
+    )?;
 
     Ok((ingest, games))
 }
@@ -266,48 +272,61 @@ pub fn page_of_games_generic(
     // Get N + 1 games so we know if this is the last page or not
     let (mut games, previous_page) = if let Some(after_game_id) = after_game_id {
         // base_query must have left off in the middle of a `where`
-        let games = base_query.clone().sql("
+        let games = base_query
+            .clone()
+            .sql(
+                "
             and g.mmolb_game_id > $1
             order by g.mmolb_game_id asc
             limit $2
-        ")
+        ",
+            )
             .bind::<Text, _>(after_game_id)
             .bind::<Integer, _>(page_size as i32 + 1)
             .get_results::<GameWithIssueCounts>(conn)?;
 
         // Previous page is the one page_size games before this
         // Get N + 1 games so we know if this is the first page or not
-        let preceding_pages = base_query.sql("
+        let preceding_pages = base_query
+            .sql(
+                "
             and g.mmolb_game_id <= $1
             order by g.mmolb_game_id desc
             limit $2
-        ")
+        ",
+            )
             .bind::<Text, _>(after_game_id)
             .bind::<Integer, _>(page_size as i32 + 1)
             .get_results::<GameWithIssueCounts>(conn)?;
 
         let preceding_page = if preceding_pages.len() > page_size {
             // Then the preceding page is not the first page
-            Some(preceding_pages.into_iter().last().map(|g| g.game.mmolb_game_id))
+            Some(
+                preceding_pages
+                    .into_iter()
+                    .last()
+                    .map(|g| g.game.mmolb_game_id),
+            )
         } else {
             // Then the preceding page is the first page
             Some(None)
         };
 
         (games, preceding_page)
-
     } else {
-        let games = base_query.sql("
+        let games = base_query
+            .sql(
+                "
             order by g.mmolb_game_id asc
             limit $1
-        ")
+        ",
+            )
             .bind::<Integer, _>(page_size as i32 + 1)
             .get_results::<GameWithIssueCounts>(conn)?;
 
         // None after_game_id => this is the first page => there is no previous page
         (games, None)
     };
-
 
     let next_page = if games.len() > page_size {
         // Then this is not the last page
@@ -319,7 +338,11 @@ pub fn page_of_games_generic(
         None
     };
 
-    Ok(PageOfGames { games, next_page, previous_page })
+    Ok(PageOfGames {
+        games,
+        next_page,
+        previous_page,
+    })
 }
 
 pub fn page_of_games(
@@ -327,12 +350,7 @@ pub fn page_of_games(
     page_size: usize,
     after_game_id: Option<&str>,
 ) -> QueryResult<PageOfGames> {
-    page_of_games_generic(
-        conn,
-        page_size,
-        after_game_id,
-        games_list(),
-    )
+    page_of_games_generic(conn, page_size, after_game_id, games_list())
 }
 
 // This function names means "page of games that have issues", not "page of `GameWithIssues`s".
@@ -341,14 +359,8 @@ pub fn page_of_games_with_issues(
     page_size: usize,
     after_game_id: Option<&str>,
 ) -> QueryResult<PageOfGames> {
-    page_of_games_generic(
-        conn,
-        page_size,
-        after_game_id,
-        games_with_issues_list(),
-    )
+    page_of_games_generic(conn, page_size, after_game_id, games_with_issues_list())
 }
-
 
 pub struct EventsForGameTimings {
     pub get_game_ids_duration: f64,
@@ -365,7 +377,10 @@ pub fn events_for_games(
     conn: &mut PgConnection,
     taxa: &Taxa,
     for_game_ids: &[&str],
-) -> QueryResult<(Vec<(i64, Vec<Result<EventDetail<String>, RowToEventError>>)>, EventsForGameTimings)> {
+) -> QueryResult<(
+    Vec<(i64, Vec<Result<EventDetail<String>, RowToEventError>>)>,
+    EventsForGameTimings,
+)> {
     use crate::data_schema::data::event_baserunners::dsl as runner_dsl;
     use crate::data_schema::data::event_fielders::dsl as fielder_dsl;
     use crate::data_schema::data::events::dsl as events_dsl;
@@ -386,16 +401,13 @@ pub fn events_for_games(
         .then_order_by(events_dsl::game_event_index.asc())
         .select(DbEvent::as_select())
         .load(conn)?;
-    let all_event_ids = db_events.iter()
-        .map(|event| event.id)
-        .collect_vec();
+    let all_event_ids = db_events.iter().map(|event| event.id).collect_vec();
     let get_events_duration = (Utc::now() - get_events_start).as_seconds_f64();
-    
+
     let group_events_start = Utc::now();
-    let mut db_events_iter = db_events
-        .into_iter()
-        .peekable();
-    let db_games_events = game_ids.iter()
+    let mut db_events_iter = db_events.into_iter().peekable();
+    let db_games_events = game_ids
+        .iter()
         .map(|id| {
             let mut game_events = Vec::new();
             while let Some(event) = db_events_iter.next_if(|e| e.game_id == *id) {
@@ -409,7 +421,10 @@ pub fn events_for_games(
     let get_runners_start = Utc::now();
     let mut db_runners_iter = runner_dsl::event_baserunners
         .filter(runner_dsl::event_id.eq_any(&all_event_ids))
-        .order_by((runner_dsl::event_id.asc(), runner_dsl::base_before.desc().nulls_last()))
+        .order_by((
+            runner_dsl::event_id.asc(),
+            runner_dsl::base_before.desc().nulls_last(),
+        ))
         .select(DbRunner::as_select())
         .load(conn)?
         .into_iter()
@@ -417,12 +432,16 @@ pub fn events_for_games(
     let get_runners_duration = (Utc::now() - get_runners_start).as_seconds_f64();
 
     let group_runners_start = Utc::now();
-    let db_runners = db_games_events.iter()
+    let db_runners = db_games_events
+        .iter()
         .map(|game_events| {
-            game_events.iter()
+            game_events
+                .iter()
                 .map(|game_event| {
                     let mut runners = Vec::new();
-                    while let Some(runner) = db_runners_iter.next_if(|f| f.event_id == game_event.id) {
+                    while let Some(runner) =
+                        db_runners_iter.next_if(|f| f.event_id == game_event.id)
+                    {
                         runners.push(runner);
                     }
                     runners
@@ -444,12 +463,16 @@ pub fn events_for_games(
     let get_fielders_duration = (Utc::now() - get_fielders_start).as_seconds_f64();
 
     let group_fielders_start = Utc::now();
-    let db_fielders = db_games_events.iter()
+    let db_fielders = db_games_events
+        .iter()
         .map(|game_events| {
-            game_events.iter()
+            game_events
+                .iter()
                 .map(|game_event| {
                     let mut fielders = Vec::new();
-                    while let Some(fielder) = db_fielders_iter.next_if(|f| f.event_id == game_event.id) {
+                    while let Some(fielder) =
+                        db_fielders_iter.next_if(|f| f.event_id == game_event.id)
+                    {
                         fielders.push(fielder);
                     }
                     fielders
@@ -511,7 +534,7 @@ impl<'g> GameForDb<'g> {
     pub fn raw(&self) -> (&'g str, &'g mmolb_parsing::Game) {
         match self {
             GameForDb::Incomplete { game_id, raw_game } => (*game_id, raw_game),
-            GameForDb::Completed(game) => { (&game.id, &game.raw_game) }
+            GameForDb::Completed(game) => (&game.id, &game.raw_game),
         }
     }
 }
@@ -534,9 +557,7 @@ pub fn insert_games(
     ingest_id: i64,
     games: &[GameForDb],
 ) -> QueryResult<InsertGamesTimings> {
-    conn.transaction(|conn| {
-        insert_games_internal(conn, taxa, ingest_id, games)
-    })
+    conn.transaction(|conn| insert_games_internal(conn, taxa, ingest_id, games))
 }
 
 fn insert_games_internal<'e>(
@@ -551,12 +572,13 @@ fn insert_games_internal<'e>(
     use crate::data_schema::data::games::dsl as games_dsl;
     use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
     use crate::info_schema::info::raw_events::dsl as raw_events_dsl;
-    
+
     // First delete all games. If particular debug settings are turned on this may happen for every
     // game, but even in release mode we may need to delete partial games and replace them with
     // full games.
     let delete_old_games_start = Utc::now();
-    let game_mmolb_ids = games.iter()
+    let game_mmolb_ids = games
+        .iter()
         .map(GameForDb::raw)
         .map(|(id, _)| id)
         .collect_vec();
@@ -571,7 +593,8 @@ fn insert_games_internal<'e>(
     let update_weather_table_duration = (Utc::now() - update_weather_table_start).as_seconds_f64();
 
     let insert_games_start = Utc::now();
-    let new_games = games.iter()
+    let new_games = games
+        .iter()
         .map(|game| {
             let (game_id, raw_game) = game.raw();
             let Some(weather_id) = weather_table.get(&(
@@ -610,29 +633,31 @@ fn insert_games_internal<'e>(
     log_only_assert!(
         n_games_to_insert == game_ids.len(),
         "Games insert should have inserted {} rows, but it inserted {}",
-        n_games_to_insert, game_ids.len(),
+        n_games_to_insert,
+        game_ids.len(),
     );
 
     // From now on, we don't need unfinished games
     let games = iter::zip(&game_ids, games)
         .flat_map(|(game_id, game)| match game {
-            GameForDb::Incomplete { .. } => { None }
-            GameForDb::Completed(game) => { Some((game_id, game)) }
+            GameForDb::Incomplete { .. } => None,
+            GameForDb::Completed(game) => Some((game_id, game)),
         })
         .collect_vec();
     let insert_games_duration = (Utc::now() - insert_games_start).as_seconds_f64();
 
     let insert_raw_events_start = Utc::now();
-    let new_raw_events = games.iter()
+    let new_raw_events = games
+        .iter()
         .flat_map(|(game_id, game)| {
-            game.raw_game.event_log.iter()
+            game.raw_game
+                .event_log
+                .iter()
                 .enumerate()
-                .map(|(index, raw_event)| {
-                    NewRawEvent {
-                        game_id: **game_id,
-                        game_event_index: index as i32,
-                        event_text: &raw_event.message,
-                    }
+                .map(|(index, raw_event)| NewRawEvent {
+                    game_id: **game_id,
+                    game_event_index: index as i32,
+                    event_text: &raw_event.message,
                 })
         })
         .collect::<Vec<_>>();
@@ -645,28 +670,29 @@ fn insert_games_internal<'e>(
     log_only_assert!(
         n_raw_events_to_insert == n_raw_events_inserted,
         "Raw events insert should have inserted {} rows, but it inserted {}",
-        n_raw_events_to_insert, n_raw_events_inserted,
+        n_raw_events_to_insert,
+        n_raw_events_inserted,
     );
     let insert_raw_events_duration = (Utc::now() - insert_raw_events_start).as_seconds_f64();
 
     let insert_logs_start = Utc::now();
-    let new_logs = games.iter()
+    let new_logs = games
+        .iter()
         .flat_map(|(game_id, game)| {
-            game.logs.iter()
+            game.logs
+                .iter()
                 .enumerate()
                 .flat_map(move |(game_event_index, logs)| {
-                    logs.iter()
-                        .enumerate()
-                        .map(move |(log_index, log)| {
-                            assert_eq!(game_event_index as i32, log.game_event_index);
-                            NewEventIngestLog {
-                                game_id: **game_id,
-                                game_event_index: log.game_event_index,
-                                log_index: log_index as i32,
-                                log_level: log.log_level,
-                                log_text: &log.log_text,
-                            }
-                        })
+                    logs.iter().enumerate().map(move |(log_index, log)| {
+                        assert_eq!(game_event_index as i32, log.game_event_index);
+                        NewEventIngestLog {
+                            game_id: **game_id,
+                            game_event_index: log.game_event_index,
+                            log_index: log_index as i32,
+                            log_level: log.log_level,
+                            log_text: &log.log_text,
+                        }
+                    })
                 })
         })
         .collect_vec();
@@ -679,14 +705,17 @@ fn insert_games_internal<'e>(
     log_only_assert!(
         n_logs_to_insert == n_logs_inserted,
         "Event ingest logs insert should have inserted {} rows, but it inserted {}",
-        n_logs_to_insert, n_logs_inserted,
+        n_logs_to_insert,
+        n_logs_inserted,
     );
     let insert_logs_duration = (Utc::now() - insert_logs_start).as_seconds_f64();
 
     let insert_events_start = Utc::now();
-    let new_events: Vec<_> = games.iter()
+    let new_events: Vec<_> = games
+        .iter()
         .flat_map(|(game_id, game)| {
-            game.events.iter()
+            game.events
+                .iter()
                 .map(|event| to_db_format::event_to_row(taxa, **game_id, event))
         })
         .collect();
@@ -699,7 +728,8 @@ fn insert_games_internal<'e>(
     log_only_assert!(
         n_events_to_insert == n_events_inserted,
         "Events insert should have inserted {} rows, but it inserted {}",
-        n_events_to_insert, n_events_inserted,
+        n_events_to_insert,
+        n_events_inserted,
     );
     let insert_events_duration = (Utc::now() - insert_logs_start).as_seconds_f64();
 
@@ -711,14 +741,12 @@ fn insert_games_internal<'e>(
         .order_by(events_dsl::game_id)
         .then_order_by(events_dsl::game_event_index)
         .get_results::<(i64, i64)>(conn)?;
-    
-    let event_ids_by_game = event_ids.into_iter()
+
+    let event_ids_by_game = event_ids
+        .into_iter()
         .chunk_by(|(game_id, _)| *game_id)
         .into_iter()
-        .map(|(game_id, group)| (
-            game_id, 
-            group.map(|(_, event_id)| event_id).collect_vec(),
-        ))
+        .map(|(game_id, group)| (game_id, group.map(|(_, event_id)| event_id).collect_vec()))
         .collect_vec();
     let get_event_ids_duration = (Utc::now() - get_event_ids_start).as_seconds_f64();
 
@@ -727,11 +755,10 @@ fn insert_games_internal<'e>(
         .flat_map(|((game_id_a, event_ids), (game_id_b, game))| {
             assert_eq!(game_id_a, *game_id_b);
             // Within this closure we're acting on all events in a single game
-            iter::zip(event_ids, &game.events)
-                .flat_map(|(event_id, event)| {
-                    // Within this closure we're acting on a single event
-                    to_db_format::event_to_baserunners(taxa, *event_id, event)
-                })
+            iter::zip(event_ids, &game.events).flat_map(|(event_id, event)| {
+                // Within this closure we're acting on a single event
+                to_db_format::event_to_baserunners(taxa, *event_id, event)
+            })
         })
         .collect_vec();
 
@@ -743,7 +770,8 @@ fn insert_games_internal<'e>(
     log_only_assert!(
         n_baserunners_to_insert == n_baserunners_inserted,
         "Event baserunners insert should have inserted {} rows, but it inserted {}",
-        n_baserunners_to_insert, n_baserunners_inserted,
+        n_baserunners_to_insert,
+        n_baserunners_inserted,
     );
     let insert_baserunners_duration = (Utc::now() - insert_baserunners_start).as_seconds_f64();
 
@@ -752,11 +780,10 @@ fn insert_games_internal<'e>(
         .flat_map(|((game_id_a, event_ids), (game_id_b, game))| {
             assert_eq!(game_id_a, *game_id_b);
             // Within this closure we're acting on all events in a single game
-            iter::zip(event_ids, &game.events)
-                .flat_map(|(event_id, event)| {
-                    // Within this closure we're acting on a single event
-                    to_db_format::event_to_fielders(taxa, *event_id, event)
-                })
+            iter::zip(event_ids, &game.events).flat_map(|(event_id, event)| {
+                // Within this closure we're acting on a single event
+                to_db_format::event_to_fielders(taxa, *event_id, event)
+            })
         })
         .collect_vec();
 
@@ -768,7 +795,8 @@ fn insert_games_internal<'e>(
     log_only_assert!(
         n_fielders_to_insert == n_fielders_inserted,
         "Event fielders insert should have inserted {} rows, but it inserted {}",
-        n_fielders_to_insert, n_fielders_inserted,
+        n_fielders_to_insert,
+        n_fielders_inserted,
     );
     let insert_fielders_duration = (Utc::now() - insert_fielders_start).as_seconds_f64();
 
@@ -791,14 +819,18 @@ pub fn insert_additional_ingest_logs(
 ) -> QueryResult<()> {
     use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
 
-    let game_ids = extra_ingest_logs.iter()
+    let game_ids = extra_ingest_logs
+        .iter()
         .map(|(game_id, _)| game_id)
         .collect_vec();
-    
+
     // Get the highest log_index for each event
     // TODO Only select the game event indices we care about
     let mut highest_log_indices: HashMap<_, _> = event_ingest_log_dsl::event_ingest_log
-        .group_by((event_ingest_log_dsl::game_id, event_ingest_log_dsl::game_event_index))
+        .group_by((
+            event_ingest_log_dsl::game_id,
+            event_ingest_log_dsl::game_event_index,
+        ))
         .select((
             event_ingest_log_dsl::game_id,
             event_ingest_log_dsl::game_event_index,
@@ -813,11 +845,12 @@ pub fn insert_additional_ingest_logs(
             highest_log_order.map(|n| ((game_id, game_event_index), n))
         })
         .collect();
-    
+
     let new_logs = extra_ingest_logs
         .into_iter()
         .flat_map(|(game_id, ingest_logs)| {
-            ingest_logs.iter()
+            ingest_logs
+                .iter()
                 .map(|ingest_log| {
                     let log_index = highest_log_indices
                         .entry((*game_id, ingest_log.game_event_index))
@@ -836,11 +869,11 @@ pub fn insert_additional_ingest_logs(
                 .collect_vec()
         })
         .collect_vec();
-    
+
     diesel::copy_from(event_ingest_log_dsl::event_ingest_log)
         .from_insertable(new_logs)
         .execute(conn)?;
-    
+
     Ok(())
 }
 
@@ -871,10 +904,13 @@ pub fn game_and_raw_events(
         .into_iter()
         .peekable();
 
-    let logs_by_event = raw_events.iter()
+    let logs_by_event = raw_events
+        .iter()
         .map(|raw_event| {
             let mut events = Vec::new();
-            while let Some(event) = raw_logs.next_if(|log| log.game_event_index == raw_event.game_event_index) {
+            while let Some(event) =
+                raw_logs.next_if(|log| log.game_event_index == raw_event.game_event_index)
+            {
                 events.push(event);
             }
             events
@@ -920,7 +956,9 @@ pub fn insert_timings(
             .events_for_game_timings
             .get_game_ids_duration,
         db_fetch_for_check_get_events_duration: timings.events_for_game_timings.get_events_duration,
-        db_fetch_for_check_group_events_duration: timings.events_for_game_timings.group_events_duration,
+        db_fetch_for_check_group_events_duration: timings
+            .events_for_game_timings
+            .group_events_duration,
         db_fetch_for_check_get_runners_duration: timings
             .events_for_game_timings
             .get_runners_duration,
@@ -938,13 +976,17 @@ pub fn insert_timings(
             .post_process_duration,
         db_insert_duration: timings.db_insert_duration,
         db_insert_delete_old_games_duration: timings.db_insert_timings.delete_old_games_duration,
-        db_insert_update_weather_table_duration: timings.db_insert_timings.update_weather_table_duration,
+        db_insert_update_weather_table_duration: timings
+            .db_insert_timings
+            .update_weather_table_duration,
         db_insert_insert_games_duration: timings.db_insert_timings.insert_games_duration,
         db_insert_insert_raw_events_duration: timings.db_insert_timings.insert_raw_events_duration,
         db_insert_insert_logs_duration: timings.db_insert_timings.insert_logs_duration,
         db_insert_insert_events_duration: timings.db_insert_timings.insert_events_duration,
         db_insert_get_event_ids_duration: timings.db_insert_timings.get_event_ids_duration,
-        db_insert_insert_baserunners_duration: timings.db_insert_timings.insert_baserunners_duration,
+        db_insert_insert_baserunners_duration: timings
+            .db_insert_timings
+            .insert_baserunners_duration,
         db_insert_insert_fielders_duration: timings.db_insert_timings.insert_fielders_duration,
         db_fetch_for_check_duration: timings.db_fetch_for_check_duration,
         check_round_trip_duration: timings.check_round_trip_duration,

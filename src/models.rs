@@ -158,7 +158,7 @@ pub struct NewEventIngestLog<'a> {
     pub game_id: i64,
     pub game_event_index: i32,
     pub log_index: i32,
-    
+
     // Data
     pub log_level: i32,
     pub log_text: &'a str,

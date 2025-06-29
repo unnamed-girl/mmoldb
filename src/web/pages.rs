@@ -3,11 +3,11 @@ use rocket::{State, get, uri};
 use rocket_dyn_templates::{Template, context};
 use serde::Serialize;
 
+use crate::db::PageOfGames;
 use crate::ingest::{IngestStatus, IngestTask};
 use crate::web::error::AppError;
 use crate::web::utility_contexts::{FormattedDateContext, GameContext};
 use crate::{Db, db};
-use crate::db::PageOfGames;
 
 const PAGE_OF_GAMES_SIZE: usize = 100;
 
@@ -42,9 +42,9 @@ pub async fn game_page(mmolb_game_id: String, db: Db) -> Result<Template, AppErr
         events: Vec<EventContext>,
     }
 
-    let (game, events) = db.run(move |conn| {
-        db::game_and_raw_events(conn, &mmolb_game_id)
-    }).await?;
+    let (game, events) = db
+        .run(move |conn| db::game_and_raw_events(conn, &mmolb_game_id))
+        .await?;
     let watch_uri = format!("https://mmolb.com/watch/{}", game.mmolb_game_id);
     let api_uri = format!("https://mmolb.com/api/game/{}", game.mmolb_game_id);
     let game = GameContext {
@@ -98,11 +98,19 @@ pub async fn ingest_page(ingest_id: i64, db: Db) -> Result<Template, AppError> {
 }
 
 #[get("/ingest/<ingest_id>/page/<after_game_id>")]
-pub async fn paginated_ingest_page(ingest_id: i64, after_game_id: String, db: Db) -> Result<Template, AppError> {
+pub async fn paginated_ingest_page(
+    ingest_id: i64,
+    after_game_id: String,
+    db: Db,
+) -> Result<Template, AppError> {
     paginated_ingest(ingest_id, Some(after_game_id), db).await
 }
 
-async fn paginated_ingest(ingest_id: i64, after_game_id: Option<String>, db: Db) -> Result<Template, AppError> {
+async fn paginated_ingest(
+    ingest_id: i64,
+    after_game_id: Option<String>,
+    db: Db,
+) -> Result<Template, AppError> {
     #[derive(Serialize)]
     struct IngestContext {
         id: i64,
@@ -112,16 +120,23 @@ async fn paginated_ingest(ingest_id: i64, after_game_id: Option<String>, db: Db)
         games: Vec<GameContext>,
     }
 
-    let (ingest, games) = db.run(move |conn| {
-        db::ingest_with_games(conn, ingest_id, PAGE_OF_GAMES_SIZE, after_game_id.as_deref())
-    }).await?;
-    
+    let (ingest, games) = db
+        .run(move |conn| {
+            db::ingest_with_games(
+                conn,
+                ingest_id,
+                PAGE_OF_GAMES_SIZE,
+                after_game_id.as_deref(),
+            )
+        })
+        .await?;
+
     let games_context = paginated_games_context(
         games,
         |game_id| uri!(paginated_ingest_page(ingest_id, game_id)).to_string(),
         || uri!(ingest_page(ingest_id)).to_string(),
     );
-    
+
     let ingest = IngestContext {
         id: ingest.id,
         started_at: (&ingest.started_at).into(),
@@ -139,7 +154,6 @@ async fn paginated_ingest(ingest_id: i64, after_game_id: Option<String>, db: Db)
             previous_page_url: games_context.previous_page_url,
         },
     ))
-
 }
 
 #[get("/games/page/<after_game_id>")]
@@ -153,17 +167,21 @@ pub async fn games_page(db: Db) -> Result<Template, AppError> {
 }
 
 async fn paginated_games(after_game_id: Option<String>, db: Db) -> Result<Template, AppError> {
-    let page = db.run(move |conn| {
-        conn.transaction(|conn| db::page_of_games(conn, PAGE_OF_GAMES_SIZE, after_game_id.as_deref()))
-    }).await?;
-    
+    let page = db
+        .run(move |conn| {
+            conn.transaction(|conn| {
+                db::page_of_games(conn, PAGE_OF_GAMES_SIZE, after_game_id.as_deref())
+            })
+        })
+        .await?;
+
     Ok(Template::render(
-    "games",
+        "games",
         paginated_games_context(
             page,
             |game_id| uri!(paginated_games_page(game_id)).to_string(),
             || uri!(games_page()).to_string(),
-        )
+        ),
     ))
 }
 
@@ -186,16 +204,18 @@ fn paginated_games_context(
         subhead: "Games",
         games: GameContext::from_db(page.games, |game_id| uri!(game_page(game_id)).to_string()),
         next_page_url: page.next_page.as_deref().map(&paginated_uri_builder),
-        previous_page_url: page.previous_page
-            .map(|previous_page| match previous_page {
-                Some(page) => paginated_uri_builder(&page),
-                None => non_paginated_uri_builder(),
-            }),
+        previous_page_url: page.previous_page.map(|previous_page| match previous_page {
+            Some(page) => paginated_uri_builder(&page),
+            None => non_paginated_uri_builder(),
+        }),
     }
 }
 
 #[get("/games-with-issues/page/<after_game_id>")]
-pub async fn paginated_games_with_issues_page(after_game_id: String, db: Db) -> Result<Template, AppError> {
+pub async fn paginated_games_with_issues_page(
+    after_game_id: String,
+    db: Db,
+) -> Result<Template, AppError> {
     paginated_games_with_issues(Some(after_game_id), db).await
 }
 
@@ -204,10 +224,17 @@ pub async fn games_with_issues_page(db: Db) -> Result<Template, AppError> {
     paginated_games_with_issues(None, db).await
 }
 
-async fn paginated_games_with_issues(after_game_id: Option<String>, db: Db) -> Result<Template, AppError> {
-    let page = db.run(move |conn| {
-        conn.transaction(|conn| db::page_of_games_with_issues(conn, PAGE_OF_GAMES_SIZE, after_game_id.as_deref()))
-    }).await?;
+async fn paginated_games_with_issues(
+    after_game_id: Option<String>,
+    db: Db,
+) -> Result<Template, AppError> {
+    let page = db
+        .run(move |conn| {
+            conn.transaction(|conn| {
+                db::page_of_games_with_issues(conn, PAGE_OF_GAMES_SIZE, after_game_id.as_deref())
+            })
+        })
+        .await?;
 
     Ok(Template::render(
         "games",
@@ -215,7 +242,7 @@ async fn paginated_games_with_issues(after_game_id: Option<String>, db: Db) -> R
             page,
             |game_id| uri!(paginated_games_with_issues_page(game_id)).to_string(),
             || uri!(games_with_issues_page()).to_string(),
-        )
+        ),
     ))
 }
 
@@ -234,10 +261,7 @@ pub async fn debug_no_games_page() -> Result<Template, AppError> {
 }
 
 #[get("/")]
-pub async fn index_page(
-    db: Db,
-    ingest_task: &State<IngestTask>,
-) -> Result<Template, AppError> {
+pub async fn index_page(db: Db, ingest_task: &State<IngestTask>) -> Result<Template, AppError> {
     #[derive(Serialize, Default)]
     struct IngestTaskContext {
         is_starting: bool,
@@ -283,21 +307,23 @@ pub async fn index_page(
     // A transaction is probably overkill for this, but it's
     // TECHNICALLY the only correct way to make sure that the
     // value of number_of_ingests_not_shown is correct
-    let (total_games, total_games_with_issues, total_num_ingests, displayed_ingests) = db.run(move |conn| {
-        conn.transaction(|conn| {
-            let num_games = db::game_count(conn)?;
-            let num_games_with_issues = db::game_with_issues_count(conn)?;
+    let (total_games, total_games_with_issues, total_num_ingests, displayed_ingests) = db
+        .run(move |conn| {
+            conn.transaction(|conn| {
+                let num_games = db::game_count(conn)?;
+                let num_games_with_issues = db::game_with_issues_count(conn)?;
 
-            let num_ingests = db::ingest_count(conn)?;
-            let latest_ingests = db::latest_ingests(conn)?;
-            Ok::<_, AppError>((
-                num_games,
-                num_games_with_issues,
-                num_ingests,
-                latest_ingests,
-            ))
+                let num_ingests = db::ingest_count(conn)?;
+                let latest_ingests = db::latest_ingests(conn)?;
+                Ok::<_, AppError>((
+                    num_games,
+                    num_games_with_issues,
+                    num_ingests,
+                    latest_ingests,
+                ))
+            })
         })
-    }).await?;
+        .await?;
 
     let number_of_ingests_not_shown = total_num_ingests - displayed_ingests.len() as i64;
     let ingests: Vec<_> = displayed_ingests

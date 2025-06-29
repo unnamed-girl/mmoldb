@@ -1,15 +1,15 @@
+use crate::db::{CompletedGameForDb, GameForDb, RowToEventError, Taxa, Timings};
+use crate::ingest::chron::{ChronEntities, ChronEntity, GameExt};
+use crate::ingest::sim::{self, Game, SimFatalError};
+use crate::ingest::{EventDetail, IngestConfig, IngestFatalError, IngestLog, IngestStats};
+use crate::{Db, db};
 use chrono::Utc;
 use diesel::PgConnection;
-use itertools::{izip, Itertools};
+use itertools::{Itertools, izip};
 use log::{error, info, warn};
 use mmolb_parsing::ParsedEventMessage;
 use rocket::tokio;
 use rocket_sync_db_pools::ConnectionPool;
-use crate::{db, Db};
-use crate::db::{CompletedGameForDb, GameForDb, RowToEventError, Taxa, Timings};
-use crate::ingest::chron::{ChronEntities, ChronEntity, GameExt};
-use crate::ingest::{EventDetail, IngestConfig, IngestFatalError, IngestLog, IngestStats};
-use crate::ingest::sim::{self, Game, SimFatalError};
 
 pub(super) struct IngestWorker {
     pool: ConnectionPool<Db, PgConnection>,
@@ -50,9 +50,11 @@ impl IngestWorker {
         page: ChronEntities<mmolb_parsing::Game>,
     ) -> IngestWorkerInProgress {
         // tokio::spawn makes it start making progress before it's awaited
-        IngestWorkerInProgress(tokio::spawn(
-            self.ingest_page_internal(page_index, fetch_duration, page)
-        ))
+        IngestWorkerInProgress(tokio::spawn(self.ingest_page_internal(
+            page_index,
+            fetch_duration,
+            page,
+        )))
     }
 
     async fn ingest_page_internal<'t>(
@@ -63,17 +65,22 @@ impl IngestWorker {
     ) -> IngestPageOfGamesResult {
         page.items.sort_by(|a, b| a.entity_id.cmp(&b.entity_id));
 
-        let conn = self.pool.get().await
+        let conn = self
+            .pool
+            .get()
+            .await
             .ok_or(IngestFatalError::CouldNotGetConnection)?;
 
         conn.run(move |conn| {
-            let stats = self.ingest_page_with_connection(page_index, fetch_duration, page.items, conn)?;
+            let stats =
+                self.ingest_page_with_connection(page_index, fetch_duration, page.items, conn)?;
             Ok(IngestPageOfGamesOutput {
                 worker: self,
                 stats,
                 next_page: page.next_page,
             })
-        }).await
+        })
+        .await
     }
 
     fn ingest_page_with_connection(
@@ -87,19 +94,20 @@ impl IngestWorker {
         let filter_finished_games_start = Utc::now();
         let all_games_len = all_games.len();
         let games_for_ingest = self.filter_out_finished_games(conn, all_games)?;
-        let filter_finished_games_duration = (Utc::now() - filter_finished_games_start).as_seconds_f64();
+        let filter_finished_games_duration =
+            (Utc::now() - filter_finished_games_start).as_seconds_f64();
 
         let parse_and_sim_start = Utc::now();
-        let games_for_db = games_for_ingest.iter()
+        let games_for_db = games_for_ingest
+            .iter()
             .filter_map(prepare_game_for_db)
             .collect::<Result<Vec<_>, _>>()?;
 
-        let num_ongoing_games_skipped = games_for_db.iter()
-            .filter(|g| {
-                match g {
-                    GameForDb::Incomplete { .. } => { true }
-                    GameForDb::Completed { .. } => { false }
-                }
+        let num_ongoing_games_skipped = games_for_db
+            .iter()
+            .filter(|g| match g {
+                GameForDb::Incomplete { .. } => true,
+                GameForDb::Completed { .. } => false,
             })
             .count();
         let num_already_ingested_games_skipped = all_games_len - games_for_ingest.len();
@@ -122,14 +130,16 @@ impl IngestWorker {
         // skipped. However, my profiling shows that it's negligible
         // cost so I haven't added the capability.
         let db_fetch_for_check_start = Utc::now();
-        let mmolb_game_ids = games_for_db.iter()
+        let mmolb_game_ids = games_for_db
+            .iter()
             .filter_map(|game| match game {
-                GameForDb::Incomplete { .. } => { None }
-                GameForDb::Completed(game) => { Some(game.id) }
+                GameForDb::Incomplete { .. } => None,
+                GameForDb::Completed(game) => Some(game.id),
             })
             .collect_vec();
 
-        let (ingested_games, events_for_game_timings) = db::events_for_games(conn, &self.taxa, &mmolb_game_ids)?;
+        let (ingested_games, events_for_game_timings) =
+            db::events_for_games(conn, &self.taxa, &mmolb_game_ids)?;
         assert_eq!(mmolb_game_ids.len(), ingested_games.len());
         let db_fetch_for_check_duration = (Utc::now() - db_fetch_for_check_start).as_seconds_f64();
 
@@ -192,18 +202,23 @@ impl IngestWorker {
         let insert_extra_logs_duration = (Utc::now() - insert_extra_logs_start).as_seconds_f64();
         let save_duration = (Utc::now() - save_start).as_seconds_f64();
 
-        db::insert_timings(conn, self.ingest_id, page_index, Timings {
-            fetch_duration,
-            filter_finished_games_duration,
-            parse_and_sim_duration,
-            db_insert_duration,
-            db_insert_timings,
-            db_fetch_for_check_duration,
-            events_for_game_timings,
-            check_round_trip_duration,
-            insert_extra_logs_duration,
-            save_duration,
-        })?;
+        db::insert_timings(
+            conn,
+            self.ingest_id,
+            page_index,
+            Timings {
+                fetch_duration,
+                filter_finished_games_duration,
+                parse_and_sim_duration,
+                db_insert_duration,
+                db_insert_timings,
+                db_fetch_for_check_duration,
+                events_for_game_timings,
+                check_round_trip_duration,
+                insert_extra_logs_duration,
+                save_duration,
+            },
+        )?;
 
         Ok::<_, IngestFatalError>(IngestStats {
             num_ongoing_games_skipped,
@@ -211,7 +226,6 @@ impl IngestWorker {
             num_already_ingested_games_skipped,
             num_games_imported,
         })
-
     }
 
     fn filter_out_finished_games(
@@ -220,16 +234,15 @@ impl IngestWorker {
         all_games: Vec<ChronEntity<mmolb_parsing::Game>>,
     ) -> Result<Vec<ChronEntity<mmolb_parsing::Game>>, IngestFatalError> {
         Ok(if !self.config.reimport_all_games {
-            let all_game_ids = all_games.iter()
-                .map(|e| e.entity_id.as_str())
-                .collect_vec();
+            let all_game_ids = all_games.iter().map(|e| e.entity_id.as_str()).collect_vec();
             // Remove any games which are fully imported
-            let mut is_finished = db::is_finished(conn, &all_game_ids)?
+            let mut is_finished = db::is_finished(conn, &all_game_ids)?.into_iter().peekable();
+            all_games
                 .into_iter()
-                .peekable();
-            all_games.into_iter()
                 .filter_map(|game| {
-                    if let Some((_, finished)) = is_finished.next_if(|(id, _)| id == &game.entity_id) {
+                    if let Some((_, finished)) =
+                        is_finished.next_if(|(id, _)| id == &game.entity_id)
+                    {
                         if finished {
                             // Game is finished, don't import it again
                             None
@@ -253,13 +266,15 @@ impl IngestWorkerInProgress {
     pub fn is_ready(&self) -> bool {
         self.0.is_finished()
     }
-    
+
     pub async fn into_future(self) -> IngestPageOfGamesResult {
         self.0.await?
     }
 }
 
-fn prepare_game_for_db(entity: &ChronEntity<mmolb_parsing::Game>) -> Option<Result<GameForDb, IngestFatalError>> {
+fn prepare_game_for_db(
+    entity: &ChronEntity<mmolb_parsing::Game>,
+) -> Option<Result<GameForDb, IngestFatalError>> {
     Some(Ok(if !entity.data.is_terminal() {
         GameForDb::Incomplete {
             game_id: &entity.entity_id,
@@ -267,9 +282,7 @@ fn prepare_game_for_db(entity: &ChronEntity<mmolb_parsing::Game>) -> Option<Resu
         }
     } else if entity.data.is_completed() {
         match prepare_completed_game_for_db(entity) {
-            Ok(game) => {
-                GameForDb::Completed(game)
-            }
+            Ok(game) => GameForDb::Completed(game),
             Err(err) => {
                 // TODO Surface this error on the games with issues page
                 let description = format!(
@@ -289,7 +302,7 @@ fn prepare_game_for_db(entity: &ChronEntity<mmolb_parsing::Game>) -> Option<Resu
             }
         }
     } else {
-        return None
+        return None;
     }))
 }
 
