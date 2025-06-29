@@ -93,14 +93,23 @@ impl Chron {
                 to speed up the cache db would be greatly appreciated.",
             );
             let cache_path = cache_path.as_ref();
+            let open_cache_start = Utc::now();
             let cache = sled::open(cache_path)?;
+            let open_cache_duration = (Utc::now() - open_cache_start).as_seconds_f64();
             if cache.was_recovered() {
                 match cache.size_on_disk() {
                     Ok(size) => {
-                        let size_str = format_size(size, DECIMAL);
-                        info!("Opened existing {size_str} cache at {cache_path:?}");
+                        info!(
+                            "Opened existing {} cache at {cache_path:?} in {open_cache_duration}s",
+                            format_size(size, DECIMAL),
+                        );
                     }
-                    Err(err) => { info!("Opened existing cache at {cache_path:?}. Error retrieving size: {err}") }
+                    Err(err) => { 
+                        info!(
+                            "Opened existing cache at {cache_path:?} in {open_cache_duration}s. \
+                            Error retrieving size: {err}",
+                        );
+                    }
                 }
             } else {
                 info!("Created new cache at {cache_path:?}");

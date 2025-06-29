@@ -8,6 +8,7 @@ use diesel::result::Error::DatabaseError;
 use hashbrown::{Equivalent, HashMap};
 use itertools::Itertools;
 use log::{info, warn};
+use mmolb_parsing::game::Weather;
 
 // Uses hashbrown::HashMap because the std HashMap has a limitation on
 // tuples of references
@@ -37,31 +38,11 @@ impl Equivalent<UniqueWeather> for (&str, &str, &str) {
 pub(super) type WeatherTable = HashMap<UniqueWeather, i64>;
 
 pub(super) fn create_weather_table(conn: &mut PgConnection, games: &[GameForDb]) -> QueryResult<WeatherTable> {
-    let mut retries_remaining = 10;
     let weather_table = loop {
-        match create_weather_table_inner(conn, games) {
-            Ok(weather_table) => break weather_table,
-            Err(e) => {
-                match e {
-                    DatabaseError(DatabaseErrorKind::CheckViolation, err) if err.constraint_name() == Some("weather_name_emoji_tooltip_key") => {
-                        if retries_remaining <= 0 {
-                            warn!("Constraint violation building weather table. No retries remaining.");
-                            // Must rebuild the error
-                            return Err(DatabaseError(DatabaseErrorKind::CheckViolation, err));
-                        }
-
-                        warn!(
-                            "Unique constraint violation building weather table. Trying again \
-                            ({retries_remaining} retries remaining). Error: {}",
-                            err.message(),
-                        );
-
-                        retries_remaining -= 1;
-                        // And continue the loop
-                    }
-                    other_err => return Err(other_err),
-
-                }
+        match create_weather_table_inner(conn, games)? {
+            OrRetry::Result(weather_table) => break weather_table,
+            OrRetry::Retry => {
+                warn!("Unique constraint violation while adding a new weather. Trying again.");
             }
         };
     };
@@ -69,7 +50,13 @@ pub(super) fn create_weather_table(conn: &mut PgConnection, games: &[GameForDb])
     Ok(weather_table)
 }
 
-pub(super) fn create_weather_table_inner(conn: &mut PgConnection, games: &[GameForDb]) -> QueryResult<WeatherTable> {
+enum OrRetry<T> {
+    Result(T),
+    Retry,
+}
+
+fn create_weather_table_inner(conn: &mut PgConnection, games: &[GameForDb]) -> QueryResult<OrRetry<WeatherTable>> {
+    use crate::data_schema::data::weather::dsl as weather_dsl;
     // Get or create weather
     // Note: Based on what I read online, trying an insert and catching unique
     // violations causes db bloat. There are (surprisingly complicated) ways to
@@ -78,7 +65,7 @@ pub(super) fn create_weather_table_inner(conn: &mut PgConnection, games: &[GameF
 
     // Get all weathers. Weather table shouldn't be too big so this
     // should be fine. TODO Cache weather LUT
-    let mut weather_table = crate::data_schema::data::weather::dsl::weather
+    let mut weather_table = weather_dsl::weather
         .select(DbWeather::as_select())
         .load_iter::<DbWeather, DefaultLoadingMode>(conn)?
         .map_ok(|weather| {
@@ -86,7 +73,7 @@ pub(super) fn create_weather_table_inner(conn: &mut PgConnection, games: &[GameF
             (weather.into(), id)
         })
         .collect::<QueryResult<HashMap<UniqueWeather, i64>>>()?;
-    
+
     info!("Read weather table: {:#?}", weather_table);
 
     let new_weathers = games.iter()
@@ -109,24 +96,37 @@ pub(super) fn create_weather_table_inner(conn: &mut PgConnection, games: &[GameF
         .unique_by(|w| (w.name, w.emoji, w.tooltip))
         .collect_vec();
 
-    info!("Need to insert new weathers: {:#?}", new_weathers);
+    // Note: This check not just for optimization, it's also necessary for
+    // correctness. The code inside the if block assumes that an empty
+    // inserted_weathers indicates a constraint conflict, which is not true if
+    // new_weathers is also empty.
+    if !new_weathers.is_empty() {
+        info!("Need to insert new weathers: {:#?}", new_weathers);
 
-    let inserted_weathers = diesel::insert_into(crate::data_schema::data::weather::dsl::weather)
-        .values(&new_weathers)
-        .returning(DbWeather::as_returning())
-        .get_results::<DbWeather>(conn)?;
+        let inserted_weathers = diesel::insert_into(weather_dsl::weather)
+            .values(&new_weathers)
+            .on_conflict_do_nothing()
+            .returning(DbWeather::as_returning())
+            .get_results::<DbWeather>(conn)?;
 
-    info!("Inserted new weathers: {:#?}", inserted_weathers);
+        // The behavior of "on conflict do nothing" is to return no values when
+        // there was a conflict
+        if inserted_weathers.is_empty() {
+            return Ok(OrRetry::Retry);
+        }
 
-    weather_table.extend(
-        inserted_weathers.into_iter()
-            .map(|weather| {
-                let id = weather.id; // Lifetime reasons
-                (weather.into(), id)
-            })
-    );
+        info!("Inserted new weathers: {:#?}", inserted_weathers);
 
-    info!("Updated weather table: {:#?}", weather_table);
+        weather_table.extend(
+            inserted_weathers.into_iter()
+                .map(|weather| {
+                    let id = weather.id; // Lifetime reasons
+                    (weather.into(), id)
+                })
+        );
 
-    Ok(weather_table)
+        info!("Updated weather table: {:#?}", weather_table);
+    }
+
+    Ok(OrRetry::Result(weather_table))
 }
