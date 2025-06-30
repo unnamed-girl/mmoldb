@@ -32,13 +32,25 @@ pub struct DayContext {
 impl From<(Option<i32>, Option<i32>)> for DayContext {
     fn from(value: (Option<i32>, Option<i32>)) -> Self {
         match value {
-            (None, None) => DayContext { day: None, is_superstar_day: false },
-            (Some(day), None) => DayContext { day: Some(day), is_superstar_day: false },
-            (None, Some(day)) => DayContext { day: Some(day), is_superstar_day: true },
+            (None, None) => DayContext {
+                day: None,
+                is_superstar_day: false,
+            },
+            (Some(day), None) => DayContext {
+                day: Some(day),
+                is_superstar_day: false,
+            },
+            (None, Some(day)) => DayContext {
+                day: Some(day),
+                is_superstar_day: true,
+            },
             (Some(normal_day), Some(superstar_day)) => {
                 warn!("Game had both `day` {normal_day} and `superstar_day` {superstar_day} set.");
                 // I guess use the superstar day? For no particular reason.
-                DayContext { day: Some(superstar_day), is_superstar_day: true }
+                DayContext {
+                    day: Some(superstar_day),
+                    is_superstar_day: true,
+                }
             }
         }
     }

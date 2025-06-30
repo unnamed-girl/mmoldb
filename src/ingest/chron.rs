@@ -1,8 +1,8 @@
-use std::error::Error;
 use chrono::{DateTime, Utc};
 use humansize::{DECIMAL, format_size};
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
+use std::error::Error;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -192,14 +192,12 @@ impl Chron {
                 .execute(request)
                 .await
                 .map_err(ChronError::RequestExecuteError)?;
-            let entities: ChronEntities<mmolb_parsing::Game> = response
-                .json()
-                .await
-                .map_err(|e| {
+            let entities: ChronEntities<mmolb_parsing::Game> =
+                response.json().await.map_err(|e| {
                     if let Some(source_err) = e.source() {
                         error!("Failed to parse Chron response: {source_err}");
                     };
-                    
+
                     ChronError::RequestDeserializeError(e)
                 })?;
 
@@ -219,7 +217,7 @@ impl Chron {
 
             let has_incomplete_game = entities.items.iter().any(|item| !item.data.is_terminal());
             if has_incomplete_game {
-                 info!(
+                info!(
                     "Not caching page {page:?} because it contains at least one non-terminal game"
                 );
                 return Ok(entities);

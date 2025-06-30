@@ -5,7 +5,10 @@ use crate::db::{
 use itertools::{EitherOrBoth, Itertools, PeekingNext};
 use log::warn;
 use mmolb_parsing::ParsedEventMessage;
-use mmolb_parsing::enums::{Base, BaseNameVariant, BatterStat, Day, Distance, FairBallDestination, FairBallType, FoulType, GameOverMessage, HomeAway, MaybeRecognized, NowBattingStats, StrikeType, TopBottom};
+use mmolb_parsing::enums::{
+    Base, BaseNameVariant, BatterStat, Day, Distance, FairBallDestination, FairBallType, FoulType,
+    GameOverMessage, HomeAway, MaybeRecognized, NowBattingStats, StrikeType, TopBottom,
+};
 use mmolb_parsing::game::MaybePlayer;
 use mmolb_parsing::parsed_event::{
     BaseSteal, FieldingAttempt, ParsedEventMessageDiscriminants, PositionedPlayer, RunnerAdvance,
@@ -37,11 +40,9 @@ pub enum SimFatalError {
 
     #[error("Expected the automatic runner to be set by inning {inning_num}")]
     MissingAutomaticRunner { inning_num: u8 },
-    
+
     #[error("Couldn't parse game day: {error}")]
-    FailedToParseGameDay {
-        error: String,
-    }
+    FailedToParseGameDay { error: String },
 }
 
 #[derive(Debug, Clone)]
@@ -979,9 +980,11 @@ impl<'g> Game<'g> {
             season: game_data.season.into(),
             day: match &game_data.day {
                 MaybeRecognized::Recognized(day) => *day,
-                MaybeRecognized::NotRecognized(error) => { 
-                    return Err(SimFatalError::FailedToParseGameDay { error: error.clone() });
-                },
+                MaybeRecognized::NotRecognized(error) => {
+                    return Err(SimFatalError::FailedToParseGameDay {
+                        error: error.clone(),
+                    });
+                }
             },
             away: TeamInGame {
                 team_name: away_team_name,
@@ -1033,14 +1036,14 @@ impl<'g> Game<'g> {
             // (greater league) day
             240
         };
-        
+
         // Superstar game does have the automatic runner rule as confirmed by Danny.
         // The other special types of day shouldn't have any games.
         match self.day {
-            Day::SuperstarBreak => { true }
-            Day::Holiday => { true }
-            Day::Day(day) => { day <= day_threshold }
-            Day::SuperstarDay(_) => { true }
+            Day::SuperstarBreak => true,
+            Day::Holiday => true,
+            Day::Day(day) => day <= day_threshold,
+            Day::SuperstarDay(_) => true,
         }
     }
 
@@ -2290,7 +2293,7 @@ impl<'g> Game<'g> {
                     match message {
                         GameOverMessage::GameOver => {
                             // This only happened in season 0 days 1 and 2
-                            if let Day::Day(day) = self.day {  // day 
+                            if let Day::Day(day) = self.day {  // day
                                 if (self.season, day) > (0, 2) {
                                     ingest_logs.warn(
                                         "Old-style <em>Game Over.</em> message appeared after s0d2",
@@ -2304,7 +2307,7 @@ impl<'g> Game<'g> {
                         }
                         GameOverMessage::QuotedGAMEOVER => {
                             // This has happened since season 0 day 2
-                            if let Day::Day(day) = self.day {  // day 
+                            if let Day::Day(day) = self.day {  // day
                                 if (self.season, day) <= (0, 2) {
                                     ingest_logs.warn(
                                         "New-style <em>\"GAME OVER.\"</em> message appeared on or \

@@ -14,8 +14,8 @@ use diesel::{PgConnection, prelude::*, sql_query, sql_types::*};
 use itertools::Itertools;
 use log::warn;
 use mmolb_parsing::ParsedEventMessage;
-use std::iter;
 use mmolb_parsing::enums::{Day, MaybeRecognized};
+use std::iter;
 // First-party imports
 pub use crate::db::taxa::{
     Taxa, TaxaBase, TaxaBaseDescriptionFormat, TaxaBaseWithDescriptionFormat, TaxaEventType,
@@ -227,9 +227,7 @@ pub fn games_from_ingest_list(ingest_id: i64) -> SqlQuery {
     //   prepared query I can't bind a value and then keep appending
     //   more sql. The TODO here is to figure out how to get rid of
     //   this format! without making the code way more complicated.
-    games_list_base().sql(format!(
-        "where g.ingest = {ingest_id}"
-    ))
+    games_list_base().sql(format!("where g.ingest = {ingest_id}"))
 }
 
 pub fn ingest_with_games(
@@ -615,12 +613,8 @@ fn insert_games_internal<'e>(
                     warn!("A game happened on a Holiday.");
                     (None, None)
                 }
-                MaybeRecognized::Recognized(Day::Day(day)) => {
-                    (Some(*day), None)
-                }
-                MaybeRecognized::Recognized(Day::SuperstarDay(day)) => {
-                    (None, Some(*day))
-                }
+                MaybeRecognized::Recognized(Day::Day(day)) => (Some(*day), None),
+                MaybeRecognized::Recognized(Day::SuperstarDay(day)) => (None, Some(*day)),
                 MaybeRecognized::NotRecognized(err) => {
                     warn!("Day was not recognized: {err}");
                     (None, None)
