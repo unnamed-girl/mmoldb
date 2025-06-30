@@ -1,6 +1,7 @@
+use std::error::Error;
 use chrono::{DateTime, Utc};
 use humansize::{DECIMAL, format_size};
-use log::{info, warn};
+use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -194,7 +195,13 @@ impl Chron {
             let entities: ChronEntities<mmolb_parsing::Game> = response
                 .json()
                 .await
-                .map_err(ChronError::RequestDeserializeError)?;
+                .map_err(|e| {
+                    if let Some(source_err) = e.source() {
+                        error!("Failed to parse Chron response: {source_err}");
+                    };
+                    
+                    ChronError::RequestDeserializeError(e)
+                })?;
 
             let Some(cache) = &self.cache else {
                 return Ok(entities);
