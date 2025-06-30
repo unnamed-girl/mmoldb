@@ -3,7 +3,13 @@
 {% for game in games %}
     <li class="game">
         <a href="{{ game.uri }}">
-            s{{ game.season }}d{{ game.day }}:
+            {% if game.day.is_superstar_day %}
+                s{{ game.season }}ss{{ game.day.day }}:
+            {% elif game.day %}
+                s{{ game.season }}d{{ game.day.day }}:
+            {% else %}
+                s{{ game.season }}d??:
+            {% endif %}
             {{ game.away_team_emoji }} {{ game.away_team_name }}
             @
             {{ game.home_team_emoji }} {{ game.home_team_name }}

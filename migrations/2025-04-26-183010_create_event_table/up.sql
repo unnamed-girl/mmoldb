@@ -73,7 +73,8 @@ create table data.games (
     -- game metadata
     weather bigint references data.weather not null,
     season int not null,
-    day int not null,
+    day int, -- day is null for superstar games
+    superstar_day int, -- superstar_day is null for non-superstar games
     away_team_emoji text not null,
     away_team_name text not null,
     away_team_id text not null,
@@ -131,7 +132,7 @@ create table info.ingest_timings (
     
     filter_finished_games_duration float8 not null,
     parse_and_sim_duration float8 not null,
-    
+
     db_insert_duration float8 not null, -- overlaps all the other db_insert_duration
     db_insert_delete_old_games_duration float8 not null,
     db_insert_update_weather_table_duration float8 not null,
@@ -142,7 +143,7 @@ create table info.ingest_timings (
     db_insert_get_event_ids_duration float8 not null,
     db_insert_insert_baserunners_duration float8 not null,
     db_insert_insert_fielders_duration float8 not null,
-    
+
     db_fetch_for_check_duration float8 not null, -- overlaps all the other db_fetch_for_check
     db_fetch_for_check_get_game_id_duration float8 not null,
     db_fetch_for_check_get_events_duration float8 not null,
@@ -152,7 +153,7 @@ create table info.ingest_timings (
     db_fetch_for_check_get_fielders_duration float8 not null,
     db_fetch_for_check_group_fielders_duration float8 not null,
     db_fetch_for_check_post_process_duration float8 not null,
-    
+
     check_round_trip_duration float8 not null,
     insert_extra_logs_duration float8 not null,
     save_duration float8 not null -- overlaps everything but fetch_duration

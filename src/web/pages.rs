@@ -1,4 +1,5 @@
 use diesel::Connection;
+use log::warn;
 use rocket::{State, get, uri};
 use rocket_dyn_templates::{Template, context};
 use serde::Serialize;
@@ -6,7 +7,7 @@ use serde::Serialize;
 use crate::db::PageOfGames;
 use crate::ingest::{IngestStatus, IngestTask};
 use crate::web::error::AppError;
-use crate::web::utility_contexts::{FormattedDateContext, GameContext};
+use crate::web::utility_contexts::{DayContext, FormattedDateContext, GameContext};
 use crate::{Db, db};
 
 const PAGE_OF_GAMES_SIZE: usize = 100;
@@ -32,7 +33,7 @@ pub async fn game_page(mmolb_game_id: String, db: Db) -> Result<Template, AppErr
         watch_uri: String,
         api_uri: String,
         season: i32,
-        day: i32,
+        day: DayContext,
         away_team_emoji: String,
         away_team_name: String,
         away_team_id: String,
@@ -52,7 +53,7 @@ pub async fn game_page(mmolb_game_id: String, db: Db) -> Result<Template, AppErr
         watch_uri,
         api_uri,
         season: game.season,
-        day: game.day,
+        day: (game.day, game.superstar_day).into(),
         away_team_emoji: game.away_team_emoji,
         away_team_name: game.away_team_name,
         away_team_id: game.away_team_id,

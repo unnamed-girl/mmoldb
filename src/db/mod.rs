@@ -17,7 +17,7 @@ use itertools::Itertools;
 use log::warn;
 use mmolb_parsing::ParsedEventMessage;
 use std::iter;
-
+use mmolb_parsing::enums::{Day, MaybeRecognized};
 // First-party imports
 pub use crate::db::taxa::{
     Taxa, TaxaBase, TaxaBaseDescriptionFormat, TaxaBaseWithDescriptionFormat, TaxaEventType,
@@ -607,11 +607,33 @@ fn insert_games_internal<'e>(
                     have populated weather_table with any new weathers in this batch of games.",
                 );
             };
+
+            let (day, superstar_day) = match &raw_game.day {
+                MaybeRecognized::Recognized(Day::SuperstarBreak) => {
+                    warn!("A game happened on a non-numbered Superstar Break day.");
+                    (None, None)
+                }
+                MaybeRecognized::Recognized(Day::Holiday) => {
+                    warn!("A game happened on a Holiday.");
+                    (None, None)
+                }
+                MaybeRecognized::Recognized(Day::Day(day)) => {
+                    (Some(*day), None)
+                }
+                MaybeRecognized::Recognized(Day::SuperstarDay(day)) => {
+                    (None, Some(*day))
+                }
+                MaybeRecognized::NotRecognized(err) => {
+                    warn!("Day was not recognized: {err}");
+                    (None, None)
+                }
+            };
             NewGame {
                 ingest: ingest_id,
                 mmolb_game_id: game_id,
                 season: raw_game.season as i32,
-                day: raw_game.day as i32,
+                day: day.map(Into::into),
+                superstar_day: superstar_day.map(Into::into),
                 weather: *weather_id,
                 away_team_emoji: &raw_game.away_team_emoji,
                 away_team_name: &raw_game.away_team_name,
@@ -731,7 +753,7 @@ fn insert_games_internal<'e>(
         n_events_to_insert,
         n_events_inserted,
     );
-    let insert_events_duration = (Utc::now() - insert_logs_start).as_seconds_f64();
+    let insert_events_duration = (Utc::now() - insert_events_start).as_seconds_f64();
 
     let get_event_ids_start = Utc::now();
     // Postgres' copy doesn't support returning ids, but we need them, so we query them from scratch

@@ -1,14 +1,11 @@
-use crate::db::{GameForDb, weather};
+use crate::db::GameForDb;
 use crate::models::{DbWeather, NewWeather};
 use diesel::connection::DefaultLoadingMode;
 use diesel::prelude::*;
-use diesel::result::DatabaseErrorKind;
-use diesel::result::Error::DatabaseError;
 use diesel::{QueryResult, RunQueryDsl};
 use hashbrown::{Equivalent, HashMap};
 use itertools::Itertools;
-use log::{info, warn};
-use mmolb_parsing::game::Weather;
+use log::warn;
 
 // Uses hashbrown::HashMap because the std HashMap has a limitation on
 // tuples of references
@@ -80,8 +77,6 @@ fn create_weather_table_inner(
         })
         .collect::<QueryResult<HashMap<UniqueWeather, i64>>>()?;
 
-    info!("Read weather table: {:#?}", weather_table);
-
     let new_weathers = games
         .iter()
         .map(GameForDb::raw)
@@ -108,8 +103,6 @@ fn create_weather_table_inner(
     // inserted_weathers indicates a constraint conflict, which is not true if
     // new_weathers is also empty.
     if !new_weathers.is_empty() {
-        info!("Need to insert new weathers: {:#?}", new_weathers);
-
         let inserted_weathers = diesel::insert_into(weather_dsl::weather)
             .values(&new_weathers)
             .on_conflict_do_nothing()
@@ -122,14 +115,10 @@ fn create_weather_table_inner(
             return Ok(OrRetry::Retry);
         }
 
-        info!("Inserted new weathers: {:#?}", inserted_weathers);
-
         weather_table.extend(inserted_weathers.into_iter().map(|weather| {
             let id = weather.id; // Lifetime reasons
             (weather.into(), id)
         }));
-
-        info!("Updated weather table: {:#?}", weather_table);
     }
 
     Ok(OrRetry::Result(weather_table))

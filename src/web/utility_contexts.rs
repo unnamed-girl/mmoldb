@@ -1,7 +1,7 @@
 use crate::db::GameWithIssueCounts;
-use crate::models::DbGame;
 use chrono::{NaiveDateTime, TimeZone, Utc};
 use chrono_humanize::HumanTime;
+use log::warn;
 use rocket::serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
@@ -23,10 +23,32 @@ impl From<&NaiveDateTime> for FormattedDateContext {
 }
 
 #[derive(Serialize)]
+pub struct DayContext {
+    day: Option<i32>,
+    is_superstar_day: bool,
+}
+
+// From a (day, superstar_day) pair
+impl From<(Option<i32>, Option<i32>)> for DayContext {
+    fn from(value: (Option<i32>, Option<i32>)) -> Self {
+        match value {
+            (None, None) => DayContext { day: None, is_superstar_day: false },
+            (Some(day), None) => DayContext { day: Some(day), is_superstar_day: false },
+            (None, Some(day)) => DayContext { day: Some(day), is_superstar_day: true },
+            (Some(normal_day), Some(superstar_day)) => {
+                warn!("Game had both `day` {normal_day} and `superstar_day` {superstar_day} set.");
+                // I guess use the superstar day? For no particular reason.
+                DayContext { day: Some(superstar_day), is_superstar_day: true }
+            }
+        }
+    }
+}
+
+#[derive(Serialize)]
 pub struct GameContext {
     uri: String,
     season: i32,
-    day: i32,
+    day: DayContext,
     away_team_emoji: String,
     away_team_name: String,
     away_team_id: String,
@@ -48,7 +70,7 @@ impl GameContext {
             .map(|g| GameContext {
                 uri: uri_builder(&g.game.mmolb_game_id),
                 season: g.game.season,
-                day: g.game.day,
+                day: (g.game.day, g.game.superstar_day).into(),
                 away_team_emoji: g.game.away_team_emoji,
                 away_team_name: g.game.away_team_name,
                 away_team_id: g.game.away_team_id,

@@ -5,16 +5,14 @@ use crate::db::{
 use itertools::{EitherOrBoth, Itertools, PeekingNext};
 use log::warn;
 use mmolb_parsing::ParsedEventMessage;
-use mmolb_parsing::enums::{
-    Base, BaseNameVariant, BatterStat, Distance, FairBallDestination, FairBallType, FoulType,
-    GameOverMessage, HomeAway, NowBattingStats, StrikeType, TopBottom,
-};
+use mmolb_parsing::enums::{Base, BaseNameVariant, BatterStat, Day, Distance, FairBallDestination, FairBallType, FoulType, GameOverMessage, HomeAway, MaybeRecognized, NowBattingStats, StrikeType, TopBottom};
 use mmolb_parsing::game::MaybePlayer;
 use mmolb_parsing::parsed_event::{
     BaseSteal, FieldingAttempt, ParsedEventMessageDiscriminants, PositionedPlayer, RunnerAdvance,
     RunnerOut, StartOfInningPitcher,
 };
 use std::collections::{HashMap, VecDeque};
+use std::error::Error;
 use std::fmt::Write;
 use std::fmt::{Debug, Formatter};
 use strum::IntoDiscriminant;
@@ -40,6 +38,11 @@ pub enum SimFatalError {
 
     #[error("Expected the automatic runner to be set by inning {inning_num}")]
     MissingAutomaticRunner { inning_num: u8 },
+    
+    #[error("Couldn't parse game day: {error}")]
+    FailedToParseGameDay {
+        error: String,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -252,7 +255,7 @@ pub struct Game<'g> {
     // Does not change
     game_id: &'g str,
     season: i64,
-    day: i64,
+    day: Day,
 
     // Aggregates
     away: TeamInGame<'g>,
@@ -975,7 +978,12 @@ impl<'g> Game<'g> {
         let game = Self {
             game_id,
             season: game_data.season.into(),
-            day: game_data.day.into(),
+            day: match &game_data.day {
+                MaybeRecognized::Recognized(day) => *day,
+                MaybeRecognized::NotRecognized(error) => { 
+                    return Err(SimFatalError::FailedToParseGameDay { error: error.clone() });
+                },
+            },
             away: TeamInGame {
                 team_name: away_team_name,
                 team_emoji: away_team_emoji,
@@ -1017,14 +1025,23 @@ impl<'g> Game<'g> {
         Ok((game, ingest_logs))
     }
 
-    pub fn is_postseason(&self) -> bool {
-        if self.season == 0 {
+    pub fn automatic_runner_rule_is_active(&self) -> bool {
+        let day_threshold = if self.season == 0 {
             // s0 was 120 days of every team playing every day
-            self.day > 120
+            120
         } else {
             // s1 and onwards will be 240 days of teams playing every even (lesser league) or odd
             // (greater league) day
-            self.day > 240
+            240
+        };
+        
+        // Superstar game does have the automatic runner rule as confirmed by Danny.
+        // The other special types of day shouldn't have any games.
+        match self.day {
+            Day::SuperstarBreak => { true }
+            Day::Holiday => { true }
+            Day::Day(day) => { day <= day_threshold }
+            Day::SuperstarDay(_) => { true }
         }
     }
 
@@ -1687,7 +1704,7 @@ impl<'g> Game<'g> {
                     // Add the automatic runner to our state without emitting a db event for it.
                     // This way they will just show up on base without having an event that put
                     // them there, which I think is the correct interpretation.
-                    if *number > 9 && !self.is_postseason() {
+                    if *number > 9 && self.automatic_runner_rule_is_active() {
                         // Before a certain point the automatic runner
                         // wasn't announced in the event. You just had
                         // to figure out who it was based on the
@@ -1716,7 +1733,7 @@ impl<'g> Game<'g> {
                             // lineup abruptly reversed order, causing a lot of automatic runner
                             // warnings. MMOLDB still uses the correct runners, though, so it's
                             // sufficient to just silence the warnings for this day.
-                            if *runner_name != stored_automatic_runner && (self.season, self.day) != (1, 2) {
+                            if *runner_name != stored_automatic_runner && (self.season, self.day) != (1, Day::Day(2)) {
                                 ingest_logs.warn(format!(
                                     "Unexpected automatic runner: expected {}, but saw {}",
                                     stored_automatic_runner, runner_name,
@@ -2274,7 +2291,13 @@ impl<'g> Game<'g> {
                     match message {
                         GameOverMessage::GameOver => {
                             // This only happened in season 0 days 1 and 2
-                            if (self.season, self.day) > (0, 2) {
+                            if let Day::Day(day) = self.day {  // day 
+                                if (self.season, day) > (0, 2) {
+                                    ingest_logs.warn(
+                                        "Old-style <em>Game Over.</em> message appeared after s0d2",
+                                    );
+                                }
+                            } else {
                                 ingest_logs.warn(
                                     "Old-style <em>Game Over.</em> message appeared after s0d2",
                                 );
@@ -2282,13 +2305,14 @@ impl<'g> Game<'g> {
                         }
                         GameOverMessage::QuotedGAMEOVER => {
                             // This has happened since season 0 day 2
-                            if (self.season, self.day) <= (0, 2) {
-                                ingest_logs.warn(
-                                    "New-style <em>\"GAME OVER.\"</em> message appeared on or \
-                                    before s0d2",
-                                );
+                            if let Day::Day(day) = self.day {  // day 
+                                if (self.season, day) <= (0, 2) {
+                                    ingest_logs.warn(
+                                        "New-style <em>\"GAME OVER.\"</em> message appeared on or \
+                                        before s0d2",
+                                    );
+                                }
                             }
-
                         }
                     }
 
