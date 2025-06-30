@@ -20,6 +20,27 @@ docker compose commands. That is no longer necessary, and in fact if you do
 that you will get an error. You don't need any `-f` any more. (If for some
 reason you really want one, now use `-f docker-prod/docker-compose.yml`.)
 
+### A note on memory limits
+
+MMOLDB is a data-intensive app and uses lots of RAM. It was written for 
+systems with a minimum of 16GB of RAM+swap. Docker Desktop imposes strict
+memory and swap limits based on your hardware, and users running MMOLDB
+with Docker Desktop are likely to encounter Out-Of-Memory (OOM) errors.
+These manifest as your containers crashing with exit code 137.
+
+If you get OOM errors using Docker Desktop, try these steps in order of 
+preference:
+
+1. Switch to Docker CE (aka Docker Engine, aka "just plain Docker") if it's
+   supported by your OS. Docker CE doesn't have memory limits by default.
+2. [Increase Docker Desktop's memory and/or swap limit][docker-desktop-limits].
+   Allowing up to 16GB of swap should be sufficient to avoid OOM errors, but
+   will be slower than if you allowed Docker to use more memory. 
+3. Reduce the amount of parallelism in MMOLDB's ingest process. Uncomment the
+   `ingest_parallelism` setting in `Rocket.toml` and set it to a lower value
+   than its default, which is the number of CPU cores that Docker is configured
+   to use. Lower values for `ingest_parallelism` will result in slower ingests.
+
 First-run Setup
 ---------------
 
@@ -90,7 +111,19 @@ Contributions are very welcome! There are guides on how to contribute specific
 things in the `contributing` folder. Contributions that contribute additional
 guides are also welcome.
 
+### Desired contributions
+
+Some contributions that are particularly desired are:
+
+1. Improve the startup performance and memory usage of the HTTP cache used by
+   `src/ingest/chron.rs`. This may involve replacing the key-value store 
+   library.
+2. Add another config file that allows overriding config values from 
+   `Rocket.toml` and isn't checked into git. We're already customizing the
+   Rocket configuration in `get_figment_with_constructed_db_url`.
+
 [mmolb]: https://mmolb.com/
 [mmoldb]: https://mmoldb.beiju.me/
 [rustrover]: https://www.jetbrains.com/rust/
 [docker-compose]: https://docs.docker.com/compose/
+[docker-desktop-limits]: https://docs.docker.com/desktop/settings-and-maintenance/settings/#resources
