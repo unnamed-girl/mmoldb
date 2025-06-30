@@ -78,9 +78,11 @@ create table data.games (
     away_team_emoji text not null,
     away_team_name text not null,
     away_team_id text not null,
+    away_team_final_score int, -- away_team_final_score is null for unfinished games
     home_team_emoji text not null,
     home_team_name text not null,
     home_team_id text not null,
+    home_team_final_score int, -- home_team_final_score is null for unfinished games
 
     -- Indicates whether this game has been ingested
     is_finished bool not null
@@ -201,6 +203,11 @@ create table data.events (
     outs_before int not null,
     outs_after int not null,
     -- note: runs scored, outs on play, steal info, etc. are all computed from data.event_baserunners
+
+    home_score_before int not null,
+    home_score_after int not null,
+    away_score_before int not null,
+    away_score_after int not null,
 
     -- player info
     pitcher_name text not null,
