@@ -10,8 +10,6 @@ pub use to_db_format::RowToEventError;
 // Third-party imports
 use chrono::{DateTime, NaiveDateTime, Utc};
 use diesel::query_builder::SqlQuery;
-use diesel::result::DatabaseErrorKind;
-use diesel::result::Error::DatabaseError;
 use diesel::{PgConnection, prelude::*, sql_query, sql_types::*};
 use itertools::Itertools;
 use log::warn;
@@ -25,8 +23,8 @@ pub use crate::db::taxa::{
 };
 use crate::ingest::{EventDetail, IngestLog};
 use crate::models::{
-    DbEvent, DbEventIngestLog, DbFielder, DbGame, DbIngest, DbRawEvent, DbRunner, DbWeather,
-    NewEventIngestLog, NewGame, NewGameIngestTimings, NewIngest, NewRawEvent, NewWeather,
+    DbEvent, DbEventIngestLog, DbFielder, DbGame, DbIngest, DbRawEvent, DbRunner,
+    NewEventIngestLog, NewGame, NewGameIngestTimings, NewIngest, NewRawEvent,
 };
 
 pub fn ingest_count(conn: &mut PgConnection) -> QueryResult<i64> {

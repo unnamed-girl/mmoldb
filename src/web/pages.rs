@@ -1,5 +1,4 @@
 use diesel::Connection;
-use log::warn;
 use rocket::{State, get, uri};
 use rocket_dyn_templates::{Template, context};
 use serde::Serialize;

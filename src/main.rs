@@ -10,7 +10,6 @@ mod models;
 mod web;
 
 use crate::ingest::{IngestFairing, IngestTask};
-use log::info;
 use num_format::{Locale, ToFormattedString};
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use rocket::fairing::AdHoc;

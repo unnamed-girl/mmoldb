@@ -12,7 +12,6 @@ use mmolb_parsing::parsed_event::{
     RunnerOut, StartOfInningPitcher,
 };
 use std::collections::{HashMap, VecDeque};
-use std::error::Error;
 use std::fmt::Write;
 use std::fmt::{Debug, Formatter};
 use strum::IntoDiscriminant;

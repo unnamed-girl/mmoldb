@@ -9,7 +9,6 @@ pub use sim::{EventDetail, EventDetailFielder, EventDetailRunner, IngestLog};
 use chrono::{DateTime, TimeZone, Utc};
 use chrono_humanize::HumanTime;
 use diesel::PgConnection;
-use itertools::Itertools;
 use log::{error, info, warn};
 use rocket::fairing::{Fairing, Info, Kind};
 use rocket::tokio::sync::{Notify, RwLock};
@@ -25,9 +24,8 @@ use std::time::Duration;
 use thiserror::Error;
 
 // First party dependencies
-use crate::db::{CompletedGameForDb, GameForDb, RowToEventError, Taxa, Timings};
-use crate::ingest::chron::{ChronEntities, ChronEntity, ChronError, GameExt};
-use crate::ingest::sim::{Game, SimFatalError};
+use crate::db::Taxa;
+use crate::ingest::chron::{ChronEntities, ChronError};
 use crate::ingest::worker::{IngestWorker, IngestWorkerInProgress};
 use crate::{Db, db};
 
