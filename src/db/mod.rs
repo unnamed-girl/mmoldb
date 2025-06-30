@@ -533,6 +533,13 @@ impl<'g> GameForDb<'g> {
             GameForDb::Completed(game) => (&game.id, &game.raw_game),
         }
     }
+    
+    pub fn is_complete(&self) -> bool {
+        match self {
+            GameForDb::Incomplete { .. } => false,
+            GameForDb::Completed(_) => true,
+        }
+    }
 }
 
 pub(crate) struct InsertGamesTimings {
@@ -633,7 +640,7 @@ fn insert_games_internal<'e>(
                 home_team_emoji: &raw_game.home_team_emoji,
                 home_team_name: &raw_game.home_team_name,
                 home_team_id: &raw_game.home_team_id,
-                is_finished: false,
+                is_finished: game.is_complete(),
             }
         })
         .collect_vec();
