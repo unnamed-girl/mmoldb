@@ -533,7 +533,7 @@ impl<'g> GameForDb<'g> {
             GameForDb::Completed(game) => (&game.id, &game.raw_game),
         }
     }
-    
+
     pub fn is_complete(&self) -> bool {
         match self {
             GameForDb::Incomplete { .. } => false,
