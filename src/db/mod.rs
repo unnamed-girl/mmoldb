@@ -621,12 +621,12 @@ fn insert_games_internal<'e>(
                 }
             };
 
-            let (is_finished, away_team_final_score, home_team_final_score) = if let GameForDb::Completed(complete_game) = game {
+            let (away_team_final_score, home_team_final_score) = if let GameForDb::Completed(complete_game) = game {
                 complete_game.events.last()
-                    .map(|event| (true, Some(event.away_score_after as i32), Some(event.home_score_after as i32)))
-                    .unwrap_or((true, None, None))
+                    .map(|event| (Some(event.away_team_score_after as i32), Some(event.home_team_score_after as i32)))
+                    .unwrap_or((None, None))
             } else {
-                (false, None, None)
+                (None, None)
             };
             NewGame {
                 ingest: ingest_id,
@@ -643,7 +643,7 @@ fn insert_games_internal<'e>(
                 home_team_name: &raw_game.home_team_name,
                 home_team_id: &raw_game.home_team_id,
                 home_team_final_score,
-                is_finished,
+                is_finished: false,
             }
         })
         .collect_vec();
