@@ -621,13 +621,21 @@ fn insert_games_internal<'e>(
                 }
             };
 
-            let (away_team_final_score, home_team_final_score) = if let GameForDb::Completed(complete_game) = game {
-                complete_game.events.last()
-                    .map(|event| (Some(event.away_team_score_after as i32), Some(event.home_team_score_after as i32)))
-                    .unwrap_or((None, None))
-            } else {
-                (None, None)
-            };
+            let (away_team_final_score, home_team_final_score) =
+                if let GameForDb::Completed(complete_game) = game {
+                    complete_game
+                        .events
+                        .last()
+                        .map(|event| {
+                            (
+                                Some(event.away_team_score_after as i32),
+                                Some(event.home_team_score_after as i32),
+                            )
+                        })
+                        .unwrap_or((None, None))
+                } else {
+                    (None, None)
+                };
             NewGame {
                 ingest: ingest_id,
                 mmolb_game_id: game_id,
