@@ -183,6 +183,7 @@ struct FairBall {
 }
 
 #[derive(Debug, Copy, Clone)]
+// todo rename to EventContext or something like that
 enum GamePhase<'g> {
     ExpectInningStart,
     ExpectNowBatting,
@@ -1930,6 +1931,7 @@ impl<'g> Game<'g> {
                         detail_builder
                             .pitch(pitch)
                             .runner_changes(advances.clone(), scores.clone())
+                            .add_runner(batter, TaxaBase::First)
                             .build_some(self, batter_name, ingest_logs, TaxaEventType::HitByPitch)
                     },
                 )
@@ -2043,6 +2045,7 @@ impl<'g> Game<'g> {
                         .hit_type((*distance).into())
                         .fielder(*fielder)
                         .runner_changes(advances.clone(), scores.clone())
+                        .add_runner(batter, (*distance).into())
                         .build_some(self, batter_name, ingest_logs, TaxaEventType::Hit)
                 },
                 [ParsedEventMessageDiscriminants::ReachOnFieldingError]
@@ -2062,6 +2065,7 @@ impl<'g> Game<'g> {
                         .fielding_error_type((*error).into())
                         .fielder(*fielder)
                         .runner_changes(advances.clone(), scores.clone())
+                        .add_runner(batter, TaxaBase::First)
                         .build_some(self, batter_name, ingest_logs, TaxaEventType::FieldingError)
                 },
                 [ParsedEventMessageDiscriminants::HomeRun]
@@ -2161,6 +2165,7 @@ impl<'g> Game<'g> {
                         .fair_ball(fair_ball)
                         .runner_changes(advances.clone(), scores.clone())
                         .add_out(*out)
+                        .add_runner(batter, TaxaBase::First)
                         .fielders(fielders.clone())
                         .build_some(self, batter_name, ingest_logs, TaxaEventType::ForceOut)
                 },
@@ -2194,6 +2199,7 @@ impl<'g> Game<'g> {
                             detail_builder
                                 .fair_ball(fair_ball)
                                 .runner_changes(advances.clone(), scores.clone())
+                                .add_runner(batter, TaxaBase::First)
                                 .add_out(*out)
                                 .fielders(fielders.clone())
                                 .build_some(self, batter_name, ingest_logs, TaxaEventType::FieldersChoice)
@@ -2210,6 +2216,7 @@ impl<'g> Game<'g> {
                             detail_builder
                                 .fair_ball(fair_ball)
                                 .runner_changes(advances.clone(), scores.clone())
+                                .add_runner(batter, TaxaBase::First)
                                 .fielders(fielders.clone())
                                 .fielding_error_type((*error).into())
                                 .build_some(self, batter_name, ingest_logs, TaxaEventType::ErrorOnFieldersChoice)
