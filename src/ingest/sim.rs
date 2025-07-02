@@ -72,6 +72,10 @@ pub struct EventDetail<StrT: Clone> {
     pub count_strikes: u8,
     pub outs_before: i32,
     pub outs_after: i32,
+    pub home_team_score_before: u8,
+    pub home_team_score_after: u8,
+    pub away_team_score_before: u8,
+    pub away_team_score_after: u8,
     pub pitcher_name: StrT,
     pub batter_name: StrT,
     pub fielders: Vec<EventDetailFielder<StrT>>,
@@ -794,6 +798,10 @@ impl<'g> EventDetailBuilder<'g> {
             count_strikes: game.state.count_strikes,
             outs_before: self.prev_game_state.outs,
             outs_after: game.state.outs,
+            home_team_score_before: self.prev_game_state.home_score,
+            home_team_score_after: game.state.home_score,
+            away_team_score_before: self.prev_game_state.away_score,
+            away_team_score_after: game.state.away_score,
             batter_name,
             pitcher_name: if let MaybePlayer::Player(pitcher) = &self.raw_event.pitcher {
                 pitcher

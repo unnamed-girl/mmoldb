@@ -627,6 +627,22 @@ fn insert_games_internal<'e>(
                     (None, None)
                 }
             };
+
+            let (away_team_final_score, home_team_final_score) =
+                if let GameForDb::Completed(complete_game) = game {
+                    complete_game
+                        .events
+                        .last()
+                        .map(|event| {
+                            (
+                                Some(event.away_team_score_after as i32),
+                                Some(event.home_team_score_after as i32),
+                            )
+                        })
+                        .unwrap_or((None, None))
+                } else {
+                    (None, None)
+                };
             NewGame {
                 ingest: ingest_id,
                 mmolb_game_id: game_id,
@@ -637,9 +653,11 @@ fn insert_games_internal<'e>(
                 away_team_emoji: &raw_game.away_team_emoji,
                 away_team_name: &raw_game.away_team_name,
                 away_team_id: &raw_game.away_team_id,
+                away_team_final_score,
                 home_team_emoji: &raw_game.home_team_emoji,
                 home_team_name: &raw_game.home_team_name,
                 home_team_id: &raw_game.home_team_id,
+                home_team_final_score,
                 is_finished: game.is_complete(),
             }
         })
