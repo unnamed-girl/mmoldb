@@ -1,27 +1,28 @@
 use crate::db::{
     TaxaBase, TaxaBaseDescriptionFormat, TaxaBaseWithDescriptionFormat, TaxaEventType,
-    TaxaFairBallType, TaxaFieldingErrorType, TaxaHitType, TaxaPitchType, TaxaPosition,
+    TaxaFairBallType, TaxaFieldingErrorType, TaxaHitType, TaxaPitchType, TaxaSlot,
+    TaxaFielderLocation,
 };
 use itertools::{EitherOrBoth, Itertools, PeekingNext};
 use log::warn;
 use mmolb_parsing::ParsedEventMessage;
-use mmolb_parsing::enums::{
-    Base, BaseNameVariant, BatterStat, Day, Distance, FairBallDestination, FairBallType, FoulType,
-    GameOverMessage, HomeAway, MaybeRecognized, NowBattingStats, StrikeType, TopBottom,
-};
+use mmolb_parsing::enums::{Base, BaseNameVariant, BatterStat, Day, Distance, FairBallDestination, FairBallType, FieldingErrorType, FoulType, GameOverMessage, HomeAway, MaybeRecognized, NowBattingStats, Place, Position, Slot, SlotDiscriminants, StrikeType, TopBottom};
 use mmolb_parsing::game::MaybePlayer;
 use mmolb_parsing::parsed_event::{
-    BaseSteal, FieldingAttempt, ParsedEventMessageDiscriminants, PositionedPlayer, RunnerAdvance,
+    BaseSteal, FieldingAttempt, ParsedEventMessageDiscriminants, PlacedPlayer, RunnerAdvance,
     RunnerOut, StartOfInningPitcher,
 };
 use std::collections::{HashMap, VecDeque};
-use std::fmt::Write;
+use std::fmt::{Display, Write};
 use std::fmt::{Debug, Formatter};
 use strum::IntoDiscriminant;
 use thiserror::Error;
+use crate::parsing_extensions;
+use crate::parsing_extensions::BestEffortSlottedPlayer;
 
+// TODO Delete all variants that are still commented out when the code finally compiles
 #[derive(Debug, Error)]
-pub enum SimFatalError {
+pub enum SimStartupError {
     #[error("This game had no events")]
     NoEvents,
 
@@ -38,11 +39,58 @@ pub enum SimFatalError {
         received: ParsedEventMessageDiscriminants,
     },
 
-    #[error("Expected the automatic runner to be set by inning {inning_num}")]
-    MissingAutomaticRunner { inning_num: u8 },
+    // #[error("Expected the automatic runner to be set by inning {inning_num}")]
+    // MissingAutomaticRunner { inning_num: u8 },
 
     #[error("Couldn't parse game day: {error}")]
     FailedToParseGameDay { error: String },
+
+    #[error("Couldn't parse starting pitcher \"{0}\"")]
+    FailedToParseStartingPitcher(String),
+
+    // #[error("The fielding pitcher ({fielding_pitcher}) did not match the pitching pitcher ({pitching_pitcher})")]
+    // WrongPitcherOnField {
+    //     fielding_pitcher: String,
+    //     pitching_pitcher: String,
+    // }
+}
+
+// TODO Delete all variants that are still commented out when the code finally compiles
+#[derive(Debug, Error)]
+pub enum SimFatalError {
+    // #[error("This game had no events")]
+    // NoEvents,
+    //
+    // #[error("Not enough events. Expected {expected:?} event after {previous:?}")]
+    // NotEnoughEvents {
+    //     expected: &'static [ParsedEventMessageDiscriminants],
+    //     previous: ParsedEventMessageDiscriminants,
+    // },
+
+    #[error("Expected {expected:?} event after {previous:?}, but received {received:?}")]
+    UnexpectedEventType {
+        expected: &'static [ParsedEventMessageDiscriminants],
+        previous: Option<ParsedEventMessageDiscriminants>,
+        received: ParsedEventMessageDiscriminants,
+    },
+
+    #[error("Expected the automatic runner to be set by inning {inning_num}")]
+    MissingAutomaticRunner { inning_num: u8 },
+
+    // #[error("Couldn't parse game day: {error}")]
+    // FailedToParseGameDay { error: String },
+
+    #[error("The fielding pitcher ({fielding_pitcher}) did not match the pitching pitcher ({pitching_pitcher})")]
+    WrongPitcherOnField {
+        fielding_pitcher: String,
+        pitching_pitcher: String,
+    },
+
+    #[error("Pitcher swap named a generic pitcher (\"P\") instead of a specific roster slot (e.g. \"SP2\") or a roster slot type (e.g. \"SP\").")]
+    GenericPitcherInPitcherSwap,
+
+    #[error("Pitcher swap didn't name a pitcher position or slot.")]
+    MissingPlaceInPitcherSwap,
 }
 
 #[derive(Debug, Clone)]
@@ -58,7 +106,7 @@ pub struct EventDetailRunner<StrT: Clone> {
 #[derive(Debug, Clone)]
 pub struct EventDetailFielder<StrT: Clone> {
     pub name: StrT,
-    pub position: TaxaPosition,
+    pub slot: TaxaSlot,
     pub is_perfect_catch: Option<bool>,
 }
 
@@ -83,7 +131,7 @@ pub struct EventDetail<StrT: Clone> {
     pub detail_type: TaxaEventType,
     pub hit_type: Option<TaxaHitType>,
     pub fair_ball_type: Option<TaxaFairBallType>,
-    pub fair_ball_direction: Option<TaxaPosition>,
+    pub fair_ball_direction: Option<TaxaFielderLocation>,
     pub fielding_error_type: Option<TaxaFieldingErrorType>,
     pub pitch_type: Option<TaxaPitchType>,
     pub pitch_speed: Option<f64>,
@@ -226,6 +274,9 @@ pub struct TeamInGame<'g> {
     // not always the batter who most recently stepped up, in the case
     // of automatic runners after an inning-ending CS
     automatic_runner: Option<&'g str>,
+    // Need to store the team's active pitcher to facilitate upgrading
+    // old games' positions (e.g. "P") into the newer slots (e.g. "RP")
+    active_pitcher: BestEffortSlottedPlayer<&'g str>,
     batter_stats: HashMap<&'g str, BatterStats>,
     pitcher_count: i32,
     batter_count: i32,
@@ -290,15 +341,15 @@ where
     pub fn next(
         &mut self,
         expected: &'static [ParsedEventMessageDiscriminants],
-    ) -> Result<&'a ParsedEventMessage<&'g str>, SimFatalError> {
+    ) -> Result<&'a ParsedEventMessage<&'g str>, SimStartupError> {
         match self.inner.next() {
             Some(val) => {
                 self.prev_event_type = Some(val.discriminant());
                 Ok(val)
             }
             None => match self.prev_event_type {
-                None => Err(SimFatalError::NoEvents),
-                Some(previous) => Err(SimFatalError::NotEnoughEvents { expected, previous }),
+                None => Err(SimStartupError::NoEvents),
+                Some(previous) => Err(SimStartupError::NotEnoughEvents { expected, previous }),
             },
         }
     }
@@ -319,7 +370,7 @@ macro_rules! extract_next_game_event {
         let expected = &[$($expected,)*];
         match $iter.next(expected)? {
             $($p => Ok($e),)*
-            other => Err(SimFatalError::UnexpectedEventType {
+            other => Err(SimStartupError::UnexpectedEventType {
                 expected,
                 previous,
                 received: other.discriminant(),
@@ -412,8 +463,9 @@ struct EventDetailBuilder<'g> {
     prev_game_state: GameState<'g>,
     game_event_index: usize,
     fair_ball_event_index: Option<usize>,
+    pitcher: BestEffortSlottedPlayer<&'g str>,
     fair_ball_type: Option<TaxaFairBallType>,
-    fair_ball_direction: Option<TaxaPosition>,
+    fair_ball_direction: Option<TaxaFielderLocation>,
     hit_type: Option<TaxaHitType>,
     fielding_error_type: Option<TaxaFieldingErrorType>,
     pitch: Option<Pitch>,
@@ -452,56 +504,119 @@ impl<'g> EventDetailBuilder<'g> {
         self
     }
 
-    fn fielder(mut self, fielder: PositionedPlayer<&'g str>) -> Self {
+    fn placed_player_slot(&self, player: PlacedPlayer<&'g str>, ingest_logs: &mut IngestLogs) -> Result<TaxaSlot, SimFatalError> {
+        Ok(match player.place {
+            // Historical -- new games have Slots
+            Place::Position(Position::Pitcher) => {
+                if self.pitcher.name == player.name {
+                    self.pitcher.slot.into()
+                } else {
+                    return Err(SimFatalError::WrongPitcherOnField {
+                        fielding_pitcher: player.name.to_string(),
+                        pitching_pitcher: self.pitcher.name.to_string(),
+                    })
+                }
+            }
+            Place::Position(Position::Catcher) => { TaxaSlot::Catcher }
+            Place::Position(Position::FirstBaseman) => { TaxaSlot::FirstBase }
+            Place::Position(Position::SecondBaseman) => { TaxaSlot::SecondBase }
+            Place::Position(Position::ThirdBaseman) => { TaxaSlot::ThirdBase }
+            Place::Position(Position::ShortStop) => { TaxaSlot::Shortstop }
+            Place::Position(Position::LeftField) => { TaxaSlot::LeftField }
+            Place::Position(Position::CenterField) => { TaxaSlot::CenterField }
+            Place::Position(Position::RightField) => { TaxaSlot::RightField }
+            Place::Position(Position::StartingPitcher) => { TaxaSlot::StartingPitcher }
+            Place::Position(Position::ReliefPitcher) => { TaxaSlot::ReliefPitcher }
+            Place::Position(Position::Closer) => { TaxaSlot::Closer }
+
+            // Active
+            Place::Slot(Slot::Catcher) => { TaxaSlot::Catcher }
+            Place::Slot(Slot::FirstBaseman) => { TaxaSlot::FirstBase }
+            Place::Slot(Slot::SecondBaseman) => { TaxaSlot::SecondBase }
+            Place::Slot(Slot::ThirdBaseman) => { TaxaSlot::ThirdBase }
+            Place::Slot(Slot::ShortStop) => { TaxaSlot::Shortstop }
+            Place::Slot(Slot::LeftField) => { TaxaSlot::LeftField }
+            Place::Slot(Slot::CenterField) => { TaxaSlot::CenterField }
+            Place::Slot(Slot::RightField) => { TaxaSlot::RightField }
+            Place::Slot(Slot::StartingPitcher(1)) => { TaxaSlot::StartingPitcher1 }
+            Place::Slot(Slot::StartingPitcher(2)) => { TaxaSlot::StartingPitcher2 }
+            Place::Slot(Slot::StartingPitcher(3)) => { TaxaSlot::StartingPitcher3 }
+            Place::Slot(Slot::StartingPitcher(4)) => { TaxaSlot::StartingPitcher4 }
+            Place::Slot(Slot::StartingPitcher(5)) => { TaxaSlot::StartingPitcher5 }
+            Place::Slot(Slot::StartingPitcher(other)) => {
+                ingest_logs.warn(format!(
+                    "Unexpected starting pitcher number: {other} (expected 1-5). Falling back to \
+                    un-numbered starting pitcher type.",
+                ));
+                TaxaSlot::StartingPitcher
+            }
+            Place::Slot(Slot::ReliefPitcher(1)) => { TaxaSlot::ReliefPitcher1 }
+            Place::Slot(Slot::ReliefPitcher(2)) => { TaxaSlot::ReliefPitcher2 }
+            Place::Slot(Slot::ReliefPitcher(3)) => { TaxaSlot::ReliefPitcher3 }
+            Place::Slot(Slot::ReliefPitcher(other)) => {
+                ingest_logs.warn(format!(
+                    "Unexpected relief pitcher number: {other} (expected 1-3). Falling back to \
+                    un-numbered relief pitcher type.",
+                ));
+                TaxaSlot::ReliefPitcher
+            }
+            Place::Slot(Slot::Closer) => { TaxaSlot::Closer }
+            Place::Slot(Slot::DesignatedHitter) => { TaxaSlot::DesignatedHitter }
+        })
+    }
+
+    fn fielder(mut self, fielder: PlacedPlayer<&'g str>, ingest_logs: &mut IngestLogs) -> Result<Self, SimFatalError> {
         if !self.fielders.is_empty() {
             warn!("EventDetailBuilder overwrote existing fielders");
         }
 
         self.fielders = vec![EventDetailFielder {
             name: fielder.name,
-            position: fielder.position.into(),
+            slot: self.placed_player_slot(fielder, ingest_logs)?,
             is_perfect_catch: None,
         }];
-        self
+
+        Ok(self)
     }
 
-    fn catch_fielder(mut self, fielder: PositionedPlayer<&'g str>, is_perfect: bool) -> Self {
+    fn catch_fielder(mut self, fielder: PlacedPlayer<&'g str>, ingest_logs: &mut IngestLogs, is_perfect: bool) -> Result<Self, SimFatalError> {
         if !self.fielders.is_empty() {
             warn!("EventDetailBuilder overwrote existing fielders");
         }
 
         self.fielders = vec![EventDetailFielder {
             name: fielder.name,
-            position: fielder.position.into(),
+            slot: self.placed_player_slot(fielder, ingest_logs)?,
             is_perfect_catch: Some(is_perfect),
         }];
-        self
+
+        Ok(self)
     }
 
-    fn fielders(mut self, fielders: impl IntoIterator<Item = PositionedPlayer<&'g str>>) -> Self {
+    fn fielders(mut self, fielders: impl IntoIterator<Item = PlacedPlayer<&'g str>>, ingest_logs: &mut IngestLogs) -> Result<Self, SimFatalError> {
         if !self.fielders.is_empty() {
             warn!("EventDetailBuilder overwrote existing fielders");
         }
 
         self.fielders = fielders
             .into_iter()
-            .map(|f| EventDetailFielder {
+            .map(|f| self.placed_player_slot(f, ingest_logs).map(|slot| EventDetailFielder {
                 name: f.name,
-                position: f.position.into(),
+                slot,
                 is_perfect_catch: None,
-            })
-            .collect();
+            }))
+            .collect::<Result<_, _>>()?;
 
-        self
+        Ok(self)
     }
 
     fn fielders_with_perfect_catch(
         self,
-        fielders: impl IntoIterator<Item = PositionedPlayer<&'g str>>,
+        fielders: impl IntoIterator<Item = PlacedPlayer<&'g str>>,
         perfect_catch: bool,
         ingest_logs: &mut IngestLogs,
-    ) -> Self {
-        let mut me = self.fielders(fielders);
+    ) -> Result<Self, SimFatalError> {
+        let mut me = self.fielders(fielders, ingest_logs)?;
 
         // I believe a perfect catch means a catch of the batted ball and therefore
         // will always be the first listed fielder's catch
@@ -511,7 +626,7 @@ impl<'g> EventDetailBuilder<'g> {
             ingest_logs.error("There were no fielders on an event with a perfect catch");
         }
 
-        me
+        Ok(me)
     }
 
     fn set_batter_scores(mut self) -> Self {
@@ -845,7 +960,7 @@ impl<'g> Game<'g> {
         game_id: &'g str,
         game_data: &'g mmolb_parsing::Game,
         events: &'a mut IterT,
-    ) -> Result<(Game<'g>, Vec<Vec<IngestLog>>), SimFatalError>
+    ) -> Result<(Game<'g>, Vec<Vec<IngestLog>>), SimStartupError>
     where
         'g: 'a,
         IterT: Iterator<Item = &'a ParsedEventMessage<&'g str>>,
@@ -990,7 +1105,7 @@ impl<'g> Game<'g> {
             day: match &game_data.day {
                 MaybeRecognized::Recognized(day) => *day,
                 MaybeRecognized::NotRecognized(error) => {
-                    return Err(SimFatalError::FailedToParseGameDay {
+                    return Err(SimStartupError::FailedToParseGameDay {
                         error: error.clone(),
                     });
                 }
@@ -1000,6 +1115,11 @@ impl<'g> Game<'g> {
                 team_emoji: away_team_emoji,
                 team_id: game_data.away_team_id.as_str(),
                 automatic_runner: None,
+                active_pitcher: BestEffortSlottedPlayer {
+                    name: away_pitcher_name,
+                    slot: game_data.away_sp.parse()
+                        .map_err(|()| SimStartupError::FailedToParseStartingPitcher(game_data.away_sp.clone()))?
+                },
                 batter_stats: away_batter_stats,
                 pitcher_count: 0,
                 batter_count: 0,
@@ -1012,6 +1132,11 @@ impl<'g> Game<'g> {
                 team_emoji: home_team_emoji,
                 team_id: game_data.home_team_id.as_str(),
                 automatic_runner: None,
+                active_pitcher: BestEffortSlottedPlayer {
+                    name: home_pitcher_name,
+                    slot: game_data.home_sp.parse()
+                        .map_err(|()| SimStartupError::FailedToParseStartingPitcher(game_data.home_sp.clone()))?
+                },
                 batter_stats: home_batter_stats,
                 pitcher_count: 0,
                 batter_count: 0,
@@ -1185,6 +1310,7 @@ impl<'g> Game<'g> {
             prev_game_state,
             fair_ball_event_index: None,
             game_event_index,
+            pitcher: self.defending_team().active_pitcher,
             fielders: Vec::new(),
             advances: Vec::new(),
             hit_type: None,
@@ -1706,7 +1832,9 @@ impl<'g> Game<'g> {
                         StartOfInningPitcher::Same { emoji, name } => {
                             ingest_logs.info(format!("Not incrementing pitcher_count on returning pitcher {emoji} {name}"));
                         }
-                        StartOfInningPitcher::Different { arriving_pitcher, leaving_pitcher } => {
+                        StartOfInningPitcher::Different { leaving_emoji: _, leaving_pitcher, arriving_emoji: _, arriving_pitcher } => {
+                            self.defending_team_mut().active_pitcher = (*arriving_pitcher).try_into()
+                                .map_err(|_| SimFatalError::GenericPitcherInPitcherSwap)?;
                             self.defending_team_mut().pitcher_count += 1;
                             ingest_logs.info(format!("Incrementing pitcher_count as {leaving_pitcher} is replaced by {arriving_pitcher}."));
                         }
@@ -1769,7 +1897,7 @@ impl<'g> Game<'g> {
                     None
                 },
                 [ParsedEventMessageDiscriminants::MoundVisit]
-                ParsedEventMessage::MoundVisit { team } => {
+                ParsedEventMessage::MoundVisit { team, mound_visit_type: _ } => {
                     if team.name != self.defending_team().team_name {
                         ingest_logs.info(format!(
                             "Defending team name from MoundVisit ({}) did not match the one from \
@@ -1974,7 +2102,7 @@ impl<'g> Game<'g> {
                     None
                 },
                 [ParsedEventMessageDiscriminants::MoundVisit]
-                ParsedEventMessage::MoundVisit { team } => {
+                ParsedEventMessage::MoundVisit { team, mound_visit_type: _ } => {
                     if self.defending_team().team_name != team.name {
                          ingest_logs.warn(format!(
                              "Team name in MoundVisit doesn't match: Expected {}, but saw {}",
@@ -2013,7 +2141,7 @@ impl<'g> Game<'g> {
                     detail_builder
                         .fair_ball(fair_ball)
                         .described_as_sacrifice(*sacrifice)
-                        .catch_fielder(*caught_by, *perfect)
+                        .catch_fielder(*caught_by, ingest_logs, *perfect)?
                         .runner_changes(advances.clone(), scores.clone())
                         .build_some(self, batter_name, ingest_logs, TaxaEventType::CaughtOut)
                 },
@@ -2031,7 +2159,7 @@ impl<'g> Game<'g> {
 
                     detail_builder
                         .fair_ball(fair_ball)
-                        .fielders_with_perfect_catch(fielders.clone(), *perfect, ingest_logs)
+                        .fielders_with_perfect_catch(fielders.clone(), *perfect, ingest_logs)?
                         .runner_changes(advances.clone(), scores.clone())
                         .build_some(self, batter_name, ingest_logs, TaxaEventType::GroundedOut)
                 },
@@ -2051,7 +2179,7 @@ impl<'g> Game<'g> {
                     detail_builder
                         .fair_ball(fair_ball)
                         .hit_type((*distance).into())
-                        .fielder(*fielder)
+                        .fielder(*fielder, ingest_logs)?
                         .runner_changes(advances.clone(), scores.clone())
                         .add_runner(batter, (*distance).into())
                         .build_some(self, batter_name, ingest_logs, TaxaEventType::Hit)
@@ -2071,7 +2199,7 @@ impl<'g> Game<'g> {
                     detail_builder
                         .fair_ball(fair_ball)
                         .fielding_error_type((*error).into())
-                        .fielder(*fielder)
+                        .fielder(*fielder, ingest_logs)?
                         .runner_changes(advances.clone(), scores.clone())
                         .add_runner(batter, TaxaBase::First)
                         .build_some(self, batter_name, ingest_logs, TaxaEventType::FieldingError)
@@ -2127,7 +2255,7 @@ impl<'g> Game<'g> {
                         .fair_ball(fair_ball)
                         .runner_changes(advances.clone(), scores.clone())
                         .add_out(*out_two)
-                        .fielders(fielders.clone())
+                        .fielders(fielders.clone(), ingest_logs)?
                         .build_some(self, batter_name, ingest_logs, TaxaEventType::DoublePlay)
                 },
                 [ParsedEventMessageDiscriminants::DoublePlayGrounded]
@@ -2150,7 +2278,7 @@ impl<'g> Game<'g> {
                         .runner_changes(advances.clone(), scores.clone())
                         .add_out(*out_one)
                         .add_out(*out_two)
-                        .fielders(fielders.clone())
+                        .fielders(fielders.clone(), ingest_logs)?
                         .build_some(self, batter_name, ingest_logs, TaxaEventType::DoublePlay)
                 },
                 [ParsedEventMessageDiscriminants::ForceOut]
@@ -2174,7 +2302,7 @@ impl<'g> Game<'g> {
                         .runner_changes(advances.clone(), scores.clone())
                         .add_out(*out)
                         .add_runner(batter, TaxaBase::First)
-                        .fielders(fielders.clone())
+                        .fielders(fielders.clone(), ingest_logs)?
                         .build_some(self, batter_name, ingest_logs, TaxaEventType::ForceOut)
                 },
                 [ParsedEventMessageDiscriminants::ReachOnFieldersChoice]
@@ -2209,7 +2337,7 @@ impl<'g> Game<'g> {
                                 .runner_changes(advances.clone(), scores.clone())
                                 .add_runner(batter, TaxaBase::First)
                                 .add_out(*out)
-                                .fielders(fielders.clone())
+                                .fielders(fielders.clone(), ingest_logs)?
                                 .build_some(self, batter_name, ingest_logs, TaxaEventType::FieldersChoice)
                         }
                         FieldingAttempt::Error { fielder, error } => {
@@ -2225,7 +2353,7 @@ impl<'g> Game<'g> {
                                 .fair_ball(fair_ball)
                                 .runner_changes(advances.clone(), scores.clone())
                                 .add_runner(batter, TaxaBase::First)
-                                .fielders(fielders.clone())
+                                .fielders(fielders.clone(), ingest_logs)?
                                 .fielding_error_type((*error).into())
                                 .build_some(self, batter_name, ingest_logs, TaxaEventType::ErrorOnFieldersChoice)
                         }
@@ -2259,21 +2387,36 @@ impl<'g> Game<'g> {
 
                     let game_finished = if *number < 9 {
                         // Game never ends if inning number is less than 9
-                        ingest_logs.info(format!("Game didn't end after the {side:#?} of the {number} because it was before the 9th"));
+                        ingest_logs.info(format!(
+                            "Game didn't end after the {side:#?} of the {number} because it was \
+                            before the 9th inning",
+                        ));
                         false
                     } else if *side == TopBottom::Top && self.state.home_score > self.state.away_score {
                         // Game ends after the top of the inning if it's 9 or later and the home
                         // team is winning
-                        ingest_logs.info(format!("Game ended after the top of the {number} because the home team was winning"));
+                        ingest_logs.info(format!(
+                            "Game ended after the top of the {number} because the home team was \
+                            winning ({}-{})",
+                            self.state.away_score, self.state.home_score,
+                        ));
                         true
                     } else if *side == TopBottom::Bottom && self.state.home_score != self.state.away_score {
                         // Game ends after the bottom of the inning if it's 9 or later and it's not
                         // a tie
-                        ingest_logs.info(format!("Game ended after the bottom of the {number} because the score was not tied"));
+                        ingest_logs.info(format!(
+                            "Game ended after the bottom of the {number} because the score was not \
+                            tied ({}-{})",
+                            self.state.away_score, self.state.home_score,
+                        ));
                         true
                     } else {
                         // Otherwise the game does not end
-                        ingest_logs.info(format!("Game didn't end after the {side:#?} of the {number} because the score was tied"));
+                        ingest_logs.info(format!(
+                            "Game didn't end after the {side:#?} of the {number} because the score \
+                            was tied ({}-{})",
+                            self.state.away_score, self.state.home_score,
+                        ));
                         false
                     };
 
@@ -2294,9 +2437,18 @@ impl<'g> Game<'g> {
                     None
                 },
                 [ParsedEventMessageDiscriminants::PitcherSwap]
-                ParsedEventMessage::PitcherSwap { leaving_pitcher, arriving_pitcher } => {
+                ParsedEventMessage::PitcherSwap { leaving_pitcher, arriving_pitcher_name, arriving_pitcher_place } => {
+                    // TODO This can't stay an error
+                    let Some(arriving_pitcher_place) = arriving_pitcher_place else {
+                        return Err(SimFatalError::MissingPlaceInPitcherSwap);
+                    };
+                    self.defending_team_mut().active_pitcher = BestEffortSlottedPlayer {
+                        name: arriving_pitcher_name,
+                        slot: (*arriving_pitcher_place).try_into()
+                            .map_err(|_| SimFatalError::GenericPitcherInPitcherSwap)?,
+                    };
                     self.defending_team_mut().pitcher_count += 1;
-                    ingest_logs.info(format!("Incrementing pitcher_count as {leaving_pitcher} is replaced by {arriving_pitcher}."));
+                    ingest_logs.info(format!("Incrementing pitcher_count as {leaving_pitcher} is replaced by {arriving_pitcher_name}."));
                     self.state.phase = GamePhase::ExpectNowBatting;
                     None
                 },
@@ -2424,18 +2576,33 @@ impl<'g> Game<'g> {
             self.check_baserunner_consistency(raw_event, ingest_logs);
         }
 
+        if let MaybePlayer::Player(pitcher_name) = &raw_event.pitcher {
+            if pitcher_name != self.defending_team().active_pitcher.name {
+                ingest_logs.error(format!(
+                    "Event pitcher name ({}) does not match our stored pitcher's name ({})",
+                    pitcher_name, self.defending_team().active_pitcher.name
+                ));
+            }
+        } else {
+            ingest_logs.debug(format!(
+                "Event has no pitcher to compare to (the stored active pitcher is {}).",
+                self.defending_team().active_pitcher
+            ));
+        }
+
+
         Ok(result)
     }
 }
 
-fn format_lineup(lineup: &[PositionedPlayer<impl AsRef<str>>]) -> String {
+fn format_lineup(lineup: &[PlacedPlayer<impl AsRef<str>>]) -> String {
     let mut s = String::new();
     for player in lineup {
         write!(
             s,
-            "\n    - name: \"{}\", position: \"{}\"",
+            "\n    - name: \"{}\", place: \"{}\"",
             player.name.as_ref(),
-            player.position
+            player.place
         )
         .unwrap();
     }
@@ -2514,12 +2681,12 @@ fn check_now_batting_stats(
     }
 }
 
-fn positioned_player_as_ref<StrT: AsRef<str> + Clone>(
+fn placed_player_as_ref<StrT: AsRef<str> + Clone>(
     p: &EventDetailFielder<StrT>,
-) -> PositionedPlayer<&str> {
-    PositionedPlayer {
+) -> PlacedPlayer<&str> {
+    PlacedPlayer {
         name: p.name.as_ref(),
-        position: p.position.into(),
+        place: p.slot.into(),
     }
 }
 
@@ -2573,14 +2740,6 @@ pub enum ToParsedError<'g> {
     #[error("{event_type} must have a fair_ball_direction")]
     MissingFairBallDirection { event_type: TaxaEventType },
 
-    #[error(
-        "{event_type} must have a valid fair_ball_direction, but it had the non-fair-direction position {invalid_direction}"
-    )]
-    InvalidFairBallDirection {
-        event_type: TaxaEventType,
-        invalid_direction: TaxaPosition,
-    },
-
     #[error("{event_type} must have a fielding_error_type")]
     MissingFieldingErrorType { event_type: TaxaEventType },
 
@@ -2628,10 +2787,10 @@ pub enum ToParsedContactError {
     #[error("Event with a fair_ball_index must have a fair_ball_direction")]
     MissingFairBallDirection,
 
-    #[error(
-        "Event with a fair_ball_index must have a valid fair_ball_direction, but it had the non-fair-direction position {invalid_direction}"
-    )]
-    InvalidFairBallDirection { invalid_direction: TaxaPosition },
+    // #[error(
+    //     "Event with a fair_ball_index must have a valid fair_ball_direction, but it had the non-fair-direction position {invalid_direction}"
+    // )]
+    // InvalidFairBallDirection { invalid_direction: () },
 }
 
 impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
@@ -2639,11 +2798,11 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
         (self.count_balls, self.count_strikes)
     }
 
-    fn fielders_iter(&self) -> impl Iterator<Item = PositionedPlayer<&str>> {
-        self.fielders.iter().map(positioned_player_as_ref)
+    fn fielders_iter(&self) -> impl Iterator<Item = PlacedPlayer<&str>> {
+        self.fielders.iter().map(placed_player_as_ref)
     }
 
-    fn fielders(&self) -> Vec<PositionedPlayer<&str>> {
+    fn fielders(&self) -> Vec<PlacedPlayer<&str>> {
         self.fielders_iter().collect()
     }
 
@@ -2773,22 +2932,16 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                 .into())
         };
 
-        let mandatory_fair_ball_direction = || {
-            Ok(self
+        let mandatory_fair_ball_direction = || -> Result<FairBallDestination, ToParsedError> {
+            Ok((self
                 .fair_ball_direction
                 .ok_or_else(|| ToParsedError::MissingFairBallDirection {
                     event_type: self.detail_type,
-                })?
-                .try_into()
-                .map_err(
-                    |invalid_direction| ToParsedError::InvalidFairBallDirection {
-                        event_type: self.detail_type,
-                        invalid_direction,
-                    },
-                )?)
+                })?)
+                .into())
         };
 
-        let mandatory_fielding_error_type = || {
+        let mandatory_fielding_error_type = || -> Result<FieldingErrorType, ToParsedError> {
             Ok(self
                 .fielding_error_type
                 .ok_or_else(|| ToParsedError::MissingFieldingErrorType {
@@ -2910,7 +3063,7 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                     }
                 })?;
 
-                let caught_by = positioned_player_as_ref(&fielder);
+                let caught_by = placed_player_as_ref(&fielder);
                 let perfect =
                     fielder
                         .is_perfect_catch
@@ -3089,10 +3242,7 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                 Ok(self
                     .fair_ball_direction
                     .ok_or_else(|| ToParsedContactError::MissingFairBallDirection)?
-                    .try_into()
-                    .map_err(|invalid_direction| {
-                        ToParsedContactError::InvalidFairBallDirection { invalid_direction }
-                    })?)
+                    .into())
             };
 
         // We're going to construct a FairBall for this no matter

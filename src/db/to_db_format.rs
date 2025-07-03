@@ -17,7 +17,7 @@ pub fn event_to_row<'e>(
         event_type: taxa.event_type_id(event.detail_type),
         hit_type: event.hit_type.map(|ty| taxa.hit_type_id(ty)),
         fair_ball_type: event.fair_ball_type.map(|ty| taxa.fair_ball_type_id(ty)),
-        fair_ball_direction: event.fair_ball_direction.map(|ty| taxa.position_id(ty)),
+        fair_ball_direction: event.fair_ball_direction.map(|ty| taxa.fielder_location(ty)),
         fielding_error_type: event
             .fielding_error_type
             .map(|ty| taxa.fielding_error_type_id(ty)),
@@ -75,7 +75,7 @@ pub fn event_to_fielders<'e>(
         .map(|(i, fielder)| NewFielder {
             event_id,
             fielder_name: fielder.name,
-            fielder_position: taxa.position_id(fielder.position),
+            fielder_slot: taxa.slot_id(fielder.slot),
             play_order: i as i32,
             perfect_catch: fielder.is_perfect_catch,
         })
@@ -117,7 +117,7 @@ pub fn row_to_event<'e>(
             assert_eq!(f.event_id, event.id);
             EventDetailFielder {
                 name: f.fielder_name,
-                position: taxa.position_from_id(f.fielder_position).into(),
+                slot: taxa.slot_from_id(f.fielder_slot).into(),
                 is_perfect_catch: f.perfect_catch,
             }
         })
@@ -147,7 +147,7 @@ pub fn row_to_event<'e>(
             .map(|id| taxa.fair_ball_type_from_id(id)),
         fair_ball_direction: event
             .fair_ball_direction
-            .map(|id| taxa.position_from_id(id)),
+            .map(|id| taxa.fielder_location_from_id(id)),
         fielding_error_type: event
             .fielding_error_type
             .map(|id| taxa.fielding_error_type_from_id(id)),

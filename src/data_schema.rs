@@ -19,7 +19,7 @@ pub mod data {
             id -> Int8,
             event_id -> Int8,
             fielder_name -> Text,
-            fielder_position -> Int8,
+            fielder_slot -> Int8,
             play_order -> Int4,
             perfect_catch -> Nullable<Bool>,
         }

@@ -7,7 +7,7 @@ pub(super) trait AsInsertable<'a> {
 #[macro_export]
 macro_rules! taxa_main_enum {
     ($table:path, $id_column:path, $(($($derive:ident),*))?, $vis:vis, $enum_name:ident, $(
-        $(#[$($attr_name:ident: $attr_type:ty = $attr_value:expr),*])?
+        $(#[$($attr_name:ident: $attr_type:ty = $attr_value:expr),* $(,)?])?
         $variant_name:ident = $variant_id:expr
     ),+$(,)?) => {
         #[derive(Debug, enum_map::Enum, Eq, PartialEq, Hash, Copy, Clone, strum::Display, strum::IntoStaticStr)]
@@ -56,13 +56,13 @@ macro_rules! taxa_main_enum {
 #[macro_export]
 macro_rules! taxa_insertable_enum {
     // This extracts just the data of the first variant and discards the rest (by ignoring tail)
-    ($schema:path, $insertable_name:ident, #[$($attr_name:ident: $attr_type:ty = $attr_value:expr),*] $($tail:tt)*) => {
+    ($schema:path, $insertable_name:ident, #[$($attr_name:ident: $attr_type:ty = $attr_value:expr),* $(,)?] $($tail:tt)*) => {
         #[derive(Insertable, AsChangeset)]
         #[diesel(table_name = $schema)]
         pub struct $insertable_name<'a> {
             id: i64,
             name: &'a str,
-            $($attr_name: &'a $attr_type,)*
+            $($attr_name: $attr_type,)*
         }
     };
     // This is intended to match when there is no attribute, hopefully it works
@@ -79,7 +79,7 @@ macro_rules! taxa_insertable_enum {
 #[macro_export]
 macro_rules! taxa_as_insertable_impl {
     ($enum_name:ty, $insertable_name:ident, $(
-        #[$($attr_name:ident: $attr_type:ty = $attr_value:expr),*]
+        #[$($attr_name:ident: $attr_type:ty = $attr_value:expr),* $(,)?]
         $variant_name:ident = $variant_id:expr
     ),+$(,)?) => {
         impl<'a> AsInsertable<'a> for $enum_name {
@@ -91,7 +91,7 @@ macro_rules! taxa_as_insertable_impl {
                         Self::Insertable {
                             id: $variant_id,
                             name: self.into(),
-                            $($attr_name: &$attr_value,)*
+                            $($attr_name: $attr_value,)*
                         }
                     }),*
                 }

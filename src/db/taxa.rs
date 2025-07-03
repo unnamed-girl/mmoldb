@@ -1,3 +1,4 @@
+// TODO: There's a lot of duplicate impls of Into and From in here. Clean them up
 use paste::paste;
 
 use super::taxa_macro::*;
@@ -6,6 +7,8 @@ use diesel::{PgConnection, RunQueryDsl};
 use enum_map::EnumMap;
 use rocket_sync_db_pools::diesel::prelude::*;
 use std::collections::HashSet;
+use log::error;
+use crate::parsing_extensions;
 
 taxa! {
     #[
@@ -14,37 +17,37 @@ taxa! {
         id_column = crate::taxa_schema::taxa::event_type::dsl::id,
     ]
     pub enum TaxaEventType {
-        #[display_name: str = "ball"]
+        #[display_name: &'a str = "ball"]
         Ball = 0,
-        #[display_name: str = "called strike"]
+        #[display_name: &'a str = "called strike"]
         CalledStrike = 1,
-        #[display_name: str = "swinging strike"]
+        #[display_name: &'a str = "swinging strike"]
         SwingingStrike = 2,
-        #[display_name: str = "foul tip"]
+        #[display_name: &'a str = "foul tip"]
         FoulTip = 3,
-        #[display_name: str = "foul ball"]
+        #[display_name: &'a str = "foul ball"]
         FoulBall = 4,
-        #[display_name: str = "hit"]
+        #[display_name: &'a str = "hit"]
         Hit = 5,
-        #[display_name: str = "force out"]
+        #[display_name: &'a str = "force out"]
         ForceOut = 6,
-        #[display_name: str = "caught out"]
+        #[display_name: &'a str = "caught out"]
         CaughtOut = 7,
-        #[display_name: str = "grounded out"]
+        #[display_name: &'a str = "grounded out"]
         GroundedOut = 8,
-        #[display_name: str = "walk"]
+        #[display_name: &'a str = "walk"]
         Walk = 9,
-        #[display_name: str = "home run"]
+        #[display_name: &'a str = "home run"]
         HomeRun = 10,
-        #[display_name: str = "fielding error"]
+        #[display_name: &'a str = "fielding error"]
         FieldingError = 11,
-        #[display_name: str = "hit by pitch"]
+        #[display_name: &'a str = "hit by pitch"]
         HitByPitch = 12,
-        #[display_name: str = "double play"]
+        #[display_name: &'a str = "double play"]
         DoublePlay = 13,
-        #[display_name: str = "fielder's choice"]
+        #[display_name: &'a str = "fielder's choice"]
         FieldersChoice = 14,
-        #[display_name: str = "error on fielder's choice"]
+        #[display_name: &'a str = "error on fielder's choice"]
         ErrorOnFieldersChoice = 15,
     }
 }
@@ -87,115 +90,340 @@ impl From<mmolb_parsing::enums::Distance> for TaxaHitType {
 
 taxa! {
     #[
-        schema = crate::taxa_schema::taxa::position,
-        table = crate::taxa_schema::taxa::position::dsl::position,
-        id_column = crate::taxa_schema::taxa::position::dsl::id,
+        schema = crate::taxa_schema::taxa::fielder_location,
+        table = crate::taxa_schema::taxa::fielder_location::dsl::fielder_location,
+        id_column = crate::taxa_schema::taxa::fielder_location::dsl::id,
     ]
-    pub enum TaxaPosition {
-        #[display_name: str = "Pitcher", abbreviation: str = "P"]
+    pub enum TaxaFielderLocation {
+        // NOTE: IDs here are chosen to match the standard baseball positions
+        #[display_name: &'a str = "pitcher", abbreviation: &'a str = "P", area: &'a str = "Infield"]
         Pitcher = 1,
-        #[display_name: str = "Catcher", abbreviation: str = "C"]
+        #[display_name: &'a str = "catcher", abbreviation: &'a str = "C", area: &'a str = "Infield"]
         Catcher = 2,
-        #[display_name: str = "First base", abbreviation: str = "1B"]
+        #[display_name: &'a str = "first base", abbreviation: &'a str = "1B", area: &'a str = "Infield"]
         FirstBase = 3,
-        #[display_name: str = "Second base", abbreviation: str = "2B"]
+        #[display_name: &'a str = "second base", abbreviation: &'a str = "2B", area: &'a str = "Infield"]
         SecondBase = 4,
-        #[display_name: str = "Third base", abbreviation: str = "3B"]
+        #[display_name: &'a str = "third base", abbreviation: &'a str = "3B", area: &'a str = "Infield"]
         ThirdBase = 5,
-        #[display_name: str = "Shortstop", abbreviation: str = "SS"]
+        #[display_name: &'a str = "shortstop", abbreviation: &'a str = "SS", area: &'a str = "Infield"]
         Shortstop = 6,
-        #[display_name: str = "Left fielder", abbreviation: str = "LF"]
+        #[display_name: &'a str = "left field", abbreviation: &'a str = "LF", area: &'a str = "Outfield"]
         LeftField = 7,
-        #[display_name: str = "Center fielder", abbreviation: str = "CF"]
+        #[display_name: &'a str = "center field", abbreviation: &'a str = "CF", area: &'a str = "Outfield"]
         CenterField = 8,
-        #[display_name: str = "Right fielder", abbreviation: str = "RF"]
+        #[display_name: &'a str = "right field", abbreviation: &'a str = "RF", area: &'a str = "Outfield"]
         RightField = 9,
-        // TODO The following are roles, not positions
-        #[display_name: str = "Starting pitcher", abbreviation: str = "SP"]
-        StartingPitcher = 10,
-        #[display_name: str = "Relief pitcher", abbreviation: str = "RP"]
-        ReliefPitcher = 11,
-        #[display_name: str = "Closer", abbreviation: str = "CL"]
-        Closer = 12,
-        #[display_name: str = "Designated hitter", abbreviation: str = "DH"]
-        DesignatedHitter = 13,
     }
 }
 
-impl Into<mmolb_parsing::enums::Position> for TaxaPosition {
-    fn into(self) -> mmolb_parsing::enums::Position {
+impl Into<mmolb_parsing::enums::FairBallDestination> for TaxaFielderLocation {
+    fn into(self) -> mmolb_parsing::enums::FairBallDestination {
         match self {
-            TaxaPosition::Pitcher => mmolb_parsing::enums::Position::Pitcher,
-            TaxaPosition::Catcher => mmolb_parsing::enums::Position::Catcher,
-            TaxaPosition::FirstBase => mmolb_parsing::enums::Position::FirstBaseman,
-            TaxaPosition::SecondBase => mmolb_parsing::enums::Position::SecondBaseman,
-            TaxaPosition::ThirdBase => mmolb_parsing::enums::Position::ThirdBaseman,
-            TaxaPosition::Shortstop => mmolb_parsing::enums::Position::ShortStop,
-            TaxaPosition::LeftField => mmolb_parsing::enums::Position::LeftField,
-            TaxaPosition::CenterField => mmolb_parsing::enums::Position::CenterField,
-            TaxaPosition::RightField => mmolb_parsing::enums::Position::RightField,
-            TaxaPosition::StartingPitcher => mmolb_parsing::enums::Position::StartingPitcher,
-            TaxaPosition::ReliefPitcher => mmolb_parsing::enums::Position::ReliefPitcher,
-            TaxaPosition::Closer => mmolb_parsing::enums::Position::Closer,
-            TaxaPosition::DesignatedHitter => mmolb_parsing::enums::Position::DesignatedHitter,
+            Self::Shortstop => { mmolb_parsing::enums::FairBallDestination::ShortStop }
+            Self::Catcher => { mmolb_parsing::enums::FairBallDestination::Catcher }
+            Self::Pitcher => { mmolb_parsing::enums::FairBallDestination::Pitcher }
+            Self::FirstBase => { mmolb_parsing::enums::FairBallDestination::FirstBase }
+            Self::SecondBase => { mmolb_parsing::enums::FairBallDestination::SecondBase }
+            Self::ThirdBase => { mmolb_parsing::enums::FairBallDestination::ThirdBase }
+            Self::LeftField => { mmolb_parsing::enums::FairBallDestination::LeftField }
+            Self::CenterField => { mmolb_parsing::enums::FairBallDestination::CenterField }
+            Self::RightField => { mmolb_parsing::enums::FairBallDestination::RightField }
         }
     }
 }
 
-impl From<mmolb_parsing::enums::Position> for TaxaPosition {
-    fn from(other: mmolb_parsing::enums::Position) -> Self {
-        match other {
-            mmolb_parsing::enums::Position::Pitcher => TaxaPosition::Pitcher,
-            mmolb_parsing::enums::Position::Catcher => TaxaPosition::Catcher,
-            mmolb_parsing::enums::Position::FirstBaseman => TaxaPosition::FirstBase,
-            mmolb_parsing::enums::Position::SecondBaseman => TaxaPosition::SecondBase,
-            mmolb_parsing::enums::Position::ThirdBaseman => TaxaPosition::ThirdBase,
-            mmolb_parsing::enums::Position::ShortStop => TaxaPosition::Shortstop,
-            mmolb_parsing::enums::Position::LeftField => TaxaPosition::LeftField,
-            mmolb_parsing::enums::Position::CenterField => TaxaPosition::CenterField,
-            mmolb_parsing::enums::Position::RightField => TaxaPosition::RightField,
-            mmolb_parsing::enums::Position::StartingPitcher => TaxaPosition::StartingPitcher,
-            mmolb_parsing::enums::Position::ReliefPitcher => TaxaPosition::ReliefPitcher,
-            mmolb_parsing::enums::Position::Closer => TaxaPosition::Closer,
-            mmolb_parsing::enums::Position::DesignatedHitter => TaxaPosition::DesignatedHitter,
+impl From<mmolb_parsing::enums::FairBallDestination> for TaxaFielderLocation {
+    fn from(value: mmolb_parsing::enums::FairBallDestination) -> Self {
+        match value {
+            mmolb_parsing::enums::FairBallDestination::ShortStop => { Self::Shortstop }
+            mmolb_parsing::enums::FairBallDestination::Catcher => { Self::Catcher }
+            mmolb_parsing::enums::FairBallDestination::Pitcher => { Self::Pitcher }
+            mmolb_parsing::enums::FairBallDestination::FirstBase => { Self::FirstBase }
+            mmolb_parsing::enums::FairBallDestination::SecondBase => { Self::SecondBase }
+            mmolb_parsing::enums::FairBallDestination::ThirdBase => { Self::ThirdBase }
+            mmolb_parsing::enums::FairBallDestination::LeftField => { Self::LeftField }
+            mmolb_parsing::enums::FairBallDestination::CenterField => { Self::CenterField }
+            mmolb_parsing::enums::FairBallDestination::RightField => { Self::RightField }
         }
     }
 }
 
-impl TryInto<mmolb_parsing::enums::FairBallDestination> for TaxaPosition {
-    type Error = Self;
+taxa! {
+    #[
+        schema = crate::taxa_schema::taxa::slot,
+        table = crate::taxa_schema::taxa::slot::dsl::slot,
+        id_column = crate::taxa_schema::taxa::slot::dsl::id,
+    ]
+    pub enum TaxaSlot {
+        // IDs here are chosen to match the order on the MMOLB team page
+        #[
+            display_name: &'a str = "Catcher", 
+            abbreviation: &'a str = "C", 
+            role: &'a str = "Batter", 
+            pitcher_type: Option<&'a str> = None, 
+            slot_number: Option<i32> = None, 
+            location: Option<i64> = Some(2), // Corresponds to a TaxaFielderLocation id
+        ]
+        Catcher = 1,
+        #[
+            display_name: &'a str = "First Base", 
+            abbreviation: &'a str = "1B", 
+            role: &'a str = "Batter", 
+            pitcher_type: Option<&'a str> = None, 
+            slot_number: Option<i32> = None, 
+            location: Option<i64> = Some(3), // Corresponds to a TaxaFielderLocation id
+        ]
+        FirstBase = 2,
+        #[
+            display_name: &'a str = "Second Base", 
+            abbreviation: &'a str = "2B", 
+            role: &'a str = "Batter", 
+            pitcher_type: Option<&'a str> = None, 
+            slot_number: Option<i32> = None, 
+            location: Option<i64> = Some(4), // Corresponds to a TaxaFielderLocation id
+        ]
+        SecondBase = 3,
+        #[
+            display_name: &'a str = "Third Base", 
+            abbreviation: &'a str = "3B", 
+            role: &'a str = "Batter", 
+            pitcher_type: Option<&'a str> = None, 
+            slot_number: Option<i32> = None, 
+            location: Option<i64> = Some(5), // Corresponds to a TaxaFielderLocation id
+        ]
+        ThirdBase = 4,
+        #[
+            display_name: &'a str = "Shortstop", 
+            abbreviation: &'a str = "SS", 
+            role: &'a str = "Batter", 
+            pitcher_type: Option<&'a str> = None, 
+            slot_number: Option<i32> = None, 
+            location: Option<i64> = Some(6), // Corresponds to a TaxaFielderLocation id
+        ]
+        Shortstop = 5,
+        #[
+            display_name: &'a str = "Left Field", 
+            abbreviation: &'a str = "LF", 
+            role: &'a str = "Batter", 
+            pitcher_type: Option<&'a str> = None, 
+            slot_number: Option<i32> = None, 
+            location: Option<i64> = Some(7), // Corresponds to a TaxaFielderLocation id
+        ]
+        LeftField = 6,
+        #[
+            display_name: &'a str = "Center Field", 
+            abbreviation: &'a str = "CF", 
+            role: &'a str = "Batter", 
+            pitcher_type: Option<&'a str> = None, 
+            slot_number: Option<i32> = None, 
+            location: Option<i64> = Some(8), // Corresponds to a TaxaFielderLocation id
+        ]
+        CenterField = 7,
+        #[
+            display_name: &'a str = "Right Field", 
+            abbreviation: &'a str = "RF", 
+            role: &'a str = "Batter", 
+            pitcher_type: Option<&'a str> = None, 
+            slot_number: Option<i32> = None, 
+            location: Option<i64> = Some(9), // Corresponds to a TaxaFielderLocation id
+        ]
+        RightField = 8,
+        #[
+            display_name: &'a str = "Designated Hitter",
+            abbreviation: &'a str = "DH",
+            role: &'a str = "Batter",
+            pitcher_type: Option<&'a str> = None,
+            slot_number: Option<i32> = None,
+            location: Option<i64> = None, // Corresponds to a TaxaFielderLocation id
+        ]
+        DesignatedHitter = 9,
+        #[
+            display_name: &'a str = "Starting Pitcher 1", 
+            abbreviation: &'a str = "SP1", 
+            role: &'a str = "Pitcher", 
+            pitcher_type: Option<&'a str> = Some("Starter"), 
+            slot_number: Option<i32> = Some(1), 
+            location: Option<i64> = Some(1), // Corresponds to a TaxaFielderLocation id
+        ]
+        StartingPitcher1 = 10,
+        #[
+            display_name: &'a str = "Starting Pitcher 2",
+            abbreviation: &'a str = "SP2",
+            role: &'a str = "Pitcher",
+            pitcher_type: Option<&'a str> = Some("Starter"),
+            slot_number: Option<i32> = Some(2),
+            location: Option<i64> = Some(1), // Corresponds to a TaxaFielderLocation id
+        ]
+        StartingPitcher2 = 11,
+        #[
+            display_name: &'a str = "Starting Pitcher 3", 
+            abbreviation: &'a str = "SP3", 
+            role: &'a str = "Pitcher", 
+            pitcher_type: Option<&'a str> = Some("Starter"), 
+            slot_number: Option<i33> = Some(3), 
+            location: Option<i64> = Some(1), // Corresponds to a TaxaFielderLocation id
+        ]
+        StartingPitcher3 = 12,
+        #[
+            display_name: &'a str = "Starting Pitcher 4", 
+            abbreviation: &'a str = "SP4", 
+            role: &'a str = "Pitcher", 
+            pitcher_type: Option<&'a str> = Some("Starter"), 
+            slot_number: Option<i44> = Some(4), 
+            location: Option<i64> = Some(1), // Corresponds to a TaxaFielderLocation id
+        ]
+        StartingPitcher4 = 13,
+        #[
+            display_name: &'a str = "Starting Pitcher 5", 
+            abbreviation: &'a str = "SP5", 
+            role: &'a str = "Pitcher", 
+            pitcher_type: Option<&'a str> = Some("Starter"), 
+            slot_number: Option<i55> = Some(5), 
+            location: Option<i64> = Some(1), // Corresponds to a TaxaFielderLocation id
+        ]
+        StartingPitcher5 = 14,
+        #[
+            display_name: &'a str = "Relief Pitcher 1",
+            abbreviation: &'a str = "RP1",
+            role: &'a str = "Pitcher",
+            pitcher_type: Option<&'a str> = Some("Reliever"),
+            slot_number: Option<i55> = Some(1),
+            location: Option<i64> = Some(1), // Corresponds to a TaxaFielderLocation id
+        ]
+        ReliefPitcher1 = 15,
+        #[
+            display_name: &'a str = "Relief Pitcher 2",
+            abbreviation: &'a str = "RP2",
+            role: &'a str = "Pitcher",
+            pitcher_type: Option<&'a str> = Some("Reliever"),
+            slot_number: Option<i55> = Some(2),
+            location: Option<i64> = Some(1), // Corresponds to a TaxaFielderLocation id
+        ]
+        ReliefPitcher2 = 16,
+        #[
+            display_name: &'a str = "Relief Pitcher 3",
+            abbreviation: &'a str = "RP3",
+            role: &'a str = "Pitcher",
+            pitcher_type: Option<&'a str> = Some("Reliever"),
+            slot_number: Option<i55> = Some(3),
+            location: Option<i64> = Some(1), // Corresponds to a TaxaFielderLocation id
+        ]
+        ReliefPitcher3 = 17,
+        #[
+            display_name: &'a str = "Closer",
+            abbreviation: &'a str = "CL",
+            role: &'a str = "Pitcher",
+            pitcher_type: Option<&'a str> = Some("Closer"),
+            slot_number: Option<i55> = None,
+            location: Option<i64> = Some(1), // Corresponds to a TaxaFielderLocation id
+        ]
+        Closer = 18,
+        // The following are for past games, where the game event messages
+        // didn't announce the specific roster slot. Eventually we hope to
+        // remove them, but the work to backfill the data hasn't yet been
+        // started.
+        // They're also used in case there's a pitcher with too high of a
+        // number (e.g. an SP6 or RP4).
+        #[
+            display_name: &'a str = "Starting Pitcher",
+            abbreviation: &'a str = "SP",
+            role: &'a str = "Pitcher",
+            pitcher_type: Option<&'a str> = Some("Starter"),
+            slot_number: Option<i55> = None,
+            location: Option<i64> = Some(1), // Corresponds to a TaxaFielderLocation id
+        ]
+        StartingPitcher = 19,
+        #[
+            display_name: &'a str = "Relief Pitcher",
+            abbreviation: &'a str = "RP",
+            role: &'a str = "Pitcher",
+            pitcher_type: Option<&'a str> = Some("Reliever"),
+            slot_number: Option<i55> = None,
+            location: Option<i64> = Some(1), // Corresponds to a TaxaFielderLocation id
+        ]
+        ReliefPitcher = 20,
+    }
+}
 
-    fn try_into(self) -> Result<mmolb_parsing::enums::FairBallDestination, Self::Error> {
+impl From<parsing_extensions::BestEffortSlot> for TaxaSlot {
+    fn from(value: parsing_extensions::BestEffortSlot) -> Self {
+        match value {
+            parsing_extensions::BestEffortSlot::Slot(s) => match s {
+                mmolb_parsing::enums::Slot::Catcher => { TaxaSlot::Catcher }
+                mmolb_parsing::enums::Slot::FirstBaseman => { TaxaSlot::FirstBase }
+                mmolb_parsing::enums::Slot::SecondBaseman => { TaxaSlot::SecondBase }
+                mmolb_parsing::enums::Slot::ThirdBaseman => { TaxaSlot::ThirdBase }
+                mmolb_parsing::enums::Slot::ShortStop => { TaxaSlot::Shortstop }
+                mmolb_parsing::enums::Slot::LeftField => { TaxaSlot::LeftField }
+                mmolb_parsing::enums::Slot::CenterField => { TaxaSlot::CenterField }
+                mmolb_parsing::enums::Slot::RightField => { TaxaSlot::RightField }
+                mmolb_parsing::enums::Slot::StartingPitcher(1) => { TaxaSlot::StartingPitcher1 }
+                mmolb_parsing::enums::Slot::StartingPitcher(2) => { TaxaSlot::StartingPitcher2 }
+                mmolb_parsing::enums::Slot::StartingPitcher(3) => { TaxaSlot::StartingPitcher3 }
+                mmolb_parsing::enums::Slot::StartingPitcher(4) => { TaxaSlot::StartingPitcher4 }
+                mmolb_parsing::enums::Slot::StartingPitcher(5) => { TaxaSlot::StartingPitcher5 }
+                mmolb_parsing::enums::Slot::StartingPitcher(other) => {
+                    error!(
+                        "Falling back to non-numbered StartingPitcher for starting pitcher out of \
+                        range ({other}).",
+                    );
+                    TaxaSlot::StartingPitcher
+                }
+                mmolb_parsing::enums::Slot::ReliefPitcher(1) => { TaxaSlot::ReliefPitcher1 }
+                mmolb_parsing::enums::Slot::ReliefPitcher(2) => { TaxaSlot::ReliefPitcher2 }
+                mmolb_parsing::enums::Slot::ReliefPitcher(3) => { TaxaSlot::ReliefPitcher3 }
+                mmolb_parsing::enums::Slot::ReliefPitcher(other) => {
+                    error!(
+                        "Falling back to non-numbered ReliefPitcher for relief pitcher out of \
+                        range ({other}).",
+                    );
+                    TaxaSlot::ReliefPitcher 
+                }
+                mmolb_parsing::enums::Slot::Closer => { TaxaSlot::Closer }
+                mmolb_parsing::enums::Slot::DesignatedHitter => { TaxaSlot::DesignatedHitter }
+            }
+            parsing_extensions::BestEffortSlot::SlotType(t) => match t {
+                mmolb_parsing::enums::SlotDiscriminants::Catcher => { TaxaSlot::Catcher }
+                mmolb_parsing::enums::SlotDiscriminants::FirstBaseman => { TaxaSlot::FirstBase }
+                mmolb_parsing::enums::SlotDiscriminants::SecondBaseman => { TaxaSlot::SecondBase }
+                mmolb_parsing::enums::SlotDiscriminants::ThirdBaseman => { TaxaSlot::ThirdBase }
+                mmolb_parsing::enums::SlotDiscriminants::ShortStop => { TaxaSlot::Shortstop }
+                mmolb_parsing::enums::SlotDiscriminants::LeftField => { TaxaSlot::LeftField }
+                mmolb_parsing::enums::SlotDiscriminants::CenterField => { TaxaSlot::CenterField }
+                mmolb_parsing::enums::SlotDiscriminants::RightField => { TaxaSlot::RightField }
+                mmolb_parsing::enums::SlotDiscriminants::StartingPitcher => { TaxaSlot::StartingPitcher }
+                mmolb_parsing::enums::SlotDiscriminants::ReliefPitcher => { TaxaSlot::ReliefPitcher }
+                mmolb_parsing::enums::SlotDiscriminants::Closer => { TaxaSlot::Closer }
+                mmolb_parsing::enums::SlotDiscriminants::DesignatedHitter => { TaxaSlot::DesignatedHitter }
+            }
+        }
+    }
+}
+
+impl Into<mmolb_parsing::enums::Place> for TaxaSlot {
+    fn into(self) -> mmolb_parsing::enums::Place {
         match self {
-            TaxaPosition::Pitcher => Ok(mmolb_parsing::enums::FairBallDestination::Pitcher),
-            TaxaPosition::Catcher => Ok(mmolb_parsing::enums::FairBallDestination::Catcher),
-            TaxaPosition::FirstBase => Ok(mmolb_parsing::enums::FairBallDestination::FirstBase),
-            TaxaPosition::SecondBase => Ok(mmolb_parsing::enums::FairBallDestination::SecondBase),
-            TaxaPosition::ThirdBase => Ok(mmolb_parsing::enums::FairBallDestination::ThirdBase),
-            TaxaPosition::Shortstop => Ok(mmolb_parsing::enums::FairBallDestination::ShortStop),
-            TaxaPosition::LeftField => Ok(mmolb_parsing::enums::FairBallDestination::LeftField),
-            TaxaPosition::CenterField => Ok(mmolb_parsing::enums::FairBallDestination::CenterField),
-            TaxaPosition::RightField => Ok(mmolb_parsing::enums::FairBallDestination::RightField),
-            TaxaPosition::StartingPitcher => Err(TaxaPosition::StartingPitcher),
-            TaxaPosition::ReliefPitcher => Err(TaxaPosition::ReliefPitcher),
-            TaxaPosition::Closer => Err(TaxaPosition::Closer),
-            TaxaPosition::DesignatedHitter => Err(TaxaPosition::DesignatedHitter),
-        }
-    }
-}
-
-impl From<mmolb_parsing::enums::FairBallDestination> for TaxaPosition {
-    fn from(other: mmolb_parsing::enums::FairBallDestination) -> Self {
-        match other {
-            mmolb_parsing::enums::FairBallDestination::Pitcher => TaxaPosition::Pitcher,
-            mmolb_parsing::enums::FairBallDestination::Catcher => TaxaPosition::Catcher,
-            mmolb_parsing::enums::FairBallDestination::FirstBase => TaxaPosition::FirstBase,
-            mmolb_parsing::enums::FairBallDestination::SecondBase => TaxaPosition::SecondBase,
-            mmolb_parsing::enums::FairBallDestination::ThirdBase => TaxaPosition::ThirdBase,
-            mmolb_parsing::enums::FairBallDestination::ShortStop => TaxaPosition::Shortstop,
-            mmolb_parsing::enums::FairBallDestination::LeftField => TaxaPosition::LeftField,
-            mmolb_parsing::enums::FairBallDestination::CenterField => TaxaPosition::CenterField,
-            mmolb_parsing::enums::FairBallDestination::RightField => TaxaPosition::RightField,
+            TaxaSlot::Catcher => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::Catcher) }
+            TaxaSlot::FirstBase => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::FirstBaseman) }
+            TaxaSlot::SecondBase => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::SecondBaseman) }
+            TaxaSlot::ThirdBase => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::ThirdBaseman) }
+            TaxaSlot::Shortstop => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::ShortStop) }
+            TaxaSlot::LeftField => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::LeftField) }
+            TaxaSlot::CenterField => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::CenterField) }
+            TaxaSlot::RightField => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::RightField) }
+            TaxaSlot::DesignatedHitter => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::DesignatedHitter) }
+            TaxaSlot::StartingPitcher1 => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::StartingPitcher(1)) }
+            TaxaSlot::StartingPitcher2 => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::StartingPitcher(2)) }
+            TaxaSlot::StartingPitcher3 => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::StartingPitcher(3)) }
+            TaxaSlot::StartingPitcher4 => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::StartingPitcher(4)) }
+            TaxaSlot::StartingPitcher5 => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::StartingPitcher(5)) }
+            TaxaSlot::ReliefPitcher1 => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::ReliefPitcher(1)) }
+            TaxaSlot::ReliefPitcher2 => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::ReliefPitcher(2)) }
+            TaxaSlot::ReliefPitcher3 => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::ReliefPitcher(3)) }
+            TaxaSlot::Closer => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::Closer) }
+            TaxaSlot::StartingPitcher => { mmolb_parsing::enums::Place::Position(mmolb_parsing::enums::Position::StartingPitcher) }
+            TaxaSlot::ReliefPitcher => { mmolb_parsing::enums::Place::Position(mmolb_parsing::enums::Position::ReliefPitcher) }
         }
     }
 }
@@ -207,13 +435,13 @@ taxa! {
         id_column = crate::taxa_schema::taxa::fair_ball_type::dsl::id,
     ]
     pub enum TaxaFairBallType {
-        #[display_name: str = "Ground ball"]
+        #[display_name: &'a str = "Ground ball"]
         GroundBall = 1,
-        #[display_name: str = "Fly ball"]
+        #[display_name: &'a str = "Fly ball"]
         FlyBall = 2,
-        #[display_name: str = "Line drive"]
+        #[display_name: &'a str = "Line drive"]
         LineDrive = 3,
-        #[display_name: str = "Popup"]
+        #[display_name: &'a str = "Popup"]
         Popup = 4,
     }
 }
@@ -426,23 +654,23 @@ taxa! {
         id_column = crate::taxa_schema::taxa::pitch_type::dsl::id,
     ]
     pub enum TaxaPitchType {
-        #[display_name: str = "Fastball"]
+        #[display_name: &'a str = "Fastball"]
         Fastball = 1,
-        #[display_name: str = "Sinker"]
+        #[display_name: &'a str = "Sinker"]
         Sinker = 2,
-        #[display_name: str = "Slider"]
+        #[display_name: &'a str = "Slider"]
         Slider = 3,
-        #[display_name: str = "Changeup"]
+        #[display_name: &'a str = "Changeup"]
         Changeup = 4,
-        #[display_name: str = "Curveball"]
+        #[display_name: &'a str = "Curveball"]
         Curveball = 5,
-        #[display_name: str = "Cutter"]
+        #[display_name: &'a str = "Cutter"]
         Cutter = 6,
-        #[display_name: str = "Sweeper"]
+        #[display_name: &'a str = "Sweeper"]
         Sweeper = 7,
-        #[display_name: str = "Knuckle curve"]
+        #[display_name: &'a str = "Knuckle curve"]
         KnuckleCurve = 8,
-        #[display_name: str = "Splitter"]
+        #[display_name: &'a str = "Splitter"]
         Splitter = 9,
     }
 }
@@ -483,7 +711,8 @@ impl From<mmolb_parsing::enums::PitchType> for TaxaPitchType {
 pub struct Taxa {
     event_type_mapping: EnumMap<TaxaEventType, i64>,
     hit_type_mapping: EnumMap<TaxaHitType, i64>,
-    position_mapping: EnumMap<TaxaPosition, i64>,
+    fielder_location_mapping: EnumMap<TaxaFielderLocation, i64>,
+    slot_mapping: EnumMap<TaxaSlot, i64>,
     fair_ball_type_mapping: EnumMap<TaxaFairBallType, i64>,
     base_mapping: EnumMap<TaxaBase, i64>,
     base_description_format_mapping: EnumMap<TaxaBaseDescriptionFormat, i64>,
@@ -496,7 +725,10 @@ impl Taxa {
         Ok(Self {
             event_type_mapping: TaxaEventType::make_id_mapping(conn)?,
             hit_type_mapping: TaxaHitType::make_id_mapping(conn)?,
-            position_mapping: TaxaPosition::make_id_mapping(conn)?,
+            // fielder_location_mapping must appear before slot_mapping in the initializer
+            // (it doesn't matter what order it is in the struct declaration)
+            fielder_location_mapping: TaxaFielderLocation::make_id_mapping(conn)?,
+            slot_mapping: TaxaSlot::make_id_mapping(conn)?,
             fair_ball_type_mapping: TaxaFairBallType::make_id_mapping(conn)?,
             base_mapping: TaxaBase::make_id_mapping(conn)?,
             base_description_format_mapping: TaxaBaseDescriptionFormat::make_id_mapping(conn)?,
@@ -513,8 +745,12 @@ impl Taxa {
         self.hit_type_mapping[ty]
     }
 
-    pub fn position_id(&self, ty: TaxaPosition) -> i64 {
-        self.position_mapping[ty]
+    pub fn fielder_location(&self, ty: TaxaFielderLocation) -> i64 {
+        self.fielder_location_mapping[ty]
+    }
+
+    pub fn slot_id(&self, ty: TaxaSlot) -> i64 {
+        self.slot_mapping[ty]
     }
 
     pub fn fair_ball_type_id(&self, ty: TaxaFairBallType) -> i64 {
@@ -552,8 +788,16 @@ impl Taxa {
             .0
     }
 
-    pub fn position_from_id(&self, id: i64) -> TaxaPosition {
-        self.position_mapping
+    pub fn fielder_location_from_id(&self, id: i64) -> TaxaFielderLocation {
+        self.fielder_location_mapping
+            .iter()
+            .find(|(_, ty_id)| id == **ty_id)
+            .expect("TODO Handle unknown fielder location")
+            .0
+    }
+
+    pub fn slot_from_id(&self, id: i64) -> TaxaSlot {
+        self.slot_mapping
             .iter()
             .find(|(_, ty_id)| id == **ty_id)
             .expect("TODO Handle unknown position")

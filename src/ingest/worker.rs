@@ -1,6 +1,6 @@
 use crate::db::{CompletedGameForDb, GameForDb, RowToEventError, Taxa, Timings};
 use crate::ingest::chron::{ChronEntities, ChronEntity, GameExt};
-use crate::ingest::sim::{self, Game, SimFatalError};
+use crate::ingest::sim::{self, Game, SimFatalError, SimStartupError};
 use crate::ingest::{EventDetail, IngestConfig, IngestFatalError, IngestLog, IngestStats};
 use crate::{Db, db};
 use chrono::Utc;
@@ -308,8 +308,8 @@ fn prepare_game_for_db(
 
 fn prepare_completed_game_for_db(
     entity: &ChronEntity<mmolb_parsing::Game>,
-) -> Result<CompletedGameForDb, SimFatalError> {
-    let parsed_game = mmolb_parsing::process_game(&entity.data);
+) -> Result<CompletedGameForDb, SimStartupError> {
+    let parsed_game = mmolb_parsing::process_game(&entity.data, &entity.entity_id);
 
     // I'm adding enumeration to parsed, then stripping it out for
     // the iterator fed to Game::new, on purpose. I need the
@@ -328,7 +328,7 @@ fn prepare_completed_game_for_db(
             // Sim has a different IngestLogs... this made sense at the time
             let mut ingest_logs = sim::IngestLogs::new(game_event_index as i32);
 
-            let unparsed = parsed.clone().unparse();
+            let unparsed = parsed.clone().unparse(&entity.data, Some(game_event_index as _));
             if unparsed != raw.message {
                 ingest_logs.error(format!(
                     "Round-trip of raw event through ParsedEvent produced a mismatch:\n\

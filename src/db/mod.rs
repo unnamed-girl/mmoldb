@@ -19,7 +19,8 @@ use std::iter;
 // First-party imports
 pub use crate::db::taxa::{
     Taxa, TaxaBase, TaxaBaseDescriptionFormat, TaxaBaseWithDescriptionFormat, TaxaEventType,
-    TaxaFairBallType, TaxaFieldingErrorType, TaxaHitType, TaxaPitchType, TaxaPosition,
+    TaxaFairBallType, TaxaFieldingErrorType, TaxaHitType, TaxaPitchType, TaxaSlot,
+    TaxaFielderLocation,
 };
 use crate::ingest::{EventDetail, IngestLog};
 use crate::models::{

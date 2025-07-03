@@ -15,11 +15,12 @@ create table taxa.hit_type (
     unique (name)
 );
 
-create table taxa.position (
+create table taxa.fielder_location (
     id bigserial primary key not null,
     name text not null,
     display_name text not null,
     abbreviation text not null,
+    area text not null, check ( area in ('Infield', 'Outfield') ),
     unique (name)
 );
 
@@ -27,6 +28,23 @@ create table taxa.fair_ball_type (
     id bigserial primary key not null,
     name text not null,
     display_name text not null,
+    unique (name)
+);
+
+create table taxa.slot (
+    id bigserial primary key not null,
+    name text not null,
+    display_name text not null,
+    abbreviation text not null,
+    role text not null, check ( role in ('Pitcher', 'Batter') ),
+    pitcher_type text, check ( pitcher_type in ('Starter', 'Reliever', 'Closer') or pitcher_type is null ),
+    -- slot_number only exists for SP and RP, otherwise it's null.
+    -- NOTE: slot_number is also null for SP and RP in games before s2d152. The
+    -- game didn't report the number at the time. We want to retroactively
+    -- populate them, but the work has not yet been done. Contributions are
+    -- welcome!
+    slot_number int,
+    location bigint references taxa.fielder_location, -- null for the DH, who never appears on the field
     unique (name)
 );
 
@@ -181,7 +199,7 @@ create table data.events (
     hit_type bigint references taxa.hit_type,
     -- should be populated for every event type where there's a fair ball
     fair_ball_type bigint references taxa.fair_ball_type,
-    fair_ball_direction bigint references taxa.position,
+    fair_ball_direction bigint references taxa.fielder_location,
     -- populated when there's a fielding error
     fielding_error_type bigint references taxa.fielding_error_type,
     -- should always be populated for current list of events
@@ -284,7 +302,7 @@ create table data.event_fielders (
 
     -- actual data
     fielder_name text not null,
-    fielder_position bigint references taxa.position not null,
+    fielder_slot bigint references taxa.slot not null,
     play_order int not null,
     perfect_catch bool -- null indicates this was not a catch
 );

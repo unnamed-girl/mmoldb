@@ -282,7 +282,7 @@ pub struct DbRunner {
 pub struct NewFielder<'a> {
     pub event_id: i64,
     pub fielder_name: &'a str,
-    pub fielder_position: i64,
+    pub fielder_slot: i64,
     pub play_order: i32,
     pub perfect_catch: Option<bool>,
 }
@@ -295,7 +295,7 @@ pub struct DbFielder {
     pub id: i64,
     pub event_id: i64,
     pub fielder_name: String,
-    pub fielder_position: i64,
+    pub fielder_slot: i64,
     pub play_order: i32,
     pub perfect_catch: Option<bool>,
 }
