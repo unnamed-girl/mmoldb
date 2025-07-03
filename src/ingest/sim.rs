@@ -1775,6 +1775,22 @@ impl<'g> Game<'g> {
 
         let detail_builder = self.detail_builder(self.state.clone(), game_event_index, raw_event);
 
+        // This check must be before the event is processed, because the 
+        // pitcher in the event object is the previous pitcher
+        if let MaybePlayer::Player(pitcher_name) = &raw_event.pitcher {
+            if pitcher_name != self.defending_team().active_pitcher.name {
+                ingest_logs.error(format!(
+                    "Event pitcher name ({}) does not match our stored pitcher's name ({})",
+                    pitcher_name, self.defending_team().active_pitcher.name
+                ));
+            }
+        } else {
+            ingest_logs.debug(format!(
+                "Event has no pitcher to compare to (the stored active pitcher is {}).",
+                self.defending_team().active_pitcher
+            ));
+        }
+
         let result = match self.state.phase {
             GamePhase::ExpectInningStart => game_event!(
                 (previous_event, event),
@@ -2576,21 +2592,6 @@ impl<'g> Game<'g> {
             self.check_baserunner_consistency(raw_event, ingest_logs);
         }
 
-        if let MaybePlayer::Player(pitcher_name) = &raw_event.pitcher {
-            if pitcher_name != self.defending_team().active_pitcher.name {
-                ingest_logs.error(format!(
-                    "Event pitcher name ({}) does not match our stored pitcher's name ({})",
-                    pitcher_name, self.defending_team().active_pitcher.name
-                ));
-            }
-        } else {
-            ingest_logs.debug(format!(
-                "Event has no pitcher to compare to (the stored active pitcher is {}).",
-                self.defending_team().active_pitcher
-            ));
-        }
-
-
         Ok(result)
     }
 }
@@ -3223,7 +3224,7 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                         error: mandatory_fielding_error_type()?,
                     },
                     scores: self.scores(),
-                    advances: self.advances(true),
+                    advances: self.advances(false),
                 }
             }
         })

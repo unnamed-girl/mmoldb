@@ -1,11 +1,11 @@
 use crate::db::{CompletedGameForDb, GameForDb, RowToEventError, Taxa, Timings};
 use crate::ingest::chron::{ChronEntities, ChronEntity, GameExt};
 use crate::ingest::sim::{self, Game, SimFatalError, SimStartupError};
-use crate::ingest::{EventDetail, IngestConfig, IngestFatalError, IngestLog, IngestStats};
-use crate::{Db, db};
+use crate::ingest::{check_round_trip, EventDetail, IngestConfig, IngestFatalError, IngestLog, IngestStats};
+use crate::{db, Db};
 use chrono::Utc;
 use diesel::PgConnection;
-use itertools::{Itertools, izip};
+use itertools::{izip, Itertools};
 use log::{error, info, warn};
 use mmolb_parsing::ParsedEventMessage;
 use rocket::tokio;
@@ -166,7 +166,7 @@ impl IngestWorker {
                     let fair_ball_index = original_detail.fair_ball_event_index;
 
                     if let Some(index) = fair_ball_index {
-                        check_round_trip(
+                        check_round_trip::check_round_trip(
                             index,
                             &mut extra_ingest_logs,
                             true,
@@ -176,7 +176,7 @@ impl IngestWorker {
                         );
                     }
 
-                    check_round_trip(
+                    check_round_trip::check_round_trip(
                         index,
                         &mut extra_ingest_logs,
                         false,
@@ -435,126 +435,3 @@ impl IngestLogs {
     }
 }
 
-fn log_if_error<'g, E: std::fmt::Display>(
-    ingest_logs: &mut IngestLogs,
-    index: usize,
-    to_parsed_result: Result<ParsedEventMessage<&'g str>, E>,
-    log_prefix: &str,
-) -> Option<ParsedEventMessage<&'g str>> {
-    match to_parsed_result {
-        Ok(to_contact_result) => Some(to_contact_result),
-        Err(err) => {
-            ingest_logs.error(index, format!("{log_prefix}: {err}"));
-            None
-        }
-    }
-}
-
-// The particular combination of &str and String type arguments is
-// dictated by the caller
-fn check_round_trip(
-    index: usize,
-    ingest_logs: &mut IngestLogs,
-    is_contact_event: bool,
-    parsed: &ParsedEventMessage<&str>,
-    original_detail: &EventDetail<&str>,
-    reconstructed_detail: &Result<EventDetail<String>, RowToEventError>,
-) {
-    let Some(parsed_through_detail) = (if is_contact_event {
-        log_if_error(
-            ingest_logs,
-            index,
-            original_detail.to_parsed_contact(),
-            "Attempt to round-trip contact event through ParsedEventMessage -> EventDetail -> \
-            ParsedEventMessage failed at the EventDetail -> ParsedEventMessage step with error",
-        )
-    } else {
-        log_if_error(
-            ingest_logs,
-            index,
-            original_detail.to_parsed(),
-            "Attempt to round-trip event through ParsedEventMessage -> EventDetail -> \
-            ParsedEventMessage failed at the EventDetail -> ParsedEventMessage step with error",
-        )
-    }) else {
-        return;
-    };
-
-    if parsed != &parsed_through_detail {
-        ingest_logs.error(
-            index,
-            format!(
-                "Round-trip of {} through EventDetail produced a mismatch:\n\
-                 Original: <pre>{:?}</pre>\
-                 Through EventDetail: <pre>{:?}</pre>",
-                if is_contact_event {
-                    "contact event"
-                } else {
-                    "event"
-                },
-                parsed,
-                parsed_through_detail,
-            ),
-        );
-    }
-
-    let reconstructed_detail = match reconstructed_detail {
-        Ok(reconstructed_detail) => reconstructed_detail,
-        Err(err) => {
-            ingest_logs.error(
-                index,
-                format!(
-                    "Attempt to round-trip {} ParsedEventMessage -> EventDetail -> database \
-                    -> EventDetail -> ParsedEventMessage failed at the database -> EventDetail \
-                    step with error: {err}",
-                    if is_contact_event {
-                        "contact event"
-                    } else {
-                        "event"
-                    }
-                ),
-            );
-            return;
-        }
-    };
-
-    let Some(parsed_through_db) = (if is_contact_event {
-        log_if_error(
-            ingest_logs,
-            index,
-            reconstructed_detail.to_parsed_contact(),
-            "Attempt to round-trip contact event through ParsedEventMessage -> EventDetail -> \
-            database -> EventDetail -> ParsedEventMessage failed at the EventDetail -> \
-            ParsedEventMessage step with error",
-        )
-    } else {
-        log_if_error(
-            ingest_logs,
-            index,
-            reconstructed_detail.to_parsed(),
-            "Attempt to round-trip event through ParsedEventMessage -> EventDetail -> database \
-            -> EventDetail -> ParsedEventMessage failed at the EventDetail -> ParsedEventMessage \
-            step with error",
-        )
-    }) else {
-        return;
-    };
-
-    if parsed != &parsed_through_db {
-        ingest_logs.error(
-            index,
-            format!(
-                "Round-trip of {} through database produced a mismatch:\n\
-                 Original: <pre>{:?}</pre>\n\
-                 Through database: <pre>{:?}</pre>",
-                if is_contact_event {
-                    "contact event"
-                } else {
-                    "event"
-                },
-                parsed,
-                parsed_through_db,
-            ),
-        );
-    }
-}
