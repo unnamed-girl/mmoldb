@@ -15,7 +15,7 @@
     <section class="card game-info">
         <h2 class="game-heading">Game {{ game.id }}</h2>
         <p class="game-metadata">
-            s{{ game.season }}d{{ game.day }}:
+            {{ macros::season_day(season=game.season, day=game.day) }}:
             {{ game.away_team_emoji }} {{ game.away_team_name }}
             @
             {{ game.home_team_emoji }} {{ game.home_team_name }}

@@ -17,10 +17,8 @@ use std::fmt::{Display, Write};
 use std::fmt::{Debug, Formatter};
 use strum::IntoDiscriminant;
 use thiserror::Error;
-use crate::parsing_extensions;
 use crate::parsing_extensions::BestEffortSlottedPlayer;
 
-// TODO Delete all variants that are still commented out when the code finally compiles
 #[derive(Debug, Error)]
 pub enum SimStartupError {
     #[error("This game had no events")]
@@ -39,34 +37,15 @@ pub enum SimStartupError {
         received: ParsedEventMessageDiscriminants,
     },
 
-    // #[error("Expected the automatic runner to be set by inning {inning_num}")]
-    // MissingAutomaticRunner { inning_num: u8 },
-
     #[error("Couldn't parse game day: {error}")]
     FailedToParseGameDay { error: String },
 
     #[error("Couldn't parse starting pitcher \"{0}\"")]
     FailedToParseStartingPitcher(String),
-
-    // #[error("The fielding pitcher ({fielding_pitcher}) did not match the pitching pitcher ({pitching_pitcher})")]
-    // WrongPitcherOnField {
-    //     fielding_pitcher: String,
-    //     pitching_pitcher: String,
-    // }
 }
 
-// TODO Delete all variants that are still commented out when the code finally compiles
 #[derive(Debug, Error)]
 pub enum SimFatalError {
-    // #[error("This game had no events")]
-    // NoEvents,
-    //
-    // #[error("Not enough events. Expected {expected:?} event after {previous:?}")]
-    // NotEnoughEvents {
-    //     expected: &'static [ParsedEventMessageDiscriminants],
-    //     previous: ParsedEventMessageDiscriminants,
-    // },
-
     #[error("Expected {expected:?} event after {previous:?}, but received {received:?}")]
     UnexpectedEventType {
         expected: &'static [ParsedEventMessageDiscriminants],
@@ -77,19 +56,13 @@ pub enum SimFatalError {
     #[error("Expected the automatic runner to be set by inning {inning_num}")]
     MissingAutomaticRunner { inning_num: u8 },
 
-    // #[error("Couldn't parse game day: {error}")]
-    // FailedToParseGameDay { error: String },
-
-    #[error("The fielding pitcher ({fielding_pitcher}) did not match the pitching pitcher ({pitching_pitcher})")]
-    WrongPitcherOnField {
-        fielding_pitcher: String,
-        pitching_pitcher: String,
-    },
-
-    #[error("Pitcher swap named a generic pitcher (\"P\") instead of a specific roster slot (e.g. \"SP2\") or a roster slot type (e.g. \"SP\").")]
+    #[error(
+        "Pitcher swap named a generic pitcher (\"P\") instead of a specific roster slot \
+        (e.g. \"SP2\") or a roster slot type (e.g. \"SP\")"
+    )]
     GenericPitcherInPitcherSwap,
 
-    #[error("Pitcher swap didn't name a pitcher position or slot.")]
+    #[error("Pitcher swap didn't name a pitcher position or slot")]
     MissingPlaceInPitcherSwap,
 }
 
@@ -506,61 +479,17 @@ impl<'g> EventDetailBuilder<'g> {
 
     fn placed_player_slot(&self, player: PlacedPlayer<&'g str>, ingest_logs: &mut IngestLogs) -> Result<TaxaSlot, SimFatalError> {
         Ok(match player.place {
-            // // Historical -- new games have Slots
-            // Place::Position(Position::Catcher) => { TaxaSlot::Catcher }
-            // Place::Position(Position::FirstBaseman) => { TaxaSlot::FirstBase }
-            // Place::Position(Position::SecondBaseman) => { TaxaSlot::SecondBase }
-            // Place::Position(Position::ThirdBaseman) => { TaxaSlot::ThirdBase }
-            // Place::Position(Position::ShortStop) => { TaxaSlot::Shortstop }
-            // Place::Position(Position::LeftField) => { TaxaSlot::LeftField }
-            // Place::Position(Position::CenterField) => { TaxaSlot::CenterField }
-            // Place::Position(Position::RightField) => { TaxaSlot::RightField }
-            // Place::Position(Position::StartingPitcher) => { TaxaSlot::StartingPitcher }
-            // Place::Position(Position::ReliefPitcher) => { TaxaSlot::ReliefPitcher }
-            // Place::Position(Position::Closer) => { TaxaSlot::Closer }
-            //
-            // // Active
-            // Place::Slot(Slot::Catcher) => { TaxaSlot::Catcher }
-            // Place::Slot(Slot::FirstBaseman) => { TaxaSlot::FirstBase }
-            // Place::Slot(Slot::SecondBaseman) => { TaxaSlot::SecondBase }
-            // Place::Slot(Slot::ThirdBaseman) => { TaxaSlot::ThirdBase }
-            // Place::Slot(Slot::ShortStop) => { TaxaSlot::Shortstop }
-            // Place::Slot(Slot::LeftField) => { TaxaSlot::LeftField }
-            // Place::Slot(Slot::CenterField) => { TaxaSlot::CenterField }
-            // Place::Slot(Slot::RightField) => { TaxaSlot::RightField }
-            // Place::Slot(Slot::StartingPitcher(1)) => { TaxaSlot::StartingPitcher1 }
-            // Place::Slot(Slot::StartingPitcher(2)) => { TaxaSlot::StartingPitcher2 }
-            // Place::Slot(Slot::StartingPitcher(3)) => { TaxaSlot::StartingPitcher3 }
-            // Place::Slot(Slot::StartingPitcher(4)) => { TaxaSlot::StartingPitcher4 }
-            // Place::Slot(Slot::StartingPitcher(5)) => { TaxaSlot::StartingPitcher5 }
-            // Place::Slot(Slot::StartingPitcher(other)) => {
-            //     ingest_logs.warn(format!(
-            //         "Unexpected starting pitcher number: {other} (expected 1-5). Falling back to \
-            //         un-numbered starting pitcher type.",
-            //     ));
-            //     TaxaSlot::StartingPitcher
-            // }
-            // Place::Slot(Slot::ReliefPitcher(1)) => { TaxaSlot::ReliefPitcher1 }
-            // Place::Slot(Slot::ReliefPitcher(2)) => { TaxaSlot::ReliefPitcher2 }
-            // Place::Slot(Slot::ReliefPitcher(3)) => { TaxaSlot::ReliefPitcher3 }
-            // Place::Slot(Slot::ReliefPitcher(other)) => {
-            //     ingest_logs.warn(format!(
-            //         "Unexpected relief pitcher number: {other} (expected 1-3). Falling back to \
-            //         un-numbered relief pitcher type.",
-            //     ));
-            //     TaxaSlot::ReliefPitcher
-            // }
-            // Place::Slot(Slot::Closer) => { TaxaSlot::Closer }
-            // Place::Slot(Slot::DesignatedHitter) => { TaxaSlot::DesignatedHitter }
             Place::Pitcher => {
-                if self.pitcher.name == player.name {
-                    self.pitcher.slot.into()
-                } else {
-                    return Err(SimFatalError::WrongPitcherOnField {
-                        fielding_pitcher: player.name.to_string(),
-                        pitching_pitcher: self.pitcher.name.to_string(),
-                    })
+                if self.pitcher.name != player.name {
+                    ingest_logs.info(format!(
+                        "Event pitcher name ({}) does not match our stored pitcher's name ({}). The \
+                        only known cause of this mismatch is an augment firing during a game, in which \
+                        case the active pitcher's position is still correct. Therefore this is not a \
+                        warning.",
+                        player.name, self.pitcher.name,
+                    ));
                 }
+                self.pitcher.slot.into()
             }
             Place::Catcher => { TaxaSlot::Catcher }
             Place::FirstBaseman => { TaxaSlot::FirstBase }
@@ -1813,16 +1742,14 @@ impl<'g> Game<'g> {
         // pitcher in the event object is the previous pitcher
         if let MaybePlayer::Player(pitcher_name) = &raw_event.pitcher {
             if pitcher_name != self.defending_team().active_pitcher.name {
-                ingest_logs.error(format!(
-                    "Event pitcher name ({}) does not match our stored pitcher's name ({})",
+                ingest_logs.info(format!(
+                    "Event pitcher name ({}) does not match our stored pitcher's name ({}). The \
+                    only known cause of this mismatch is an augment firing during a game, in which \
+                    case the active pitcher's position is still correct. Therefore this is not a \
+                    warning.",
                     pitcher_name, self.defending_team().active_pitcher.name
                 ));
             }
-        } else {
-            ingest_logs.debug(format!(
-                "Event has no pitcher to compare to (the stored active pitcher is {}).",
-                self.defending_team().active_pitcher
-            ));
         }
 
         let result = match self.state.phase {
@@ -2347,11 +2274,22 @@ impl<'g> Game<'g> {
                     }, ingest_logs);
                     self.finish_pa(batter_name);
 
-                    detail_builder
+                    let detail_builder = detail_builder
                         .fair_ball(fair_ball)
                         .runner_changes(advances.clone(), scores.clone())
-                        .add_out(*out)
-                        .add_runner(batter, TaxaBase::First)
+                        .add_out(*out);
+
+                    // The batter-runner making it to base will be listed in `advances` if
+                    // any other runner advanced without getting out or scoring. That's a
+                    // complicated condition to check, so instead we just check if there's
+                    // already an advance to first (which should always be the batter)
+                    let detail_builder = if advances.iter().any(|a| a.base == Base::First) {
+                        detail_builder
+                    } else {
+                        detail_builder.add_runner(batter, TaxaBase::First)
+                    };
+
+                    detail_builder
                         .fielders(fielders.clone(), ingest_logs)?
                         .build_some(self, batter_name, ingest_logs, TaxaEventType::ForceOut)
                 },
@@ -2933,7 +2871,7 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
         self.runners_out_iter().collect()
     }
 
-    pub fn to_parsed(&self) -> Result<ParsedEventMessage<&str>, ToParsedError> {
+    pub fn to_parsed(&self, game_id: &str) -> Result<ParsedEventMessage<&str>, ToParsedError> {
         let exactly_one_runner_out = || {
             let runners_out = self
                 .runners_out()
@@ -3069,6 +3007,14 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
             TaxaEventType::ForceOut => {
                 let (runner_out_name, runner_out_at_base) = exactly_one_runner_out()?;
 
+                // TODO Delete if it turns out not to be used
+                let any_existing_runner_advanced = self.baserunners.iter().any(|r| {
+                    r.base_before.is_some() && // Exclude the batter-runner
+                        r.base_before != Some(r.base_after) && // Exclude anyone who stayed still
+                        !r.is_out && // Exclude anyone who got out
+                        r.base_after != TaxaBase::Home // Exclude anyone who scored
+                });
+
                 ParsedEventMessage::ForceOut {
                     batter: self.batter_name.as_ref(),
                     fielders: self.fielders(),
@@ -3078,7 +3024,9 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                         base: runner_out_at_base,
                     },
                     scores: self.scores(),
-                    advances: self.advances(false),
+                    // The batter-runner is listed in advances if any other runner also advanced,
+                    // unless the force out was at 2nd
+                    advances: self.advances(any_existing_runner_advanced && Base::Second != runner_out_at_base.into()),
                 }
             }
             TaxaEventType::CaughtOut => {

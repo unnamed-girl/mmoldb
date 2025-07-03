@@ -1,15 +1,11 @@
 {# TODO: There's now a PaginatedGamesContext struct in pages.rs, this macro should just accept that instead of its three constituent parts separately #}
+{% import "macros" as macros %}
+
 {% macro games(games, previous_page_url, next_page_url) %}
 {% for game in games %}
     <li class="game">
         <a href="{{ game.uri }}">
-            {% if game.day.is_superstar_day %}
-                s{{ game.season }}ss{{ game.day.day }}:
-            {% elif game.day %}
-                s{{ game.season }}d{{ game.day.day }}:
-            {% else %}
-                s{{ game.season }}d??:
-            {% endif %}
+            {{ macros::season_day(season=game.season, day=game.day) }}:
             {{ game.away_team_emoji }} {{ game.away_team_name }}
             @
             {{ game.home_team_emoji }} {{ game.home_team_name }}

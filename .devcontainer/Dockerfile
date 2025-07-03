@@ -8,3 +8,6 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
 
 # Install diesel CLI for development
 RUN cargo install cargo-binstall && cargo binstall diesel_cli
+
+# I think this is because of running as root
+RUN git config --global --add safe.directory /workspaces/mmoldb

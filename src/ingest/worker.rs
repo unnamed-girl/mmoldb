@@ -173,6 +173,7 @@ impl IngestWorker {
                             &game.parsed_game[index],
                             &original_detail,
                             reconstructed_detail,
+                            &game.id,
                         );
                     }
 
@@ -183,6 +184,7 @@ impl IngestWorker {
                         &game.parsed_game[index],
                         &original_detail,
                         reconstructed_detail,
+                        &game.id,
                     );
                 }
                 let extra_ingest_logs = extra_ingest_logs.into_vec();
@@ -341,7 +343,7 @@ fn prepare_completed_game_for_db(
             let event = match game.next(game_event_index, &parsed, &raw, &mut ingest_logs) {
                 Ok(result) => result,
                 Err(e) => {
-                    ingest_logs.critical(e.to_string());
+                    ingest_logs.critical(format!("Critical error. This event will be skipped.\n\n{e}"));
                     None
                 }
             };

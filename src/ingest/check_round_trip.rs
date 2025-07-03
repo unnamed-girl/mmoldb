@@ -62,12 +62,9 @@ fn downgrade_parsed_places_to_match(
         ParsedEventMessage::HitByPitch { .. } => {}
         ParsedEventMessage::FairBall { .. } => {}
         ParsedEventMessage::StrikeOut { .. } => {}
-        ParsedEventMessage::BatterToBase { .. } => {}
-        ParsedEventMessage::HomeRun { .. } => {}
-        ParsedEventMessage::CaughtOut { .. } => {}
-        ParsedEventMessage::GroundedOut { fielders, .. } => {
-            if let ParsedEventMessage::GroundedOut { fielders: original_fielders, .. } = original {
-                downgrade_places_to_match(game_event_index, fielders, original_fielders, ingest_logs, "GroundedOut");
+        ParsedEventMessage::BatterToBase { fielder, .. } => {
+            if let ParsedEventMessage::BatterToBase { fielder: original_fielder, .. } = original {
+                downgrade_place_to_match(game_event_index, fielder, original_fielder, ingest_logs, "BatterToBase fielder");
             } else {
                 ingest_logs.warn(game_event_index, format!(
                     "Not downgrading parsed Places because the event types don't match \
@@ -75,10 +72,52 @@ fn downgrade_parsed_places_to_match(
                     ours.discriminant(), original.discriminant(),
                 ));
             }
-
         }
-        ParsedEventMessage::ForceOut { .. } => {}
-        ParsedEventMessage::ReachOnFieldersChoice { .. } => {}
+        ParsedEventMessage::HomeRun { .. } => {}
+        ParsedEventMessage::CaughtOut { caught_by, .. } => {
+            if let ParsedEventMessage::CaughtOut { caught_by: original_caught_by, .. } = original {
+                downgrade_place_to_match(game_event_index, caught_by, original_caught_by, ingest_logs, "CaughtOut caught_by");
+            } else {
+                ingest_logs.warn(game_event_index, format!(
+                    "Not downgrading parsed Places because the event types don't match \
+                    (reconstructed is {:?} and original is {:?})",
+                    ours.discriminant(), original.discriminant(),
+                ));
+            }
+        }
+        ParsedEventMessage::GroundedOut { fielders, .. } => {
+            if let ParsedEventMessage::GroundedOut { fielders: original_fielders, .. } = original {
+                downgrade_places_to_match(game_event_index, fielders, original_fielders, ingest_logs, "GroundedOut fielders");
+            } else {
+                ingest_logs.warn(game_event_index, format!(
+                    "Not downgrading parsed Places because the event types don't match \
+                    (reconstructed is {:?} and original is {:?})",
+                    ours.discriminant(), original.discriminant(),
+                ));
+            }
+        }
+        ParsedEventMessage::ForceOut { fielders, .. } => {
+            if let ParsedEventMessage::ForceOut { fielders: original_fielders, .. } = original {
+                downgrade_places_to_match(game_event_index, fielders, original_fielders, ingest_logs, "ForceOut fielders");
+            } else {
+                ingest_logs.warn(game_event_index, format!(
+                    "Not downgrading parsed Places because the event types don't match \
+                    (reconstructed is {:?} and original is {:?})",
+                    ours.discriminant(), original.discriminant(),
+                ));
+            }
+        }
+        ParsedEventMessage::ReachOnFieldersChoice { fielders, .. } => {
+            if let ParsedEventMessage::ReachOnFieldersChoice { fielders: original_fielders, .. } = original {
+                downgrade_places_to_match(game_event_index, fielders, original_fielders, ingest_logs, "ReachOnFieldersChoice fielders");
+            } else {
+                ingest_logs.warn(game_event_index, format!(
+                    "Not downgrading parsed Places because the event types don't match \
+                    (reconstructed is {:?} and original is {:?})",
+                    ours.discriminant(), original.discriminant(),
+                ));
+            }
+        }
         ParsedEventMessage::DoublePlayGrounded { .. } => {}
         ParsedEventMessage::DoublePlayCaught { .. } => {}
         ParsedEventMessage::ReachOnFieldingError { .. } => {}
@@ -138,7 +177,8 @@ fn downgrade_place_to_match(
     } else {
         match original.place {
             Place::Pitcher => {
-                downgrade_place_to_pitcher(game_event_index, &mut ours.place, ingest_logs, log_loc);
+                // Remember, any player (even the dh? maybe not them) can pitch
+                ours.place = Place::Pitcher;
             }
             Place::StartingPitcher(None) => {
                 downgrade_place_to_starting_pitcher(game_event_index, &mut ours.place, ingest_logs, log_loc);
@@ -149,27 +189,6 @@ fn downgrade_place_to_match(
             _ => {
                 // Everything else doesn't need downgrading
             }
-        }
-    }
-}
-
-fn downgrade_place_to_pitcher(
-    game_event_index: usize,
-    ours: &mut Place,
-    ingest_logs: &mut IngestLogs,
-    log_loc: &str,
-) {
-    match ours {
-        Place::Pitcher => {
-            // It's already correct
-        }
-        Place::StartingPitcher(_) | Place::ReliefPitcher(_) | Place::Closer => {
-            *ours = Place::Pitcher
-        }
-        _ => {
-            ingest_logs.error(game_event_index, format!(
-                "Can't \"downgrade\" {ours:?} into Place::Pitcher at {log_loc}",
-            ));
         }
     }
 }
@@ -219,6 +238,7 @@ pub fn check_round_trip(
     parsed: &ParsedEventMessage<&str>,
     original_detail: &EventDetail<&str>,
     reconstructed_detail: &Result<EventDetail<String>, RowToEventError>,
+    game_id: &str,
 ) {
     let Some(mut parsed_through_detail) = (if is_contact_event {
         log_if_error(
@@ -232,7 +252,7 @@ pub fn check_round_trip(
         log_if_error(
             ingest_logs,
             index,
-            original_detail.to_parsed(),
+            original_detail.to_parsed(game_id),
             "Attempt to round-trip event through ParsedEventMessage -> EventDetail -> \
             ParsedEventMessage failed at the EventDetail -> ParsedEventMessage step with error",
         )
@@ -293,7 +313,7 @@ pub fn check_round_trip(
         log_if_error(
             ingest_logs,
             index,
-            reconstructed_detail.to_parsed(),
+            reconstructed_detail.to_parsed(game_id),
             "Attempt to round-trip event through ParsedEventMessage -> EventDetail -> database \
             -> EventDetail -> ParsedEventMessage failed at the EventDetail -> ParsedEventMessage \
             step with error",
@@ -301,7 +321,7 @@ pub fn check_round_trip(
     }) else {
         return;
     };
-    
+
     downgrade_parsed_places_to_match(index, &mut parsed_through_db, parsed, ingest_logs);
 
     if parsed != &parsed_through_db {
