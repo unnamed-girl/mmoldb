@@ -2890,7 +2890,7 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                         base: runner_out_at_base,
                     },
                     scores: self.scores(),
-                    advances: self.advances(true),
+                    advances: self.advances(false),
                 }
             }
             TaxaEventType::CaughtOut => {
@@ -2978,10 +2978,12 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                 scores: self.scores(),
                 advances: self.advances(false),
             },
-            TaxaEventType::HitByPitch => ParsedEventMessage::HitByPitch {
-                batter: self.batter_name.as_ref(),
-                scores: self.scores(),
-                advances: self.advances(false),
+            TaxaEventType::HitByPitch => {
+                ParsedEventMessage::HitByPitch {
+                    batter: self.batter_name.as_ref(),
+                    scores: self.scores(),
+                    advances: self.advances(false),
+                }
             },
             TaxaEventType::DoublePlay => {
                 let scores = self.scores();
