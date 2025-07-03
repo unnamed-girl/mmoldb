@@ -404,26 +404,26 @@ impl From<parsing_extensions::BestEffortSlot> for TaxaSlot {
 impl Into<mmolb_parsing::enums::Place> for TaxaSlot {
     fn into(self) -> mmolb_parsing::enums::Place {
         match self {
-            TaxaSlot::Catcher => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::Catcher) }
-            TaxaSlot::FirstBase => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::FirstBaseman) }
-            TaxaSlot::SecondBase => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::SecondBaseman) }
-            TaxaSlot::ThirdBase => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::ThirdBaseman) }
-            TaxaSlot::Shortstop => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::ShortStop) }
-            TaxaSlot::LeftField => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::LeftField) }
-            TaxaSlot::CenterField => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::CenterField) }
-            TaxaSlot::RightField => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::RightField) }
-            TaxaSlot::DesignatedHitter => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::DesignatedHitter) }
-            TaxaSlot::StartingPitcher1 => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::StartingPitcher(1)) }
-            TaxaSlot::StartingPitcher2 => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::StartingPitcher(2)) }
-            TaxaSlot::StartingPitcher3 => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::StartingPitcher(3)) }
-            TaxaSlot::StartingPitcher4 => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::StartingPitcher(4)) }
-            TaxaSlot::StartingPitcher5 => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::StartingPitcher(5)) }
-            TaxaSlot::ReliefPitcher1 => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::ReliefPitcher(1)) }
-            TaxaSlot::ReliefPitcher2 => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::ReliefPitcher(2)) }
-            TaxaSlot::ReliefPitcher3 => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::ReliefPitcher(3)) }
-            TaxaSlot::Closer => { mmolb_parsing::enums::Place::Slot(mmolb_parsing::enums::Slot::Closer) }
-            TaxaSlot::StartingPitcher => { mmolb_parsing::enums::Place::Position(mmolb_parsing::enums::Position::StartingPitcher) }
-            TaxaSlot::ReliefPitcher => { mmolb_parsing::enums::Place::Position(mmolb_parsing::enums::Position::ReliefPitcher) }
+            TaxaSlot::Catcher => { mmolb_parsing::enums::Place::Catcher }
+            TaxaSlot::FirstBase => { mmolb_parsing::enums::Place::FirstBaseman }
+            TaxaSlot::SecondBase => { mmolb_parsing::enums::Place::SecondBaseman }
+            TaxaSlot::ThirdBase => { mmolb_parsing::enums::Place::ThirdBaseman }
+            TaxaSlot::Shortstop => { mmolb_parsing::enums::Place::ShortStop }
+            TaxaSlot::LeftField => { mmolb_parsing::enums::Place::LeftField }
+            TaxaSlot::CenterField => { mmolb_parsing::enums::Place::CenterField }
+            TaxaSlot::RightField => { mmolb_parsing::enums::Place::RightField }
+            TaxaSlot::DesignatedHitter => { mmolb_parsing::enums::Place::DesignatedHitter }
+            TaxaSlot::StartingPitcher1 => { mmolb_parsing::enums::Place::StartingPitcher(Some(1)) }
+            TaxaSlot::StartingPitcher2 => { mmolb_parsing::enums::Place::StartingPitcher(Some(2)) }
+            TaxaSlot::StartingPitcher3 => { mmolb_parsing::enums::Place::StartingPitcher(Some(3)) }
+            TaxaSlot::StartingPitcher4 => { mmolb_parsing::enums::Place::StartingPitcher(Some(4)) }
+            TaxaSlot::StartingPitcher5 => { mmolb_parsing::enums::Place::StartingPitcher(Some(5)) }
+            TaxaSlot::ReliefPitcher1 => { mmolb_parsing::enums::Place::ReliefPitcher(Some(1)) }
+            TaxaSlot::ReliefPitcher2 => { mmolb_parsing::enums::Place::ReliefPitcher(Some(2)) }
+            TaxaSlot::ReliefPitcher3 => { mmolb_parsing::enums::Place::ReliefPitcher(Some(3)) }
+            TaxaSlot::Closer => { mmolb_parsing::enums::Place::Closer }
+            TaxaSlot::StartingPitcher => { mmolb_parsing::enums::Place::StartingPitcher(None) }
+            TaxaSlot::ReliefPitcher => { mmolb_parsing::enums::Place::ReliefPitcher(None) }
         }
     }
 }

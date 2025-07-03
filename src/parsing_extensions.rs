@@ -25,19 +25,21 @@ impl TryFrom<Place> for BestEffortSlot {
 
     fn try_from(value: Place) -> Result<Self, Self::Error> {
         Ok(match value {
-            Place::Position(Position::Pitcher) => { return Err(()) }
-            Place::Position(Position::Catcher) => { BestEffortSlot::SlotType(SlotDiscriminants::Catcher) }
-            Place::Position(Position::FirstBaseman) => { BestEffortSlot::SlotType(SlotDiscriminants::FirstBaseman) }
-            Place::Position(Position::SecondBaseman) => { BestEffortSlot::SlotType(SlotDiscriminants::SecondBaseman) }
-            Place::Position(Position::ThirdBaseman) => { BestEffortSlot::SlotType(SlotDiscriminants::ThirdBaseman) }
-            Place::Position(Position::ShortStop) => { BestEffortSlot::SlotType(SlotDiscriminants::ShortStop) }
-            Place::Position(Position::LeftField) => { BestEffortSlot::SlotType(SlotDiscriminants::LeftField) }
-            Place::Position(Position::CenterField) => { BestEffortSlot::SlotType(SlotDiscriminants::CenterField) }
-            Place::Position(Position::RightField) => { BestEffortSlot::SlotType(SlotDiscriminants::RightField) }
-            Place::Position(Position::StartingPitcher) => { BestEffortSlot::SlotType(SlotDiscriminants::StartingPitcher) }
-            Place::Position(Position::ReliefPitcher) => { BestEffortSlot::SlotType(SlotDiscriminants::ReliefPitcher) }
-            Place::Position(Position::Closer) => { BestEffortSlot::SlotType(SlotDiscriminants::Closer) }
-            Place::Slot(slot) => { BestEffortSlot::Slot(slot) }
+            Place::Pitcher => { return Err(()); }
+            Place::Catcher => { BestEffortSlot::Slot(Slot::Catcher) }
+            Place::FirstBaseman => { BestEffortSlot::Slot(Slot::FirstBaseman) }
+            Place::SecondBaseman => { BestEffortSlot::Slot(Slot::SecondBaseman) }
+            Place::ThirdBaseman => { BestEffortSlot::Slot(Slot::ThirdBaseman) }
+            Place::ShortStop => { BestEffortSlot::Slot(Slot::ShortStop) }
+            Place::LeftField => { BestEffortSlot::Slot(Slot::LeftField) }
+            Place::CenterField => { BestEffortSlot::Slot(Slot::CenterField) }
+            Place::RightField => { BestEffortSlot::Slot(Slot::RightField) }
+            Place::StartingPitcher(Some(i)) => { BestEffortSlot::Slot(Slot::StartingPitcher(i)) }
+            Place::ReliefPitcher(Some(i)) => { BestEffortSlot::Slot(Slot::ReliefPitcher(i)) }
+            Place::Closer => { BestEffortSlot::Slot(Slot::Closer) }
+            Place::DesignatedHitter => { BestEffortSlot::Slot(Slot::DesignatedHitter) }
+            Place::StartingPitcher(None) => { BestEffortSlot::SlotType(SlotDiscriminants::StartingPitcher) }
+            Place::ReliefPitcher(None) => { BestEffortSlot::SlotType(SlotDiscriminants::ReliefPitcher) }
         })
     }
 }
@@ -72,8 +74,4 @@ impl<StrT: Display> Display for BestEffortSlottedPlayer<StrT> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} {}", self.slot, self.name)
     }
-}
-
-pub fn parse_slot_to_discriminant(input: &str) -> Result<SlotDiscriminants, String> {
-    Ok(input.parse::<Slot>().map_err(|()| input.to_string())?.discriminant())
 }

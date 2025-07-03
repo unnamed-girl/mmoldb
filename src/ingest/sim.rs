@@ -506,8 +506,53 @@ impl<'g> EventDetailBuilder<'g> {
 
     fn placed_player_slot(&self, player: PlacedPlayer<&'g str>, ingest_logs: &mut IngestLogs) -> Result<TaxaSlot, SimFatalError> {
         Ok(match player.place {
-            // Historical -- new games have Slots
-            Place::Position(Position::Pitcher) => {
+            // // Historical -- new games have Slots
+            // Place::Position(Position::Catcher) => { TaxaSlot::Catcher }
+            // Place::Position(Position::FirstBaseman) => { TaxaSlot::FirstBase }
+            // Place::Position(Position::SecondBaseman) => { TaxaSlot::SecondBase }
+            // Place::Position(Position::ThirdBaseman) => { TaxaSlot::ThirdBase }
+            // Place::Position(Position::ShortStop) => { TaxaSlot::Shortstop }
+            // Place::Position(Position::LeftField) => { TaxaSlot::LeftField }
+            // Place::Position(Position::CenterField) => { TaxaSlot::CenterField }
+            // Place::Position(Position::RightField) => { TaxaSlot::RightField }
+            // Place::Position(Position::StartingPitcher) => { TaxaSlot::StartingPitcher }
+            // Place::Position(Position::ReliefPitcher) => { TaxaSlot::ReliefPitcher }
+            // Place::Position(Position::Closer) => { TaxaSlot::Closer }
+            //
+            // // Active
+            // Place::Slot(Slot::Catcher) => { TaxaSlot::Catcher }
+            // Place::Slot(Slot::FirstBaseman) => { TaxaSlot::FirstBase }
+            // Place::Slot(Slot::SecondBaseman) => { TaxaSlot::SecondBase }
+            // Place::Slot(Slot::ThirdBaseman) => { TaxaSlot::ThirdBase }
+            // Place::Slot(Slot::ShortStop) => { TaxaSlot::Shortstop }
+            // Place::Slot(Slot::LeftField) => { TaxaSlot::LeftField }
+            // Place::Slot(Slot::CenterField) => { TaxaSlot::CenterField }
+            // Place::Slot(Slot::RightField) => { TaxaSlot::RightField }
+            // Place::Slot(Slot::StartingPitcher(1)) => { TaxaSlot::StartingPitcher1 }
+            // Place::Slot(Slot::StartingPitcher(2)) => { TaxaSlot::StartingPitcher2 }
+            // Place::Slot(Slot::StartingPitcher(3)) => { TaxaSlot::StartingPitcher3 }
+            // Place::Slot(Slot::StartingPitcher(4)) => { TaxaSlot::StartingPitcher4 }
+            // Place::Slot(Slot::StartingPitcher(5)) => { TaxaSlot::StartingPitcher5 }
+            // Place::Slot(Slot::StartingPitcher(other)) => {
+            //     ingest_logs.warn(format!(
+            //         "Unexpected starting pitcher number: {other} (expected 1-5). Falling back to \
+            //         un-numbered starting pitcher type.",
+            //     ));
+            //     TaxaSlot::StartingPitcher
+            // }
+            // Place::Slot(Slot::ReliefPitcher(1)) => { TaxaSlot::ReliefPitcher1 }
+            // Place::Slot(Slot::ReliefPitcher(2)) => { TaxaSlot::ReliefPitcher2 }
+            // Place::Slot(Slot::ReliefPitcher(3)) => { TaxaSlot::ReliefPitcher3 }
+            // Place::Slot(Slot::ReliefPitcher(other)) => {
+            //     ingest_logs.warn(format!(
+            //         "Unexpected relief pitcher number: {other} (expected 1-3). Falling back to \
+            //         un-numbered relief pitcher type.",
+            //     ));
+            //     TaxaSlot::ReliefPitcher
+            // }
+            // Place::Slot(Slot::Closer) => { TaxaSlot::Closer }
+            // Place::Slot(Slot::DesignatedHitter) => { TaxaSlot::DesignatedHitter }
+            Place::Pitcher => {
                 if self.pitcher.name == player.name {
                     self.pitcher.slot.into()
                 } else {
@@ -517,51 +562,40 @@ impl<'g> EventDetailBuilder<'g> {
                     })
                 }
             }
-            Place::Position(Position::Catcher) => { TaxaSlot::Catcher }
-            Place::Position(Position::FirstBaseman) => { TaxaSlot::FirstBase }
-            Place::Position(Position::SecondBaseman) => { TaxaSlot::SecondBase }
-            Place::Position(Position::ThirdBaseman) => { TaxaSlot::ThirdBase }
-            Place::Position(Position::ShortStop) => { TaxaSlot::Shortstop }
-            Place::Position(Position::LeftField) => { TaxaSlot::LeftField }
-            Place::Position(Position::CenterField) => { TaxaSlot::CenterField }
-            Place::Position(Position::RightField) => { TaxaSlot::RightField }
-            Place::Position(Position::StartingPitcher) => { TaxaSlot::StartingPitcher }
-            Place::Position(Position::ReliefPitcher) => { TaxaSlot::ReliefPitcher }
-            Place::Position(Position::Closer) => { TaxaSlot::Closer }
-
-            // Active
-            Place::Slot(Slot::Catcher) => { TaxaSlot::Catcher }
-            Place::Slot(Slot::FirstBaseman) => { TaxaSlot::FirstBase }
-            Place::Slot(Slot::SecondBaseman) => { TaxaSlot::SecondBase }
-            Place::Slot(Slot::ThirdBaseman) => { TaxaSlot::ThirdBase }
-            Place::Slot(Slot::ShortStop) => { TaxaSlot::Shortstop }
-            Place::Slot(Slot::LeftField) => { TaxaSlot::LeftField }
-            Place::Slot(Slot::CenterField) => { TaxaSlot::CenterField }
-            Place::Slot(Slot::RightField) => { TaxaSlot::RightField }
-            Place::Slot(Slot::StartingPitcher(1)) => { TaxaSlot::StartingPitcher1 }
-            Place::Slot(Slot::StartingPitcher(2)) => { TaxaSlot::StartingPitcher2 }
-            Place::Slot(Slot::StartingPitcher(3)) => { TaxaSlot::StartingPitcher3 }
-            Place::Slot(Slot::StartingPitcher(4)) => { TaxaSlot::StartingPitcher4 }
-            Place::Slot(Slot::StartingPitcher(5)) => { TaxaSlot::StartingPitcher5 }
-            Place::Slot(Slot::StartingPitcher(other)) => {
+            Place::Catcher => { TaxaSlot::Catcher }
+            Place::FirstBaseman => { TaxaSlot::FirstBase }
+            Place::SecondBaseman => { TaxaSlot::SecondBase }
+            Place::ThirdBaseman => { TaxaSlot::ThirdBase }
+            Place::ShortStop => { TaxaSlot::Shortstop }
+            Place::LeftField => { TaxaSlot::LeftField }
+            Place::CenterField => { TaxaSlot::CenterField }
+            Place::RightField => { TaxaSlot::RightField }
+            Place::StartingPitcher(None) => { TaxaSlot::StartingPitcher }
+            Place::StartingPitcher(Some(1)) => { TaxaSlot::StartingPitcher1 }
+            Place::StartingPitcher(Some(2)) => { TaxaSlot::StartingPitcher2 }
+            Place::StartingPitcher(Some(3)) => { TaxaSlot::StartingPitcher3 }
+            Place::StartingPitcher(Some(4)) => { TaxaSlot::StartingPitcher4 }
+            Place::StartingPitcher(Some(5)) => { TaxaSlot::StartingPitcher5 }
+            Place::StartingPitcher(Some(other)) => {
                 ingest_logs.warn(format!(
                     "Unexpected starting pitcher number: {other} (expected 1-5). Falling back to \
                     un-numbered starting pitcher type.",
                 ));
                 TaxaSlot::StartingPitcher
             }
-            Place::Slot(Slot::ReliefPitcher(1)) => { TaxaSlot::ReliefPitcher1 }
-            Place::Slot(Slot::ReliefPitcher(2)) => { TaxaSlot::ReliefPitcher2 }
-            Place::Slot(Slot::ReliefPitcher(3)) => { TaxaSlot::ReliefPitcher3 }
-            Place::Slot(Slot::ReliefPitcher(other)) => {
+            Place::ReliefPitcher(None) => { TaxaSlot::ReliefPitcher }
+            Place::ReliefPitcher(Some(1)) => { TaxaSlot::ReliefPitcher1 }
+            Place::ReliefPitcher(Some(2)) => { TaxaSlot::ReliefPitcher2 }
+            Place::ReliefPitcher(Some(3)) => { TaxaSlot::ReliefPitcher3 }
+            Place::ReliefPitcher(Some(other)) => {
                 ingest_logs.warn(format!(
                     "Unexpected relief pitcher number: {other} (expected 1-3). Falling back to \
                     un-numbered relief pitcher type.",
                 ));
                 TaxaSlot::ReliefPitcher
             }
-            Place::Slot(Slot::Closer) => { TaxaSlot::Closer }
-            Place::Slot(Slot::DesignatedHitter) => { TaxaSlot::DesignatedHitter }
+            Place::Closer => { TaxaSlot::Closer }
+            Place::DesignatedHitter => { TaxaSlot::DesignatedHitter }
         })
     }
 
@@ -1118,7 +1152,7 @@ impl<'g> Game<'g> {
                 active_pitcher: BestEffortSlottedPlayer {
                     name: away_pitcher_name,
                     slot: game_data.away_sp.parse()
-                        .map_err(|()| SimStartupError::FailedToParseStartingPitcher(game_data.away_sp.clone()))?
+                        .map_err(|_| SimStartupError::FailedToParseStartingPitcher(game_data.away_sp.clone()))?
                 },
                 batter_stats: away_batter_stats,
                 pitcher_count: 0,
@@ -1135,7 +1169,7 @@ impl<'g> Game<'g> {
                 active_pitcher: BestEffortSlottedPlayer {
                     name: home_pitcher_name,
                     slot: game_data.home_sp.parse()
-                        .map_err(|()| SimStartupError::FailedToParseStartingPitcher(game_data.home_sp.clone()))?
+                        .map_err(|_| SimStartupError::FailedToParseStartingPitcher(game_data.home_sp.clone()))?
                 },
                 batter_stats: home_batter_stats,
                 pitcher_count: 0,
@@ -1775,7 +1809,7 @@ impl<'g> Game<'g> {
 
         let detail_builder = self.detail_builder(self.state.clone(), game_event_index, raw_event);
 
-        // This check must be before the event is processed, because the 
+        // This check must be before the event is processed, because the
         // pitcher in the event object is the previous pitcher
         if let MaybePlayer::Player(pitcher_name) = &raw_event.pitcher {
             if pitcher_name != self.defending_team().active_pitcher.name {

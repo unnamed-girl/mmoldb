@@ -137,25 +137,17 @@ fn downgrade_place_to_match(
         ));
     } else {
         match original.place {
-            Place::Position(position) => {
-                match position {
-                    Position::Pitcher => {
-                        downgrade_place_to_pitcher(game_event_index, &mut ours.place, ingest_logs, log_loc);
-                    }
-                    Position::StartingPitcher => {
-                        downgrade_place_to_starting_pitcher(game_event_index, &mut ours.place, ingest_logs, log_loc);
-                    }
-                    Position::ReliefPitcher => {
-                        downgrade_place_to_relief_pitcher(game_event_index, &mut ours.place, ingest_logs, log_loc);
-                    }
-                    _ => {
-                        // Nothing to downgrade
-                    }
-                }
+            Place::Pitcher => {
+                downgrade_place_to_pitcher(game_event_index, &mut ours.place, ingest_logs, log_loc);
             }
-            Place::Slot(_) => {
-                // Not downgrading because the original is at the highest level. Also,
-                // not logging because it would spam the logs.
+            Place::StartingPitcher(None) => {
+                downgrade_place_to_starting_pitcher(game_event_index, &mut ours.place, ingest_logs, log_loc);
+            }
+            Place::ReliefPitcher(None) => {
+                downgrade_place_to_relief_pitcher(game_event_index, &mut ours.place, ingest_logs, log_loc);
+            }
+            _ => {
+                // Everything else doesn't need downgrading
             }
         }
     }
@@ -168,16 +160,15 @@ fn downgrade_place_to_pitcher(
     log_loc: &str,
 ) {
     match ours {
-        Place::Position(Position::Pitcher) => {
-            // No action necessary
+        Place::Pitcher => {
+            // It's already correct
         }
-        Place::Position(Position::StartingPitcher | Position::ReliefPitcher | Position::Closer) |
-        Place::Slot(Slot::StartingPitcher(_) | Slot::ReliefPitcher(_) | Slot::Closer) => {
-            *ours = Place::Position(Position::Pitcher)
+        Place::StartingPitcher(_) | Place::ReliefPitcher(_) | Place::Closer => {
+            *ours = Place::Pitcher
         }
         _ => {
             ingest_logs.error(game_event_index, format!(
-                "Can't \"downgrade\" {ours:?} into Position::Pitcher at {log_loc}",
+                "Can't \"downgrade\" {ours:?} into Place::Pitcher at {log_loc}",
             ));
         }
     }
@@ -190,15 +181,12 @@ fn downgrade_place_to_starting_pitcher(
     log_loc: &str,
 ) {
     match ours {
-        Place::Position(Position::StartingPitcher) => {
-            // No action necessary
-        }
-        Place::Slot(Slot::StartingPitcher(_)) => {
-            *ours = Place::Position(Position::Pitcher)
+        Place::StartingPitcher(_) => {
+            *ours = Place::StartingPitcher(None)
         }
         _ => {
             ingest_logs.error(game_event_index, format!(
-                "Can't \"downgrade\" {ours:?} into Position::Pitcher at {log_loc}",
+                "Can't \"downgrade\" {ours:?} into Place::StartingPitcher(None) at {log_loc}",
             ));
         }
     }
@@ -211,15 +199,12 @@ fn downgrade_place_to_relief_pitcher(
     log_loc: &str,
 ) {
     match ours {
-        Place::Position(Position::ReliefPitcher) => {
-            // No action necessary
-        }
-        Place::Slot(Slot::ReliefPitcher(_)) => {
-            *ours = Place::Position(Position::Pitcher)
+        Place::ReliefPitcher(_) => {
+            *ours = Place::ReliefPitcher(None)
         }
         _ => {
             ingest_logs.error(game_event_index, format!(
-                "Can't \"downgrade\" {ours:?} into Position::Pitcher at {log_loc}",
+                "Can't \"downgrade\" {ours:?} into Place::ReliefPitcher(None) at {log_loc}",
             ));
         }
     }
