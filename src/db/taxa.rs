@@ -49,6 +49,8 @@ taxa! {
         FieldersChoice = 14,
         #[display_name: &'a str = "error on fielder's choice"]
         ErrorOnFieldersChoice = 15,
+        #[display_name: &'a str = "balk"]
+        Balk = 16,
     }
 }
 

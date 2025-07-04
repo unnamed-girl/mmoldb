@@ -8,7 +8,7 @@ use log::warn;
 use mmolb_parsing::ParsedEventMessage;
 use mmolb_parsing::enums::{Base, BaseNameVariant, BatterStat, Day, Distance, FairBallDestination, FairBallType, FieldingErrorType, FoulType, GameOverMessage, HomeAway, MaybeRecognized, NowBattingStats, Place, Position, Slot, SlotDiscriminants, StrikeType, TopBottom};
 use mmolb_parsing::game::MaybePlayer;
-use mmolb_parsing::parsed_event::{BaseSteal, FieldingAttempt, KnownBug, ParsedEventMessageDiscriminants, PlacedPlayer, RunnerAdvance, RunnerOut, StartOfInningPitcher};
+use mmolb_parsing::parsed_event::{BaseSteal, EmojiTeam, FieldingAttempt, KnownBug, ParsedEventMessageDiscriminants, PlacedPlayer, RunnerAdvance, RunnerOut, StartOfInningPitcher};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{Display, Write};
 use std::fmt::{Debug, Formatter};
@@ -59,8 +59,11 @@ pub enum SimFatalError {
     )]
     GenericPitcherInPitcherSwap,
 
-    #[error("Pitcher swap didn't name a pitcher position or slot")]
-    MissingPlaceInPitcherSwap,
+    #[error(
+        "A fielding event identified the pitcher as (\"P\") instead of a specific roster slot, \
+        and we don't have a record of the active pitcher's roster slot."
+    )]
+    PitcherWithUnknownSlotFieldedABall,
 }
 
 #[derive(Debug, Clone)]
@@ -205,6 +208,25 @@ struct FairBall {
 }
 
 #[derive(Debug, Copy, Clone)]
+enum PhaseAfterMoundVisitOutcome<'g> {
+    ExpectNowBatting,
+    ExpectPitch(&'g str),
+}
+
+impl<'g> Into<GamePhase<'g>> for PhaseAfterMoundVisitOutcome<'g> {
+    fn into(self) -> GamePhase<'g> {
+        match self {
+            PhaseAfterMoundVisitOutcome::ExpectNowBatting => {
+                GamePhase::ExpectNowBatting
+            }
+            PhaseAfterMoundVisitOutcome::ExpectPitch(batter_name) => {
+                GamePhase::ExpectPitch(batter_name)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
 // todo rename to EventContext or something like that
 enum GamePhase<'g> {
     ExpectInningStart,
@@ -212,7 +234,7 @@ enum GamePhase<'g> {
     ExpectPitch(&'g str),
     ExpectFairBallOutcome(&'g str, FairBall),
     ExpectInningEnd,
-    ExpectMoundVisitOutcome,
+    ExpectMoundVisitOutcome(PhaseAfterMoundVisitOutcome<'g>),
     ExpectGameEnd,
     ExpectFinalScore,
     Finished,
@@ -245,8 +267,12 @@ pub struct TeamInGame<'g> {
     // of automatic runners after an inning-ending CS
     automatic_runner: Option<&'g str>,
     // Need to store the team's active pitcher to facilitate upgrading
-    // old games' positions (e.g. "P") into the newer slots (e.g. "RP")
-    active_pitcher: BestEffortSlottedPlayer<&'g str>,
+    // old games' positions (e.g. "P") into the newer slots (e.g. "RP").
+    // This does need to be an Option because the change that made it
+    // unnecessary also made it unavailable, but take care to not set
+    // it to None out of convenience, because it might lead to runtime
+    // errors.
+    active_pitcher: Option<BestEffortSlottedPlayer<&'g str>>,
     batter_stats: HashMap<&'g str, BatterStats>,
     pitcher_count: i32,
     batter_count: i32,
@@ -433,7 +459,7 @@ struct EventDetailBuilder<'g> {
     prev_game_state: GameState<'g>,
     game_event_index: usize,
     fair_ball_event_index: Option<usize>,
-    pitcher: BestEffortSlottedPlayer<&'g str>,
+    pitcher: Option<BestEffortSlottedPlayer<&'g str>>,
     fair_ball_type: Option<TaxaFairBallType>,
     fair_ball_direction: Option<TaxaFielderLocation>,
     hit_type: Option<TaxaHitType>,
@@ -477,16 +503,20 @@ impl<'g> EventDetailBuilder<'g> {
     fn placed_player_slot(&self, player: PlacedPlayer<&'g str>, ingest_logs: &mut IngestLogs) -> Result<TaxaSlot, SimFatalError> {
         Ok(match player.place {
             Place::Pitcher => {
-                if self.pitcher.name != player.name {
-                    ingest_logs.info(format!(
-                        "Event pitcher name ({}) does not match our stored pitcher's name ({}). The \
-                        only known cause of this mismatch is an augment firing during a game, in which \
-                        case the active pitcher's position is still correct. Therefore this is not a \
-                        warning.",
-                        player.name, self.pitcher.name,
-                    ));
+                if let Some(active_pitcher) = self.pitcher {
+                    if active_pitcher.name != player.name {
+                        ingest_logs.info(format!(
+                            "Event pitcher name ({}) does not match our stored pitcher's name ({}). The \
+                            only known cause of this mismatch is an augment firing during a game, in which \
+                            case the active pitcher's position is still correct. Therefore this is not a \
+                            warning.",
+                            player.name, active_pitcher.name,
+                        ));
+                    }
+                    active_pitcher.slot.into()
+                } else {
+                    return Err(SimFatalError::PitcherWithUnknownSlotFieldedABall)
                 }
-                self.pitcher.slot.into()
             }
             Place::Catcher => { TaxaSlot::Catcher }
             Place::FirstBaseman => { TaxaSlot::FirstBase }
@@ -915,6 +945,13 @@ struct RunnerUpdate<'g, 'a> {
     pub runner_advances_may_include_batter: Option<&'g str>,
 }
 
+// Returns true for events that happen in the ExpectPitch context but
+// don't have an associated pitch
+fn is_pitchless_pitch(ty: ParsedEventMessageDiscriminants) -> bool {
+    ty == ParsedEventMessageDiscriminants::MoundVisit ||
+        ty == ParsedEventMessageDiscriminants::Balk
+}
+
 impl<'g> Game<'g> {
     pub fn new<'a, IterT>(
         game_id: &'g str,
@@ -1075,11 +1112,11 @@ impl<'g> Game<'g> {
                 team_emoji: away_team_emoji,
                 team_id: game_data.away_team_id.as_str(),
                 automatic_runner: None,
-                active_pitcher: BestEffortSlottedPlayer {
+                active_pitcher: Some(BestEffortSlottedPlayer {
                     name: away_pitcher_name,
                     slot: game_data.away_sp.parse()
-                        .map_err(|_| SimStartupError::FailedToParseStartingPitcher(game_data.away_sp.clone()))?
-                },
+                        .map_err(|_| SimStartupError::FailedToParseStartingPitcher(game_data.away_sp.clone()))?,
+                }),
                 batter_stats: away_batter_stats,
                 pitcher_count: 0,
                 batter_count: 0,
@@ -1092,11 +1129,11 @@ impl<'g> Game<'g> {
                 team_emoji: home_team_emoji,
                 team_id: game_data.home_team_id.as_str(),
                 automatic_runner: None,
-                active_pitcher: BestEffortSlottedPlayer {
+                active_pitcher: Some(BestEffortSlottedPlayer {
                     name: home_pitcher_name,
                     slot: game_data.home_sp.parse()
-                        .map_err(|_| SimStartupError::FailedToParseStartingPitcher(game_data.home_sp.clone()))?
-                },
+                        .map_err(|_| SimStartupError::FailedToParseStartingPitcher(game_data.home_sp.clone()))?,
+                }),
                 batter_stats: home_batter_stats,
                 pitcher_count: 0,
                 batter_count: 0,
@@ -1225,6 +1262,21 @@ impl<'g> Game<'g> {
                 "Unexpected batter name: Expected {}, but saw {}",
                 expected_batter_name, observed_batter_name,
             ));
+        }
+    }
+
+    fn check_pitcher(
+        &self,
+        observed_pitcher_name: &str,
+        ingest_logs: &mut IngestLogs,
+    ) {
+        if let Some(pitcher) = self.defending_team().active_pitcher {
+            if pitcher.name != observed_pitcher_name {
+                ingest_logs.warn(format!(
+                    "Unexpected pitcher name: Expected {}, but saw {}",
+                    pitcher.name, observed_pitcher_name,
+                ));
+            }
         }
     }
 
@@ -1723,6 +1775,35 @@ impl<'g> Game<'g> {
         );
     }
 
+    fn process_mound_visit(
+        &mut self,
+        team: &EmojiTeam<&'g str>,
+        ingest_logs: &mut IngestLogs,
+        interrupted_phase: PhaseAfterMoundVisitOutcome<'g>,
+    ) -> Option<EventDetail<&'g str>> {
+        if team.name != self.defending_team().team_name {
+            ingest_logs.info(format!(
+                "Defending team name from MoundVisit ({}) did not match the one from \
+                                LiveNow ({}). Assuming this was a manual change.",
+                team.name,
+                self.defending_team().team_name,
+            ));
+            self.defending_team_mut().team_name = team.name;
+        }
+        if team.emoji != self.defending_team().team_emoji {
+            ingest_logs.info(format!(
+                "Defending team emoji from MoundVisit ({}) did not match the one \
+                                from LiveNow ({}). Assuming this was a manual change.",
+                team.emoji,
+                self.defending_team().team_emoji,
+            ));
+            self.defending_team_mut().team_emoji = team.emoji;
+        }
+
+        self.state.phase = GamePhase::ExpectMoundVisitOutcome(interrupted_phase);
+        None
+    }
+
     pub fn next(
         &mut self,
         game_event_index: usize,
@@ -1735,18 +1816,10 @@ impl<'g> Game<'g> {
 
         let detail_builder = self.detail_builder(self.state.clone(), game_event_index, raw_event);
 
-        // This check must be before the event is processed, because the
-        // pitcher in the event object is the previous pitcher
-        if let MaybePlayer::Player(pitcher_name) = &raw_event.pitcher {
-            if pitcher_name != self.defending_team().active_pitcher.name {
-                ingest_logs.info(format!(
-                    "Event pitcher name ({}) does not match our stored pitcher's name ({}). The \
-                    only known cause of this mismatch is an augment firing during a game, in which \
-                    case the active pitcher's position is still correct. Therefore this is not a \
-                    warning.",
-                    pitcher_name, self.defending_team().active_pitcher.name
-                ));
-            }
+        if let Some(stored_pitcher) = self.defending_team().active_pitcher {
+            ingest_logs.debug(format!("Stored pitcher: {}", stored_pitcher));
+        } else {
+            ingest_logs.debug("No stored pitcher");
         }
 
         let result = match self.state.phase {
@@ -1807,8 +1880,8 @@ impl<'g> Game<'g> {
                             ingest_logs.info(format!("Not incrementing pitcher_count on returning pitcher {emoji} {name}"));
                         }
                         StartOfInningPitcher::Different { leaving_emoji: _, leaving_pitcher, arriving_emoji: _, arriving_pitcher } => {
-                            self.defending_team_mut().active_pitcher = (*arriving_pitcher).try_into()
-                                .map_err(|_| SimFatalError::GenericPitcherInPitcherSwap)?;
+                            self.defending_team_mut().active_pitcher = Some((*arriving_pitcher).try_into()
+                                .map_err(|_| SimFatalError::GenericPitcherInPitcherSwap)?);
                             self.defending_team_mut().pitcher_count += 1;
                             ingest_logs.info(format!("Incrementing pitcher_count as {leaving_pitcher} is replaced by {arriving_pitcher}."));
                         }
@@ -1872,27 +1945,7 @@ impl<'g> Game<'g> {
                 },
                 [ParsedEventMessageDiscriminants::MoundVisit]
                 ParsedEventMessage::MoundVisit { team, mound_visit_type: _ } => {
-                    if team.name != self.defending_team().team_name {
-                        ingest_logs.info(format!(
-                            "Defending team name from MoundVisit ({}) did not match the one from \
-                            LiveNow ({}). Assuming this was a manual change.",
-                            team.name,
-                            self.defending_team().team_name,
-                        ));
-                        self.defending_team_mut().team_name = team.name;
-                    }
-                    if team.emoji != self.defending_team().team_emoji {
-                        ingest_logs.info(format!(
-                            "Defending team emoji from MoundVisit ({}) did not match the one \
-                            from LiveNow ({}). Assuming this was a manual change.",
-                            team.emoji,
-                            self.defending_team().team_emoji,
-                        ));
-                        self.defending_team_mut().team_emoji = team.emoji;
-                    }
-
-                    self.state.phase = GamePhase::ExpectMoundVisitOutcome;
-                    None
+                    self.process_mound_visit(team, ingest_logs, PhaseAfterMoundVisitOutcome::ExpectNowBatting)
                 },
             ),
             GamePhase::ExpectPitch(batter_name) => {
@@ -1904,10 +1957,12 @@ impl<'g> Game<'g> {
                     })
                 });
 
-                if raw_event.pitch.is_none() {
-                    ingest_logs.error("Event is mising a pitch");
-                } else if pitch.is_none() {
-                    ingest_logs.error("Pitch type wasn't recognized");
+                if !is_pitchless_pitch(event.discriminant()) {
+                    if raw_event.pitch.is_none() {
+                        ingest_logs.error("Event is mising a pitch");
+                    } else if pitch.is_none() {
+                        ingest_logs.error("Pitch type wasn't recognized");
+                    }
                 }
 
                 game_event!(
@@ -2044,6 +2099,28 @@ impl<'g> Game<'g> {
                             .add_runner(batter, TaxaBase::First)
                             .build_some(self, batter_name, ingest_logs, TaxaEventType::HitByPitch)
                     },
+                    [ParsedEventMessageDiscriminants::MoundVisit]
+                    ParsedEventMessage::MoundVisit { team, mound_visit_type: _ } => {
+                        self.process_mound_visit(team, ingest_logs, PhaseAfterMoundVisitOutcome::ExpectPitch(batter_name))
+                    },
+                    [ParsedEventMessageDiscriminants::Balk]
+                    ParsedEventMessage::Balk { advances, pitcher, scores } => {
+                        self.check_pitcher(pitcher, ingest_logs);
+
+                        // A balk has perfectly predictable effects on the runners, but
+                        // MMOLB tells us exactly what they were so I don't need to
+                        // implement the logic
+                        self.update_runners(RunnerUpdate {
+                            scores,
+                            advances,
+                            ..Default::default()
+                        }, ingest_logs);
+
+                        detail_builder
+                            .pitch(pitch)
+                            .runner_changes(advances.clone(), scores.clone())
+                            .build_some(self, batter_name, ingest_logs, TaxaEventType::Balk)
+                    },
                 )
             }
             GamePhase::ExpectNowBatting => game_event!(
@@ -2077,24 +2154,7 @@ impl<'g> Game<'g> {
                 },
                 [ParsedEventMessageDiscriminants::MoundVisit]
                 ParsedEventMessage::MoundVisit { team, mound_visit_type: _ } => {
-                    if self.defending_team().team_name != team.name {
-                         ingest_logs.warn(format!(
-                             "Team name in MoundVisit doesn't match: Expected {}, but saw {}",
-                             self.defending_team().team_name,
-                             team.name
-                         ));
-                    }
-
-                    if self.defending_team().team_emoji != team.emoji {
-                         ingest_logs.warn(format!(
-                             "Team emoji in MoundVisit doesn't match: Expected {}, but saw {}",
-                             self.defending_team().team_emoji,
-                             team.emoji
-                         ));
-                    }
-
-                    self.state.phase = GamePhase::ExpectMoundVisitOutcome;
-                    None
+                    self.process_mound_visit(team, ingest_logs, PhaseAfterMoundVisitOutcome::ExpectNowBatting)
                 },
             ),
             GamePhase::ExpectFairBallOutcome(batter_name, fair_ball) => game_event!(
@@ -2452,28 +2512,27 @@ impl<'g> Game<'g> {
                     None
                 },
             ),
-            GamePhase::ExpectMoundVisitOutcome => game_event!(
+            GamePhase::ExpectMoundVisitOutcome(interrupted_phase) => game_event!(
                 (previous_event, event),
                 [ParsedEventMessageDiscriminants::PitcherRemains]
                 ParsedEventMessage::PitcherRemains { remaining_pitcher } => {
                     ingest_logs.info(format!("Not incrementing pitcher_count on remaining pitcher {remaining_pitcher}"));
-                    self.state.phase = GamePhase::ExpectNowBatting;
+                    self.state.phase = interrupted_phase.into();
                     None
                 },
                 [ParsedEventMessageDiscriminants::PitcherSwap]
                 ParsedEventMessage::PitcherSwap { leaving_pitcher, arriving_pitcher_name, arriving_pitcher_place } => {
-                    // TODO This can't stay an error
-                    let Some(arriving_pitcher_place) = arriving_pitcher_place else {
-                        return Err(SimFatalError::MissingPlaceInPitcherSwap);
-                    };
-                    self.defending_team_mut().active_pitcher = BestEffortSlottedPlayer {
-                        name: arriving_pitcher_name,
-                        slot: (*arriving_pitcher_place).try_into()
-                            .map_err(|_| SimFatalError::GenericPitcherInPitcherSwap)?,
-                    };
+                    ingest_logs.debug(format!("Arriving pitcher {arriving_pitcher_name} with place {arriving_pitcher_place:?}"));
+                    self.defending_team_mut().active_pitcher = arriving_pitcher_place
+                        .map(|place| Ok(BestEffortSlottedPlayer {
+                            name: *arriving_pitcher_name,
+                            slot: place.try_into()
+                                .map_err(|_| SimFatalError::GenericPitcherInPitcherSwap)?,
+                        }))
+                        .transpose()?;
                     self.defending_team_mut().pitcher_count += 1;
                     ingest_logs.info(format!("Incrementing pitcher_count as {leaving_pitcher} is replaced by {arriving_pitcher_name}."));
-                    self.state.phase = GamePhase::ExpectNowBatting;
+                    self.state.phase = interrupted_phase.into();
                     None
                 },
             ),
@@ -3262,6 +3321,13 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                         fielder,
                         error: mandatory_fielding_error_type()?,
                     },
+                    scores: self.scores(),
+                    advances: self.advances(false),
+                }
+            }
+            TaxaEventType::Balk => {
+                ParsedEventMessage::Balk {
+                    pitcher: self.pitcher_name.as_ref(),
                     scores: self.scores(),
                     advances: self.advances(false),
                 }
