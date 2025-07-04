@@ -8,10 +8,7 @@ use log::warn;
 use mmolb_parsing::ParsedEventMessage;
 use mmolb_parsing::enums::{Base, BaseNameVariant, BatterStat, Day, Distance, FairBallDestination, FairBallType, FieldingErrorType, FoulType, GameOverMessage, HomeAway, MaybeRecognized, NowBattingStats, Place, Position, Slot, SlotDiscriminants, StrikeType, TopBottom};
 use mmolb_parsing::game::MaybePlayer;
-use mmolb_parsing::parsed_event::{
-    BaseSteal, FieldingAttempt, ParsedEventMessageDiscriminants, PlacedPlayer, RunnerAdvance,
-    RunnerOut, StartOfInningPitcher,
-};
+use mmolb_parsing::parsed_event::{BaseSteal, FieldingAttempt, KnownBug, ParsedEventMessageDiscriminants, PlacedPlayer, RunnerAdvance, RunnerOut, StartOfInningPitcher};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{Display, Write};
 use std::fmt::{Debug, Formatter};
@@ -2347,6 +2344,45 @@ impl<'g> Game<'g> {
                         }
                     }
                 },
+                [ParsedEventMessageDiscriminants::KnownBug]
+                ParsedEventMessage::KnownBug { bug } => {
+                    match bug {
+                        KnownBug::FirstBasemanChoosesAGhost { batter, first_baseman } => {
+                            self.check_batter(batter_name, batter, ingest_logs);
+                            ingest_logs.debug("Known bug: FirstBasemanChoosesAGhost");
+
+
+                            // This is a Weird Event:tm: that puts the batter on first and
+                            // adds an out, even though no runner actually got out. It's only
+                            // been observed with no runners on base.
+                            if !self.state.runners_on.is_empty() {
+                                ingest_logs.warn(format!(
+                                    "Observed FirstBasemanChoosesAGhost bug with runners {:?}. \
+                                    This bug is only expected when there are no runners.",
+                                    self.state.runners_on,
+                                ));
+                            }
+
+                            self.add_outs(1);
+                            self.state.runners_on.push_back(RunnerOn {
+                                runner_name: batter,
+                                base: TaxaBase::First,
+                            });
+                            self.finish_pa(batter_name);
+
+                            let fielders = vec![PlacedPlayer {
+                                name: *first_baseman,
+                                place: Place::FirstBaseman,
+                            }];
+
+                            detail_builder
+                                .fair_ball(fair_ball)
+                                .add_runner(batter, TaxaBase::First)
+                                .fielders(fielders, ingest_logs)?
+                                .build_some(self, batter_name, ingest_logs, TaxaEventType::FieldersChoice)
+                        }
+                    }
+                },
             ),
             GamePhase::ExpectInningEnd => game_event!(
                 (previous_event, event),
@@ -2887,13 +2923,25 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
             }
         };
 
-        let exactly_one_fielder = || match <[_; 1]>::try_from(self.fielders()) {
-            Ok([fielder]) => Ok(fielder),
-            Err(fielders) => Err(ToParsedError::WrongNumberOfFielders {
-                event_type: self.detail_type,
-                required: 1,
-                actual: fielders.len(),
-            }),
+        // Kind of a roundabout way to do it, but it works
+        let at_most_one_runner_out = || {
+            match exactly_one_runner_out() {
+                Ok(runner) => Ok(Some(runner)),
+                Err(ToParsedError::WrongNumberOfRunnersOut { actual, .. }) if actual == 0 => Ok(None),
+                Err(err) => Err(err),
+            }
+        };
+
+
+        let exactly_one_fielder = || -> Result<PlacedPlayer<&str>, ToParsedError> {
+            match <[_; 1]>::try_from(self.fielders()) {
+                Ok([fielder]) => Ok(fielder),
+                Err(fielders) => Err(ToParsedError::WrongNumberOfFielders {
+                    event_type: self.detail_type,
+                    required: 1,
+                    actual: fielders.len(),
+                }),
+            }
         };
 
         let mandatory_fair_ball_type = || {
@@ -3171,19 +3219,28 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                 }
             }
             TaxaEventType::FieldersChoice => {
-                let (runner_out_name, runner_out_at_base) = exactly_one_runner_out()?;
-
-                ParsedEventMessage::ReachOnFieldersChoice {
-                    batter: self.batter_name.as_ref(),
-                    fielders: self.fielders(),
-                    result: FieldingAttempt::Out {
-                        out: RunnerOut {
-                            runner: runner_out_name,
-                            base: runner_out_at_base,
+                if let Some((runner_out_name, runner_out_at_base)) = at_most_one_runner_out()? {
+                    ParsedEventMessage::ReachOnFieldersChoice {
+                        batter: self.batter_name.as_ref(),
+                        fielders: self.fielders(),
+                        result: FieldingAttempt::Out {
+                            out: RunnerOut {
+                                runner: runner_out_name,
+                                base: runner_out_at_base,
+                            },
                         },
-                    },
-                    scores: self.scores(),
-                    advances: self.advances(false),
+                        scores: self.scores(),
+                        advances: self.advances(false),
+                    }
+                } else {
+                    let fielder = exactly_one_fielder()?;
+
+                    ParsedEventMessage::KnownBug {
+                        bug: KnownBug::FirstBasemanChoosesAGhost {
+                            batter: self.batter_name.as_ref(),
+                            first_baseman: fielder.name,
+                        }
+                    }
                 }
             }
             TaxaEventType::ErrorOnFieldersChoice => {
