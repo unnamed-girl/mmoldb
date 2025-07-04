@@ -18,8 +18,8 @@ use mmolb_parsing::parsed_event::{
     RunnerAdvance, RunnerOut, StartOfInningPitcher,
 };
 use std::collections::{HashMap, VecDeque};
+use std::fmt::Write;
 use std::fmt::{Debug, Formatter};
-use std::fmt::{Write};
 use strum::IntoDiscriminant;
 use thiserror::Error;
 
