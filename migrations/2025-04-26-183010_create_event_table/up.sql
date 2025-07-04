@@ -75,6 +75,16 @@ create table taxa.pitch_type (
     unique (name)
 );
 
+create table taxa.leagues (
+    id bigserial primary key not null,
+    name text not null,
+    color text not null,
+    emoji text not null,
+    league_type text not null,
+    parent_team_id text not null,
+    mmolb_league_id text not null
+);
+
 create table data.weather (
     id bigserial primary key not null,
     name text not null,
