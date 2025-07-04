@@ -5,7 +5,7 @@ pub mod info {
         info.event_ingest_log (id) {
             id -> Int8,
             game_id -> Int8,
-            game_event_index -> Int4,
+            game_event_index -> Nullable<Int4>,
             log_index -> Int4,
             log_level -> Int4,
             log_text -> Text,

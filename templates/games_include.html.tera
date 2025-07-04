@@ -12,13 +12,13 @@
             {% if game.num_warnings > 0 or game.num_errors > 0 or game.num_critical > 0 %}
                 <p class="num-issues-container">
                     {% if game.num_warnings > 0 %}
-                        <span class="num-warnings">⚠️ {{ game.num_warnings }} warnings</span>
+                        <span class="num-warnings">⚠️ {{ game.num_warnings }} warning{% if game.num_warnings != 1 %}s{% endif %}</span>
                     {% endif %}
                     {% if game.num_errors > 0 %}
-                        <span class="num-errors">🚨 {{ game.num_errors }} errors</span>
+                        <span class="num-errors">🚨 {{ game.num_errors }} error{% if game.num_errors != 1 %}s{% endif %}</span>
                     {% endif %}
                     {% if game.num_critical > 0 %}
-                        <span class="num-critical">💀 {{ game.num_critical }} critical errors</span>
+                        <span class="num-critical">💀 {{ game.num_critical }} critical error{% if game.num_critical != 1 %}s{% endif %}</span>
                     {% endif %}
                 </p>
             {% endif %}

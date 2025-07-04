@@ -168,7 +168,7 @@ pub struct DbRawEvent {
 pub struct NewEventIngestLog<'a> {
     // Compound key
     pub game_id: i64,
-    pub game_event_index: i32,
+    pub game_event_index: Option<i32>,
     pub log_index: i32,
 
     // Data
@@ -182,7 +182,7 @@ pub struct NewEventIngestLog<'a> {
 pub struct DbEventIngestLog {
     pub id: i64,
     pub game_id: i64,
-    pub game_event_index: i32,
+    pub game_event_index: Option<i32>,
     pub log_index: i32,
     pub log_level: i32,
     pub log_text: String,

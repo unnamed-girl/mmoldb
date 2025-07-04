@@ -137,7 +137,7 @@ create table info.event_ingest_log (
     -- bookkeeping
     id bigserial primary key not null,
     game_id bigserial references data.games on delete cascade not null,
-    game_event_index int not null,
+    game_event_index int, -- null means this log item is associated with the game as a whole
     log_index int not null,
     foreign key (game_id, game_event_index) references info.raw_events (game_id, game_event_index),
 

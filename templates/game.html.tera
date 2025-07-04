@@ -1,5 +1,15 @@
 {% import "macros" as macros %}
 
+{% macro display_logs(logs) %}
+    {% if logs %}
+        <ul class="logs">
+            {% for log in logs %}
+                <li class="log {{ log.level }}">{{ log.text | linebreaksbr | safe }}</li>
+            {% endfor %}
+        </ul>
+    {% endif %}
+{% endmacro display_logs %}
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -26,6 +36,7 @@
         <p class="game-api-link">
             <a href="{{ game.api_uri }}">API Response</a>
         </p>
+        {{ self::display_logs(logs=game.game_wide_logs) }}
     </section>
 
     <section class="card seamless game-events">
@@ -34,20 +45,10 @@
             {% for event in game.events %}
             <li class="event" id="event-{{ event.game_event_index }}">
                 <p class="event-text">{{ event.text | safe }}</p>
-                {% if event.logs %}
-                <ul class="logs">
-                    {% for log in event.logs %}
-                    <li class="log {{ log.level }}">{{ log.text | linebreaksbr | safe }}</li>
-                    {% endfor %}
-                </ul>
-{#                {% else %}#}
-{#                <p class="no-logs">No logs</p>#}
-                {% endif %}
+                {{ self::display_logs(logs=event.logs) }}
             </li>
         {% endfor %}
         </ul>
-        {% else %}
-        <p class="no-events">No events</p>
         {% endif %}
     </section>
 

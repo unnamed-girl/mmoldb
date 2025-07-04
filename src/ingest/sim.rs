@@ -20,10 +20,11 @@ use mmolb_parsing::parsed_event::{
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Write;
 use std::fmt::{Debug, Formatter};
+use miette::Diagnostic;
 use strum::IntoDiscriminant;
 use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Diagnostic)]
 pub enum SimStartupError {
     #[error("This game had no events")]
     NoEvents,
@@ -48,7 +49,7 @@ pub enum SimStartupError {
     FailedToParseStartingPitcher(String),
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Diagnostic)]
 pub enum SimFatalError {
     #[error("Expected {expected:?} event after {previous:?}, but received {received:?}")]
     UnexpectedEventType {
@@ -2773,7 +2774,7 @@ impl From<Option<TaxaBase>> for MaybeBase {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Diagnostic)]
 pub enum MissingBaseDescriptionFormat<'g> {
     #[error(
         "Missing base description format when runner {runner_name} got out moving from {prev_base} \
@@ -2786,7 +2787,7 @@ pub enum MissingBaseDescriptionFormat<'g> {
     },
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Diagnostic)]
 pub enum ToParsedError<'g> {
     #[error(transparent)]
     // Note: Can't use #[from] because of the lifetime
@@ -2837,7 +2838,7 @@ pub enum ToParsedError<'g> {
     MissingPerfectCatch { event_type: TaxaEventType },
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Diagnostic)]
 pub enum ToParsedContactError {
     #[error("Event with a fair_ball_index must have a fair_ball_type")]
     MissingFairBallType,

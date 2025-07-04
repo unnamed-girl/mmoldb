@@ -1,3 +1,4 @@
+use miette::Diagnostic;
 use crate::db::taxa::Taxa;
 use crate::ingest::{EventDetail, EventDetailFielder, EventDetailRunner};
 use crate::models::{DbEvent, DbFielder, DbRunner, NewBaserunner, NewEvent, NewFielder};
@@ -84,7 +85,7 @@ pub fn event_to_fielders<'e>(
         .collect()
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Diagnostic)]
 pub enum RowToEventError {
     #[error("Database returned invalid event type id {0}")]
     InvalidEventTypeId(i64),

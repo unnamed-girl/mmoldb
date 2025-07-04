@@ -3,9 +3,10 @@ use humansize::{DECIMAL, format_size};
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
+use miette::Diagnostic;
 use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Diagnostic)]
 pub enum ChronError {
     #[error("Error building Chron request: {0}")]
     RequestBuildError(reqwest::Error),

@@ -1,4 +1,5 @@
 use log::error;
+use miette::Diagnostic;
 use rocket::http::Status;
 use rocket::response::Responder;
 use rocket::{Request, Response, uri};
@@ -7,7 +8,7 @@ use thiserror::Error;
 
 use crate::web::pages::rocket_uri_macro_index_page;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Diagnostic)]
 pub enum AppError {
     #[error("This URL produces a test error")]
     TestError,

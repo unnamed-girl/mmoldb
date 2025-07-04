@@ -8,6 +8,7 @@ use crate::ingest::{IngestStatus, IngestTask};
 use crate::web::error::AppError;
 use crate::web::utility_contexts::{DayContext, FormattedDateContext, GameContext};
 use crate::{Db, db};
+use crate::models::DbEventIngestLog;
 
 const PAGE_OF_GAMES_SIZE: usize = 100;
 
@@ -17,6 +18,23 @@ pub async fn game_page(mmolb_game_id: String, db: Db) -> Result<Template, AppErr
     struct LogContext {
         level: &'static str,
         text: String,
+    }
+
+    impl From<DbEventIngestLog> for LogContext {
+        fn from(value: DbEventIngestLog) -> Self {
+            LogContext {
+                level: match value.log_level {
+                    0 => "critical",
+                    1 => "error",
+                    2 => "warning",
+                    3 => "info",
+                    4 => "debug",
+                    5 => "trace",
+                    _ => "unknown",
+                },
+                text: value.log_text,
+            }
+        }
     }
 
     #[derive(Serialize)]
@@ -39,45 +57,38 @@ pub async fn game_page(mmolb_game_id: String, db: Db) -> Result<Template, AppErr
         home_team_emoji: String,
         home_team_name: String,
         home_team_id: String,
+        game_wide_logs: Vec<LogContext>,
         events: Vec<EventContext>,
     }
 
-    let (game, events) = db
+    let full_game = db
         .run(move |conn| db::game_and_raw_events(conn, &mmolb_game_id))
         .await?;
-    let watch_uri = format!("https://mmolb.com/watch/{}", game.mmolb_game_id);
-    let api_uri = format!("https://mmolb.com/api/game/{}", game.mmolb_game_id);
+    let watch_uri = format!("https://mmolb.com/watch/{}", full_game.game.mmolb_game_id);
+    let api_uri = format!("https://mmolb.com/api/game/{}", full_game.game.mmolb_game_id);
     let game = GameContext {
-        id: game.mmolb_game_id,
+        id: full_game.game.mmolb_game_id,
         watch_uri,
         api_uri,
-        season: game.season,
-        day: (game.day, game.superstar_day).into(),
-        away_team_emoji: game.away_team_emoji,
-        away_team_name: game.away_team_name,
-        away_team_id: game.away_team_id,
-        home_team_emoji: game.home_team_emoji,
-        home_team_name: game.home_team_name,
-        home_team_id: game.home_team_id,
-        events: events
+        season: full_game.game.season,
+        day: (full_game.game.day, full_game.game.superstar_day).into(),
+        away_team_emoji: full_game.game.away_team_emoji,
+        away_team_name: full_game.game.away_team_name,
+        away_team_id: full_game.game.away_team_id,
+        home_team_emoji: full_game.game.home_team_emoji,
+        home_team_name: full_game.game.home_team_name,
+        home_team_id: full_game.game.home_team_id,
+        game_wide_logs: full_game.game_wide_logs.into_iter()
+            .map(Into::into)
+            .collect(),
+        events: full_game.raw_events_with_logs
             .into_iter()
-            .map(|(event, logs)| EventContext {
-                game_event_index: event.game_event_index,
-                text: event.event_text,
+            .map(|(raw_event, logs)| EventContext {
+                game_event_index: raw_event.game_event_index,
+                text: raw_event.event_text,
                 logs: logs
                     .into_iter()
-                    .map(|log| LogContext {
-                        level: match log.log_level {
-                            0 => "critical",
-                            1 => "error",
-                            2 => "warning",
-                            3 => "info",
-                            4 => "debug",
-                            5 => "trace",
-                            _ => "unknown",
-                        },
-                        text: log.log_text,
-                    })
+                    .map(Into::into)
                     .collect(),
             })
             .collect(),

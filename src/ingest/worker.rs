@@ -7,6 +7,7 @@ use chrono::Utc;
 use diesel::PgConnection;
 use itertools::{Itertools, izip};
 use log::{error, info, warn};
+use miette::{MietteHandler, Report};
 use rocket::tokio;
 use rocket_sync_db_pools::ConnectionPool;
 
@@ -106,16 +107,24 @@ impl IngestWorker {
             .iter()
             .filter(|g| match g {
                 GameForDb::Incomplete { .. } => true,
-                GameForDb::Completed { .. } => false,
+                _ => false,
+            })
+            .count();
+        let num_games_with_fatal_errors = games_for_db
+            .iter()
+            .filter(|g| match g {
+                GameForDb::FatalError { .. } => true,
+                _ => false,
             })
             .count();
         let num_already_ingested_games_skipped = all_games_len - games_for_ingest.len();
         let num_terminal_incomplete_games_skipped = games_for_ingest.len() - games_for_db.len();
-        let num_games_imported = games_for_db.len() - num_ongoing_games_skipped;
+        let num_games_imported = games_for_db.len() - num_ongoing_games_skipped - num_games_with_fatal_errors;
         info!(
-            "Ingesting {num_games_imported} games, ignoring {num_already_ingested_games_skipped} \
-            already-ingested games, ignoring {num_ongoing_games_skipped} games in progress, and \
-            skipping {num_terminal_incomplete_games_skipped} terminal incomplete games.",
+            "Ingesting {num_games_imported} games, skipping {num_games_with_fatal_errors} games \
+            due to fatal errors, ignoring {num_already_ingested_games_skipped} already-ingested \
+            games, ignoring {num_ongoing_games_skipped} games in progress, and skipping \
+            {num_terminal_incomplete_games_skipped} terminal incomplete games.",
         );
         let parse_and_sim_duration = (Utc::now() - parse_and_sim_start).as_seconds_f64();
 
@@ -132,8 +141,8 @@ impl IngestWorker {
         let mmolb_game_ids = games_for_db
             .iter()
             .filter_map(|game| match game {
-                GameForDb::Incomplete { .. } => None,
                 GameForDb::Completed(game) => Some(game.id),
+                _ => None,
             })
             .collect_vec();
 
@@ -145,8 +154,8 @@ impl IngestWorker {
         let check_round_trip_start = Utc::now();
         let additional_logs = games_for_db.iter()
             .filter_map(|game| match game {
-                GameForDb::Incomplete { .. } => { None }
-                GameForDb::Completed(game) => { Some(game) }
+                GameForDb::Completed(game) => Some(game),
+                _ => None,
             })
             .zip(&ingested_games)
             .filter_map(|(game, (game_id, inserted_events))| {
@@ -223,6 +232,7 @@ impl IngestWorker {
             num_ongoing_games_skipped,
             num_terminal_incomplete_games_skipped,
             num_already_ingested_games_skipped,
+            num_games_with_fatal_errors,
             num_games_imported,
         })
     }
@@ -283,20 +293,14 @@ fn prepare_game_for_db(
         match prepare_completed_game_for_db(entity) {
             Ok(game) => GameForDb::Completed(game),
             Err(err) => {
-                // TODO Surface this error on the games with issues page
-                let description = format!(
-                    "{} {} @ {} {} s{}d{}",
-                    entity.data.away_team_emoji,
-                    entity.data.away_team_name,
-                    entity.data.home_team_emoji,
-                    entity.data.home_team_name,
-                    entity.data.season,
-                    entity.data.day,
-                );
-                warn!("Sim fatal error importing {description}: {err}. This game will be skipped.");
-                GameForDb::Incomplete {
+                let handler = miette::GraphicalReportHandler::new_themed(miette::GraphicalTheme::unicode_nocolor());
+                let mut error_message = String::new();
+                handler.render_report(&mut error_message, &err)
+                    .expect("Format into a string buffer can't fail");
+                GameForDb::FatalError {
                     game_id: &entity.entity_id,
                     raw_game: &entity.data,
+                    error_message,
                 }
             }
         }

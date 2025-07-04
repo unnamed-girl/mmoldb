@@ -11,7 +11,7 @@ pub use to_db_format::RowToEventError;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use diesel::query_builder::SqlQuery;
 use diesel::{PgConnection, prelude::*, sql_query, sql_types::*};
-use itertools::Itertools;
+use itertools::{Itertools, Either};
 use log::warn;
 use mmolb_parsing::ParsedEventMessage;
 use mmolb_parsing::enums::{Day, MaybeRecognized};
@@ -525,6 +525,11 @@ pub(crate) enum GameForDb<'g> {
         raw_game: &'g mmolb_parsing::Game,
     },
     Completed(CompletedGameForDb<'g>),
+    FatalError {
+        game_id: &'g str,
+        raw_game: &'g mmolb_parsing::Game,
+        error_message: String,
+    },
 }
 
 impl<'g> GameForDb<'g> {
@@ -532,6 +537,7 @@ impl<'g> GameForDb<'g> {
         match self {
             GameForDb::Incomplete { game_id, raw_game } => (*game_id, raw_game),
             GameForDb::Completed(game) => (&game.id, &game.raw_game),
+            GameForDb::FatalError { game_id, raw_game, .. } => (*game_id, raw_game),
         }
     }
 
@@ -539,6 +545,9 @@ impl<'g> GameForDb<'g> {
         match self {
             GameForDb::Incomplete { .. } => false,
             GameForDb::Completed(_) => true,
+            // We only produce a fatal error on a completed game. Also, trying 
+            // to re-ingest a fatal-error game will not change the outcome.
+            GameForDb::FatalError { .. } => true,
         }
     }
 }
@@ -678,16 +687,22 @@ fn insert_games_internal<'e>(
     );
 
     // From now on, we don't need unfinished games
-    let games = iter::zip(&game_ids, games)
+    let (completed_games, error_games): (Vec<_>, Vec<_>) = iter::zip(&game_ids, games)
         .flat_map(|(game_id, game)| match game {
             GameForDb::Incomplete { .. } => None,
-            GameForDb::Completed(game) => Some((game_id, game)),
+            GameForDb::Completed(game) => {
+                Some(Either::Left((*game_id, game)))
+            },
+            GameForDb::FatalError { error_message, .. } => {
+                Some(Either::Right((*game_id, error_message)))
+            },
         })
-        .collect_vec();
+        .partition_map(|x| x);
+
     let insert_games_duration = (Utc::now() - insert_games_start).as_seconds_f64();
 
     let insert_raw_events_start = Utc::now();
-    let new_raw_events = games
+    let new_raw_events = completed_games
         .iter()
         .flat_map(|(game_id, game)| {
             game.raw_game
@@ -695,7 +710,7 @@ fn insert_games_internal<'e>(
                 .iter()
                 .enumerate()
                 .map(|(index, raw_event)| NewRawEvent {
-                    game_id: **game_id,
+                    game_id: *game_id,
                     game_event_index: index as i32,
                     event_text: &raw_event.message,
                 })
@@ -716,7 +731,7 @@ fn insert_games_internal<'e>(
     let insert_raw_events_duration = (Utc::now() - insert_raw_events_start).as_seconds_f64();
 
     let insert_logs_start = Utc::now();
-    let new_logs = games
+    let new_logs = completed_games
         .iter()
         .flat_map(|(game_id, game)| {
             game.logs
@@ -726,8 +741,8 @@ fn insert_games_internal<'e>(
                     logs.iter().enumerate().map(move |(log_index, log)| {
                         assert_eq!(game_event_index as i32, log.game_event_index);
                         NewEventIngestLog {
-                            game_id: **game_id,
-                            game_event_index: log.game_event_index,
+                            game_id: *game_id,
+                            game_event_index: Some(log.game_event_index),
                             log_index: log_index as i32,
                             log_level: log.log_level,
                             log_text: &log.log_text,
@@ -735,6 +750,16 @@ fn insert_games_internal<'e>(
                     })
                 })
         })
+        .chain(
+            error_games.iter()
+                .map(|(game_id, error_message)| NewEventIngestLog {
+                    game_id: *game_id,
+                    game_event_index: None, // None => applies to the entire game
+                    log_index: 0, // there's only ever one
+                    log_level: 0, // critical
+                    log_text: error_message,
+                })
+        )
         .collect_vec();
 
     let n_logs_to_insert = new_logs.len();
@@ -751,12 +776,12 @@ fn insert_games_internal<'e>(
     let insert_logs_duration = (Utc::now() - insert_logs_start).as_seconds_f64();
 
     let insert_events_start = Utc::now();
-    let new_events: Vec<_> = games
+    let new_events: Vec<_> = completed_games
         .iter()
         .flat_map(|(game_id, game)| {
             game.events
                 .iter()
-                .map(|event| to_db_format::event_to_row(taxa, **game_id, event))
+                .map(|event| to_db_format::event_to_row(taxa, *game_id, event))
         })
         .collect();
 
@@ -791,9 +816,9 @@ fn insert_games_internal<'e>(
     let get_event_ids_duration = (Utc::now() - get_event_ids_start).as_seconds_f64();
 
     let insert_baserunners_start = Utc::now();
-    let new_baserunners = iter::zip(&event_ids_by_game, &games)
+    let new_baserunners = iter::zip(&event_ids_by_game, &completed_games)
         .flat_map(|((game_id_a, event_ids), (game_id_b, game))| {
-            assert_eq!(game_id_a, *game_id_b);
+            assert_eq!(game_id_a, game_id_b);
             // Within this closure we're acting on all events in a single game
             iter::zip(event_ids, &game.events).flat_map(|(event_id, event)| {
                 // Within this closure we're acting on a single event
@@ -816,9 +841,9 @@ fn insert_games_internal<'e>(
     let insert_baserunners_duration = (Utc::now() - insert_baserunners_start).as_seconds_f64();
 
     let insert_fielders_start = Utc::now();
-    let new_fielders = iter::zip(&event_ids_by_game, &games)
+    let new_fielders = iter::zip(&event_ids_by_game, &completed_games)
         .flat_map(|((game_id_a, event_ids), (game_id_b, game))| {
-            assert_eq!(game_id_a, *game_id_b);
+            assert_eq!(game_id_a, game_id_b);
             // Within this closure we're acting on all events in a single game
             iter::zip(event_ids, &game.events).flat_map(|(event_id, event)| {
                 // Within this closure we're acting on a single event
@@ -879,7 +904,7 @@ pub fn insert_additional_ingest_logs(
         .filter(event_ingest_log_dsl::game_id.eq_any(&game_ids))
         .order_by(event_ingest_log_dsl::game_id.asc())
         .then_order_by(event_ingest_log_dsl::game_event_index.asc())
-        .get_results::<(i64, i32, Option<i32>)>(conn)?
+        .get_results::<(i64, Option<i32>, Option<i32>)>(conn)?
         .into_iter()
         .filter_map(|(game_id, game_event_index, highest_log_order)| {
             highest_log_order.map(|n| ((game_id, game_event_index), n))
@@ -893,13 +918,13 @@ pub fn insert_additional_ingest_logs(
                 .iter()
                 .map(|ingest_log| {
                     let log_index = highest_log_indices
-                        .entry((*game_id, ingest_log.game_event_index))
+                        .entry((*game_id, Some(ingest_log.game_event_index)))
                         .or_default();
                     *log_index += 1;
 
                     NewEventIngestLog {
                         game_id: *game_id,
-                        game_event_index: ingest_log.game_event_index,
+                        game_event_index: Some(ingest_log.game_event_index),
                         log_index: *log_index,
                         log_level: ingest_log.log_level,
                         log_text: &ingest_log.log_text,
@@ -917,10 +942,16 @@ pub fn insert_additional_ingest_logs(
     Ok(())
 }
 
+pub(crate) struct DbFullGameWithLogs {
+    pub game: DbGame,
+    pub game_wide_logs: Vec<DbEventIngestLog>,
+    pub raw_events_with_logs: Vec<(DbRawEvent, Vec<DbEventIngestLog>)>,
+}
+
 pub fn game_and_raw_events(
     conn: &mut PgConnection,
     mmolb_game_id: &str,
-) -> QueryResult<(DbGame, Vec<(DbRawEvent, Vec<DbEventIngestLog>)>)> {
+) -> QueryResult<DbFullGameWithLogs> {
     use crate::data_schema::data::games::dsl as games_dsl;
     use crate::info_schema::info::event_ingest_log::dsl as event_ingest_log_dsl;
     use crate::info_schema::info::raw_events::dsl as raw_events_dsl;
@@ -938,18 +969,26 @@ pub fn game_and_raw_events(
     // compound foreign keys in associations
     let mut raw_logs = event_ingest_log_dsl::event_ingest_log
         .filter(event_ingest_log_dsl::game_id.eq(game.id))
-        .order_by(event_ingest_log_dsl::game_event_index.asc())
+        .order_by(event_ingest_log_dsl::game_event_index.asc().nulls_first())
         .then_order_by(event_ingest_log_dsl::log_index.asc())
         .get_results::<DbEventIngestLog>(conn)?
         .into_iter()
         .peekable();
+
+    let mut game_wide_logs = Vec::new();
+    while let Some(event) =
+        raw_logs.next_if(|log| log.game_event_index.is_none())
+    {
+        game_wide_logs.push(event);
+    }
+
 
     let logs_by_event = raw_events
         .iter()
         .map(|raw_event| {
             let mut events = Vec::new();
             while let Some(event) =
-                raw_logs.next_if(|log| log.game_event_index == raw_event.game_event_index)
+                raw_logs.next_if(|log| log.game_event_index.expect("All logs with a None game_event_index should have been extracted before this loop began") == raw_event.game_event_index)
             {
                 events.push(event);
             }
@@ -959,12 +998,16 @@ pub fn game_and_raw_events(
 
     assert!(raw_logs.next().is_none(), "Failed to map all raw logs");
 
-    let events_with_logs = raw_events
+    let raw_events_with_logs = raw_events
         .into_iter()
         .zip(logs_by_event)
         .collect::<Vec<_>>();
 
-    Ok((game, events_with_logs))
+    Ok(DbFullGameWithLogs {
+        game,
+        game_wide_logs,
+        raw_events_with_logs,
+    })
 }
 
 pub struct Timings {
