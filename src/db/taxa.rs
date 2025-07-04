@@ -723,6 +723,52 @@ impl From<mmolb_parsing::enums::PitchType> for TaxaPitchType {
     }
 }
 
+taxa! {
+    #[
+        schema = crate::taxa_schema::taxa::leagues,
+        table = crate::taxa_schema::taxa::leagues::dsl::leagues,
+        id_column = crate::taxa_schema::taxa::leagues::dsl::id,
+    ]
+    pub enum TaxaLeagues {
+        #[mmolb_league_id: &'a str ="6805db0cac48194de3cd3fe4", parent_team_id: &'a str ="6805db0dac48194de3cd4257", emoji: &'a str ="☘️", color: &'a str ="39993a", league_type: &'a str ="Greater"]
+        Clover = 1,
+        #[mmolb_league_id: &'a str ="6805db0cac48194de3cd3fe5", parent_team_id: &'a str ="6805db0dac48194de3cd4258", emoji: &'a str ="🍍", color: &'a str ="feea63", league_type: &'a str ="Greater"]
+        Pineapple = 2,
+        #[mmolb_league_id: &'a str ="6805db0cac48194de3cd3fe7", parent_team_id: &'a str ="6805db0cac48194de3cd3ff7", emoji: &'a str ="⚾", color: &'a str ="47678e", league_type: &'a str ="Lesser"]
+        Baseball = 3,
+        #[mmolb_league_id: &'a str ="6805db0cac48194de3cd3fe8", parent_team_id: &'a str ="6805db0cac48194de3cd400a", emoji: &'a str ="🎯", color: &'a str ="507d45", league_type: &'a str ="Lesser"] 
+        Precision = 4,
+        #[mmolb_league_id: &'a str ="6805db0cac48194de3cd3fe9", parent_team_id: &'a str ="6805db0cac48194de3cd401d", emoji: &'a str ="🔺", color: &'a str ="7c65a3", league_type: &'a str ="Lesser"]
+        Isosceles = 5,
+        #[mmolb_league_id: &'a str ="6805db0cac48194de3cd3fea", parent_team_id: &'a str ="6805db0cac48194de3cd4030", emoji: &'a str ="🗽", color: &'a str ="2e768d", league_type: &'a str ="Lesser"]
+        Liberty = 6,
+        #[mmolb_league_id: &'a str ="6805db0cac48194de3cd3feb", parent_team_id: &'a str ="6805db0cac48194de3cd4043", emoji: &'a str ="🍁", color: &'a str ="a13e33", league_type: &'a str ="Lesser"]
+        Maple = 7,
+        #[mmolb_league_id: &'a str ="6805db0cac48194de3cd3fec", parent_team_id: &'a str ="6805db0cac48194de3cd4056", emoji: &'a str ="🦗", color: &'a str ="4a8546", league_type: &'a str ="Lesser"]
+        Cricket = 8,
+        #[mmolb_league_id: &'a str ="6805db0cac48194de3cd3fed", parent_team_id: &'a str ="6805db0cac48194de3cd4069", emoji: &'a str ="🌪️", color: &'a str ="5a5e6e", league_type: &'a str ="Lesser"]
+        Tornado = 9,
+        #[mmolb_league_id: &'a str ="6805db0cac48194de3cd3fee", parent_team_id: &'a str ="6805db0cac48194de3cd407c", emoji: &'a str ="🪲", color: &'a str ="3f624d", league_type: &'a str ="Lesser"]
+        Coleoptera = 10,
+        #[mmolb_league_id: &'a str ="6805db0cac48194de3cd3fef", parent_team_id: &'a str ="6805db0cac48194de3cd408f", emoji: &'a str ="🧼", color: &'a str ="88b9ba", league_type: &'a str ="Lesser"]
+        Clean = 11,
+        #[mmolb_league_id: &'a str ="6805db0cac48194de3cd3ff0", parent_team_id: &'a str ="6805db0cac48194de3cd40a2", emoji: &'a str ="✨", color: &'a str ="e0d95a", league_type: &'a str ="Lesser"]
+        Shiny = 12,
+        #[mmolb_league_id: &'a str ="6805db0cac48194de3cd3ff1", parent_team_id: &'a str ="6805db0cac48194de3cd40b5", emoji: &'a str ="🔮", color: &'a str ="734d92", league_type: &'a str ="Lesser"]
+        Psychic = 13,
+        #[mmolb_league_id: &'a str ="6805db0cac48194de3cd3ff2", parent_team_id: &'a str ="6805db0cac48194de3cd40c8", emoji: &'a str ="❓", color: &'a str ="6c6c6c", league_type: &'a str ="Lesser"]
+        Unidentified = 14,
+        #[mmolb_league_id: &'a str ="6805db0cac48194de3cd3ff3", parent_team_id: &'a str ="6805db0cac48194de3cd40db", emoji: &'a str ="👻", color: &'a str ="5b4b62", league_type: &'a str ="Lesser"]
+        Ghastly = 15,
+        #[mmolb_league_id: &'a str ="6805db0cac48194de3cd3ff4", parent_team_id: &'a str ="6805db0cac48194de3cd40ee", emoji: &'a str ="🐸", color: &'a str ="5b9340", league_type: &'a str ="Lesser"]
+        Amphibian = 16,
+        #[mmolb_league_id: &'a str ="6805db0cac48194de3cd3ff5", parent_team_id: &'a str ="6805db0cac48194de3cd4101", emoji: &'a str ="🌊", color: &'a str ="1a3a4f", league_type: &'a str ="Lesser"]
+        Deep = 17,
+        #[mmolb_league_id: &'a str ="6805db0cac48194de3cd3ff6", parent_team_id: &'a str ="6805db0cac48194de3cd4114", emoji: &'a str ="🎵", color: &'a str ="659b87", league_type: &'a str ="Lesser"]
+        Harmony = 18,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Taxa {
     event_type_mapping: EnumMap<TaxaEventType, i64>,
@@ -734,6 +780,7 @@ pub struct Taxa {
     base_description_format_mapping: EnumMap<TaxaBaseDescriptionFormat, i64>,
     fielding_error_type_mapping: EnumMap<TaxaFieldingErrorType, i64>,
     pitch_type_mapping: EnumMap<TaxaPitchType, i64>,
+    league_mapping: EnumMap<TaxaLeagues, i64>,
 }
 
 impl Taxa {
@@ -750,7 +797,12 @@ impl Taxa {
             base_description_format_mapping: TaxaBaseDescriptionFormat::make_id_mapping(conn)?,
             fielding_error_type_mapping: TaxaFieldingErrorType::make_id_mapping(conn)?,
             pitch_type_mapping: TaxaPitchType::make_id_mapping(conn)?,
+            league_mapping: TaxaLeagues::make_id_mapping(conn)?,
         })
+    }
+    
+    pub fn league_id(&self, ty: TaxaLeagues) -> i64 {
+        self.league_mapping[ty]
     }
 
     pub fn event_type_id(&self, ty: TaxaEventType) -> i64 {
@@ -857,6 +909,14 @@ impl Taxa {
             .iter()
             .find(|(_, ty_id)| id == **ty_id)
             .expect("TODO Handle unknown pitch type")
+            .0
+    }
+
+    pub fn league_from_id(&self, id: i64) -> TaxaLeagues {
+        self.league_mapping
+            .iter()
+            .find(|(_, ty_id)| id == **ty_id)
+            .expect("TODO Handle unknown league")
             .0
     }
 }
