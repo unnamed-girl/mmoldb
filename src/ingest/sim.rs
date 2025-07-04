@@ -1,20 +1,27 @@
 use crate::db::{
     TaxaBase, TaxaBaseDescriptionFormat, TaxaBaseWithDescriptionFormat, TaxaEventType,
-    TaxaFairBallType, TaxaFieldingErrorType, TaxaHitType, TaxaPitchType, TaxaSlot,
-    TaxaFielderLocation,
+    TaxaFairBallType, TaxaFielderLocation, TaxaFieldingErrorType, TaxaHitType, TaxaPitchType,
+    TaxaSlot,
 };
+use crate::parsing_extensions::{BestEffortSlot, BestEffortSlottedPlayer};
 use itertools::{EitherOrBoth, Itertools, PeekingNext};
 use log::warn;
 use mmolb_parsing::ParsedEventMessage;
-use mmolb_parsing::enums::{Base, BaseNameVariant, BatterStat, Day, Distance, FairBallDestination, FairBallType, FieldingErrorType, FoulType, GameOverMessage, HomeAway, MaybeRecognized, NowBattingStats, Place, Position, Slot, SlotDiscriminants, StrikeType, TopBottom};
+use mmolb_parsing::enums::{
+    Base, BaseNameVariant, BatterStat, Day, Distance, FairBallDestination, FairBallType,
+    FieldingErrorType, FoulType, GameOverMessage, HomeAway, MaybeRecognized, NowBattingStats,
+    Place, Position, Slot, SlotDiscriminants, StrikeType, TopBottom,
+};
 use mmolb_parsing::game::MaybePlayer;
-use mmolb_parsing::parsed_event::{BaseSteal, EmojiTeam, FieldingAttempt, KnownBug, ParsedEventMessageDiscriminants, PlacedPlayer, RunnerAdvance, RunnerOut, StartOfInningPitcher};
+use mmolb_parsing::parsed_event::{
+    BaseSteal, EmojiTeam, FieldingAttempt, KnownBug, ParsedEventMessageDiscriminants, PlacedPlayer,
+    RunnerAdvance, RunnerOut, StartOfInningPitcher,
+};
 use std::collections::{HashMap, VecDeque};
-use std::fmt::{Display, Write};
 use std::fmt::{Debug, Formatter};
+use std::fmt::{Display, Write};
 use strum::IntoDiscriminant;
 use thiserror::Error;
-use crate::parsing_extensions::{BestEffortSlot, BestEffortSlottedPlayer};
 
 #[derive(Debug, Error)]
 pub enum SimStartupError {
@@ -204,9 +211,7 @@ enum PhaseAfterMoundVisitOutcome<'g> {
 impl<'g> Into<GamePhase<'g>> for PhaseAfterMoundVisitOutcome<'g> {
     fn into(self) -> GamePhase<'g> {
         match self {
-            PhaseAfterMoundVisitOutcome::ExpectNowBatting => {
-                GamePhase::ExpectNowBatting
-            }
+            PhaseAfterMoundVisitOutcome::ExpectNowBatting => GamePhase::ExpectNowBatting,
             PhaseAfterMoundVisitOutcome::ExpectPitch(batter_name) => {
                 GamePhase::ExpectPitch(batter_name)
             }
@@ -488,7 +493,11 @@ impl<'g> EventDetailBuilder<'g> {
         self
     }
 
-    fn placed_player_slot(&self, player: PlacedPlayer<&'g str>, ingest_logs: &mut IngestLogs) -> Result<TaxaSlot, SimFatalError> {
+    fn placed_player_slot(
+        &self,
+        player: PlacedPlayer<&'g str>,
+        ingest_logs: &mut IngestLogs,
+    ) -> Result<TaxaSlot, SimFatalError> {
         Ok(match player.place {
             Place::Pitcher => {
                 if self.pitcher.name != player.name {
@@ -502,20 +511,20 @@ impl<'g> EventDetailBuilder<'g> {
                 }
                 self.pitcher.slot.into()
             }
-            Place::Catcher => { TaxaSlot::Catcher }
-            Place::FirstBaseman => { TaxaSlot::FirstBase }
-            Place::SecondBaseman => { TaxaSlot::SecondBase }
-            Place::ThirdBaseman => { TaxaSlot::ThirdBase }
-            Place::ShortStop => { TaxaSlot::Shortstop }
-            Place::LeftField => { TaxaSlot::LeftField }
-            Place::CenterField => { TaxaSlot::CenterField }
-            Place::RightField => { TaxaSlot::RightField }
-            Place::StartingPitcher(None) => { TaxaSlot::StartingPitcher }
-            Place::StartingPitcher(Some(1)) => { TaxaSlot::StartingPitcher1 }
-            Place::StartingPitcher(Some(2)) => { TaxaSlot::StartingPitcher2 }
-            Place::StartingPitcher(Some(3)) => { TaxaSlot::StartingPitcher3 }
-            Place::StartingPitcher(Some(4)) => { TaxaSlot::StartingPitcher4 }
-            Place::StartingPitcher(Some(5)) => { TaxaSlot::StartingPitcher5 }
+            Place::Catcher => TaxaSlot::Catcher,
+            Place::FirstBaseman => TaxaSlot::FirstBase,
+            Place::SecondBaseman => TaxaSlot::SecondBase,
+            Place::ThirdBaseman => TaxaSlot::ThirdBase,
+            Place::ShortStop => TaxaSlot::Shortstop,
+            Place::LeftField => TaxaSlot::LeftField,
+            Place::CenterField => TaxaSlot::CenterField,
+            Place::RightField => TaxaSlot::RightField,
+            Place::StartingPitcher(None) => TaxaSlot::StartingPitcher,
+            Place::StartingPitcher(Some(1)) => TaxaSlot::StartingPitcher1,
+            Place::StartingPitcher(Some(2)) => TaxaSlot::StartingPitcher2,
+            Place::StartingPitcher(Some(3)) => TaxaSlot::StartingPitcher3,
+            Place::StartingPitcher(Some(4)) => TaxaSlot::StartingPitcher4,
+            Place::StartingPitcher(Some(5)) => TaxaSlot::StartingPitcher5,
             Place::StartingPitcher(Some(other)) => {
                 ingest_logs.warn(format!(
                     "Unexpected starting pitcher number: {other} (expected 1-5). Falling back to \
@@ -523,10 +532,10 @@ impl<'g> EventDetailBuilder<'g> {
                 ));
                 TaxaSlot::StartingPitcher
             }
-            Place::ReliefPitcher(None) => { TaxaSlot::ReliefPitcher }
-            Place::ReliefPitcher(Some(1)) => { TaxaSlot::ReliefPitcher1 }
-            Place::ReliefPitcher(Some(2)) => { TaxaSlot::ReliefPitcher2 }
-            Place::ReliefPitcher(Some(3)) => { TaxaSlot::ReliefPitcher3 }
+            Place::ReliefPitcher(None) => TaxaSlot::ReliefPitcher,
+            Place::ReliefPitcher(Some(1)) => TaxaSlot::ReliefPitcher1,
+            Place::ReliefPitcher(Some(2)) => TaxaSlot::ReliefPitcher2,
+            Place::ReliefPitcher(Some(3)) => TaxaSlot::ReliefPitcher3,
             Place::ReliefPitcher(Some(other)) => {
                 ingest_logs.warn(format!(
                     "Unexpected relief pitcher number: {other} (expected 1-3). Falling back to \
@@ -534,12 +543,16 @@ impl<'g> EventDetailBuilder<'g> {
                 ));
                 TaxaSlot::ReliefPitcher
             }
-            Place::Closer => { TaxaSlot::Closer }
-            Place::DesignatedHitter => { TaxaSlot::DesignatedHitter }
+            Place::Closer => TaxaSlot::Closer,
+            Place::DesignatedHitter => TaxaSlot::DesignatedHitter,
         })
     }
 
-    fn fielder(mut self, fielder: PlacedPlayer<&'g str>, ingest_logs: &mut IngestLogs) -> Result<Self, SimFatalError> {
+    fn fielder(
+        mut self,
+        fielder: PlacedPlayer<&'g str>,
+        ingest_logs: &mut IngestLogs,
+    ) -> Result<Self, SimFatalError> {
         if !self.fielders.is_empty() {
             warn!("EventDetailBuilder overwrote existing fielders");
         }
@@ -553,7 +566,12 @@ impl<'g> EventDetailBuilder<'g> {
         Ok(self)
     }
 
-    fn catch_fielder(mut self, fielder: PlacedPlayer<&'g str>, ingest_logs: &mut IngestLogs, is_perfect: bool) -> Result<Self, SimFatalError> {
+    fn catch_fielder(
+        mut self,
+        fielder: PlacedPlayer<&'g str>,
+        ingest_logs: &mut IngestLogs,
+        is_perfect: bool,
+    ) -> Result<Self, SimFatalError> {
         if !self.fielders.is_empty() {
             warn!("EventDetailBuilder overwrote existing fielders");
         }
@@ -567,18 +585,25 @@ impl<'g> EventDetailBuilder<'g> {
         Ok(self)
     }
 
-    fn fielders(mut self, fielders: impl IntoIterator<Item = PlacedPlayer<&'g str>>, ingest_logs: &mut IngestLogs) -> Result<Self, SimFatalError> {
+    fn fielders(
+        mut self,
+        fielders: impl IntoIterator<Item = PlacedPlayer<&'g str>>,
+        ingest_logs: &mut IngestLogs,
+    ) -> Result<Self, SimFatalError> {
         if !self.fielders.is_empty() {
             warn!("EventDetailBuilder overwrote existing fielders");
         }
 
         self.fielders = fielders
             .into_iter()
-            .map(|f| self.placed_player_slot(f, ingest_logs).map(|slot| EventDetailFielder {
-                name: f.name,
-                slot,
-                is_perfect_catch: None,
-            }))
+            .map(|f| {
+                self.placed_player_slot(f, ingest_logs)
+                    .map(|slot| EventDetailFielder {
+                        name: f.name,
+                        slot,
+                        is_perfect_catch: None,
+                    })
+            })
             .collect::<Result<_, _>>()?;
 
         Ok(self)
@@ -928,8 +953,7 @@ struct RunnerUpdate<'g, 'a> {
 // Returns true for events that happen in the ExpectPitch context but
 // don't have an associated pitch
 fn is_pitchless_pitch(ty: ParsedEventMessageDiscriminants) -> bool {
-    ty == ParsedEventMessageDiscriminants::MoundVisit ||
-        ty == ParsedEventMessageDiscriminants::Balk
+    ty == ParsedEventMessageDiscriminants::MoundVisit || ty == ParsedEventMessageDiscriminants::Balk
 }
 
 impl<'g> Game<'g> {
@@ -1094,8 +1118,9 @@ impl<'g> Game<'g> {
                 automatic_runner: None,
                 active_pitcher: BestEffortSlottedPlayer {
                     name: away_pitcher_name,
-                    slot: game_data.away_sp.parse()
-                        .map_err(|_| SimStartupError::FailedToParseStartingPitcher(game_data.away_sp.clone()))?,
+                    slot: game_data.away_sp.parse().map_err(|_| {
+                        SimStartupError::FailedToParseStartingPitcher(game_data.away_sp.clone())
+                    })?,
                 },
                 batter_stats: away_batter_stats,
                 pitcher_count: 0,
@@ -1111,8 +1136,9 @@ impl<'g> Game<'g> {
                 automatic_runner: None,
                 active_pitcher: BestEffortSlottedPlayer {
                     name: home_pitcher_name,
-                    slot: game_data.home_sp.parse()
-                        .map_err(|_| SimStartupError::FailedToParseStartingPitcher(game_data.home_sp.clone()))?,
+                    slot: game_data.home_sp.parse().map_err(|_| {
+                        SimStartupError::FailedToParseStartingPitcher(game_data.home_sp.clone())
+                    })?,
                 },
                 batter_stats: home_batter_stats,
                 pitcher_count: 0,
@@ -1245,15 +1271,12 @@ impl<'g> Game<'g> {
         }
     }
 
-    fn check_pitcher(
-        &self,
-        observed_pitcher_name: &str,
-        ingest_logs: &mut IngestLogs,
-    ) {
+    fn check_pitcher(&self, observed_pitcher_name: &str, ingest_logs: &mut IngestLogs) {
         if self.defending_team().active_pitcher.name != observed_pitcher_name {
             ingest_logs.warn(format!(
                 "Unexpected pitcher name: Expected {}, but saw {}",
-                self.defending_team().active_pitcher.name, observed_pitcher_name,
+                self.defending_team().active_pitcher.name,
+                observed_pitcher_name,
             ));
         }
     }
@@ -2822,11 +2845,6 @@ pub enum ToParsedContactError {
 
     #[error("Event with a fair_ball_index must have a fair_ball_direction")]
     MissingFairBallDirection,
-
-    // #[error(
-    //     "Event with a fair_ball_index must have a valid fair_ball_direction, but it had the non-fair-direction position {invalid_direction}"
-    // )]
-    // InvalidFairBallDirection { invalid_direction: () },
 }
 
 impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
@@ -2951,14 +2969,11 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
         };
 
         // Kind of a roundabout way to do it, but it works
-        let at_most_one_runner_out = || {
-            match exactly_one_runner_out() {
-                Ok(runner) => Ok(Some(runner)),
-                Err(ToParsedError::WrongNumberOfRunnersOut { actual, .. }) if actual == 0 => Ok(None),
-                Err(err) => Err(err),
-            }
+        let at_most_one_runner_out = || match exactly_one_runner_out() {
+            Ok(runner) => Ok(Some(runner)),
+            Err(ToParsedError::WrongNumberOfRunnersOut { actual, .. }) if actual == 0 => Ok(None),
+            Err(err) => Err(err),
         };
-
 
         let exactly_one_fielder = || -> Result<PlacedPlayer<&str>, ToParsedError> {
             match <[_; 1]>::try_from(self.fielders()) {
@@ -2981,12 +2996,12 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
         };
 
         let mandatory_fair_ball_direction = || -> Result<FairBallDestination, ToParsedError> {
-            Ok((self
-                .fair_ball_direction
-                .ok_or_else(|| ToParsedError::MissingFairBallDirection {
+            Ok((self.fair_ball_direction.ok_or_else(|| {
+                ToParsedError::MissingFairBallDirection {
                     event_type: self.detail_type,
-                })?)
-                .into())
+                }
+            })?)
+            .into())
         };
 
         let mandatory_fielding_error_type = || -> Result<FieldingErrorType, ToParsedError> {
@@ -3101,7 +3116,9 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                     scores: self.scores(),
                     // The batter-runner is listed in advances if any other runner also advanced,
                     // unless the force out was at 2nd
-                    advances: self.advances(any_existing_runner_advanced && Base::Second != runner_out_at_base.into()),
+                    advances: self.advances(
+                        any_existing_runner_advanced && Base::Second != runner_out_at_base.into(),
+                    ),
                 }
             }
             TaxaEventType::CaughtOut => {
@@ -3189,12 +3206,10 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                 scores: self.scores(),
                 advances: self.advances(false),
             },
-            TaxaEventType::HitByPitch => {
-                ParsedEventMessage::HitByPitch {
-                    batter: self.batter_name.as_ref(),
-                    scores: self.scores(),
-                    advances: self.advances(false),
-                }
+            TaxaEventType::HitByPitch => ParsedEventMessage::HitByPitch {
+                batter: self.batter_name.as_ref(),
+                scores: self.scores(),
+                advances: self.advances(false),
             },
             TaxaEventType::DoublePlay => {
                 let scores = self.scores();
@@ -3266,7 +3281,7 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                         bug: KnownBug::FirstBasemanChoosesAGhost {
                             batter: self.batter_name.as_ref(),
                             first_baseman: fielder.name,
-                        }
+                        },
                     }
                 }
             }
@@ -3293,13 +3308,11 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                     advances: self.advances(false),
                 }
             }
-            TaxaEventType::Balk => {
-                ParsedEventMessage::Balk {
-                    pitcher: self.pitcher_name.as_ref(),
-                    scores: self.scores(),
-                    advances: self.advances(false),
-                }
-            }
+            TaxaEventType::Balk => ParsedEventMessage::Balk {
+                pitcher: self.pitcher_name.as_ref(),
+                scores: self.scores(),
+                advances: self.advances(false),
+            },
         })
     }
 
@@ -3311,13 +3324,12 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                 .into())
         };
 
-        let mandatory_fair_ball_direction =
-            || {
-                Ok(self
-                    .fair_ball_direction
-                    .ok_or_else(|| ToParsedContactError::MissingFairBallDirection)?
-                    .into())
-            };
+        let mandatory_fair_ball_direction = || {
+            Ok(self
+                .fair_ball_direction
+                .ok_or_else(|| ToParsedContactError::MissingFairBallDirection)?
+                .into())
+        };
 
         // We're going to construct a FairBall for this no matter
         // whether we had the type.

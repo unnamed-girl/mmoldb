@@ -1,7 +1,7 @@
+mod check_round_trip;
 mod chron;
 mod sim;
 mod worker;
-mod check_round_trip;
 
 // Reexports
 pub use sim::{EventDetail, EventDetailFielder, EventDetailRunner, IngestLog};

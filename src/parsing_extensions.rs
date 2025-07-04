@@ -1,7 +1,7 @@
-use std::fmt::{Display, Formatter};
-use std::str::FromStr;
 use mmolb_parsing::enums::{Place, Position, Slot, SlotDiscriminants};
 use mmolb_parsing::parsed_event::PlacedPlayer;
+use std::fmt::{Display, Formatter};
+use std::str::FromStr;
 use strum::IntoDiscriminant;
 
 #[derive(Debug, Copy, Clone)]
@@ -25,21 +25,25 @@ impl Display for BestEffortSlot {
 impl From<Place> for BestEffortSlot {
     fn from(value: Place) -> Self {
         match value {
-            Place::Pitcher => { BestEffortSlot::GenericPitcher }
-            Place::Catcher => { BestEffortSlot::Slot(Slot::Catcher) }
-            Place::FirstBaseman => { BestEffortSlot::Slot(Slot::FirstBaseman) }
-            Place::SecondBaseman => { BestEffortSlot::Slot(Slot::SecondBaseman) }
-            Place::ThirdBaseman => { BestEffortSlot::Slot(Slot::ThirdBaseman) }
-            Place::ShortStop => { BestEffortSlot::Slot(Slot::ShortStop) }
-            Place::LeftField => { BestEffortSlot::Slot(Slot::LeftField) }
-            Place::CenterField => { BestEffortSlot::Slot(Slot::CenterField) }
-            Place::RightField => { BestEffortSlot::Slot(Slot::RightField) }
-            Place::StartingPitcher(Some(i)) => { BestEffortSlot::Slot(Slot::StartingPitcher(i)) }
-            Place::ReliefPitcher(Some(i)) => { BestEffortSlot::Slot(Slot::ReliefPitcher(i)) }
-            Place::Closer => { BestEffortSlot::Slot(Slot::Closer) }
-            Place::DesignatedHitter => { BestEffortSlot::Slot(Slot::DesignatedHitter) }
-            Place::StartingPitcher(None) => { BestEffortSlot::SlotType(SlotDiscriminants::StartingPitcher) }
-            Place::ReliefPitcher(None) => { BestEffortSlot::SlotType(SlotDiscriminants::ReliefPitcher) }
+            Place::Pitcher => BestEffortSlot::GenericPitcher,
+            Place::Catcher => BestEffortSlot::Slot(Slot::Catcher),
+            Place::FirstBaseman => BestEffortSlot::Slot(Slot::FirstBaseman),
+            Place::SecondBaseman => BestEffortSlot::Slot(Slot::SecondBaseman),
+            Place::ThirdBaseman => BestEffortSlot::Slot(Slot::ThirdBaseman),
+            Place::ShortStop => BestEffortSlot::Slot(Slot::ShortStop),
+            Place::LeftField => BestEffortSlot::Slot(Slot::LeftField),
+            Place::CenterField => BestEffortSlot::Slot(Slot::CenterField),
+            Place::RightField => BestEffortSlot::Slot(Slot::RightField),
+            Place::StartingPitcher(Some(i)) => BestEffortSlot::Slot(Slot::StartingPitcher(i)),
+            Place::ReliefPitcher(Some(i)) => BestEffortSlot::Slot(Slot::ReliefPitcher(i)),
+            Place::Closer => BestEffortSlot::Slot(Slot::Closer),
+            Place::DesignatedHitter => BestEffortSlot::Slot(Slot::DesignatedHitter),
+            Place::StartingPitcher(None) => {
+                BestEffortSlot::SlotType(SlotDiscriminants::StartingPitcher)
+            }
+            Place::ReliefPitcher(None) => {
+                BestEffortSlot::SlotType(SlotDiscriminants::ReliefPitcher)
+            }
         }
     }
 }

@@ -1,12 +1,12 @@
-use std::fmt::format;
-use itertools::{EitherOrBoth, Itertools};
-use mmolb_parsing::enums::{Place, Position, Slot};
-use mmolb_parsing::parsed_event::{KnownBug, PlacedPlayer};
-use mmolb_parsing::ParsedEventMessage;
-use strum::IntoDiscriminant;
 use crate::db::RowToEventError;
 use crate::ingest::EventDetail;
 use crate::ingest::worker::IngestLogs;
+use itertools::{EitherOrBoth, Itertools};
+use mmolb_parsing::ParsedEventMessage;
+use mmolb_parsing::enums::{Place, Position, Slot};
+use mmolb_parsing::parsed_event::{KnownBug, PlacedPlayer};
+use std::fmt::format;
+use strum::IntoDiscriminant;
 
 fn log_if_error<'g, E: std::fmt::Display>(
     ingest_logs: &mut IngestLogs,
@@ -34,11 +34,13 @@ fn downgrade_parsed_places_to_match(
     original: &ParsedEventMessage<&str>,
     ingest_logs: &mut IngestLogs,
 ) {
+    // TODO The bodies of the non-empty members of this are nearly
+    //   identical. Refactor that logic out into a function somehow.
     match ours {
         ParsedEventMessage::ParseError { .. } => {}
         ParsedEventMessage::KnownBug { bug } => match bug {
             KnownBug::FirstBasemanChoosesAGhost { .. } => {}
-        }
+        },
         ParsedEventMessage::LiveNow { .. } => {}
         ParsedEventMessage::PitchingMatchup { .. } => {}
         ParsedEventMessage::Lineup { .. } => {
@@ -63,59 +65,129 @@ fn downgrade_parsed_places_to_match(
         ParsedEventMessage::FairBall { .. } => {}
         ParsedEventMessage::StrikeOut { .. } => {}
         ParsedEventMessage::BatterToBase { fielder, .. } => {
-            if let ParsedEventMessage::BatterToBase { fielder: original_fielder, .. } = original {
-                downgrade_place_to_match(game_event_index, fielder, original_fielder, ingest_logs, "BatterToBase fielder");
+            if let ParsedEventMessage::BatterToBase {
+                fielder: original_fielder,
+                ..
+            } = original
+            {
+                downgrade_place_to_match(
+                    game_event_index,
+                    fielder,
+                    original_fielder,
+                    ingest_logs,
+                    "BatterToBase fielder",
+                );
             } else {
-                ingest_logs.warn(game_event_index, format!(
-                    "Not downgrading parsed Places because the event types don't match \
+                ingest_logs.warn(
+                    game_event_index,
+                    format!(
+                        "Not downgrading parsed Places because the event types don't match \
                     (reconstructed is {:?} and original is {:?})",
-                    ours.discriminant(), original.discriminant(),
-                ));
+                        ours.discriminant(),
+                        original.discriminant(),
+                    ),
+                );
             }
         }
         ParsedEventMessage::HomeRun { .. } => {}
         ParsedEventMessage::CaughtOut { caught_by, .. } => {
-            if let ParsedEventMessage::CaughtOut { caught_by: original_caught_by, .. } = original {
-                downgrade_place_to_match(game_event_index, caught_by, original_caught_by, ingest_logs, "CaughtOut caught_by");
+            if let ParsedEventMessage::CaughtOut {
+                caught_by: original_caught_by,
+                ..
+            } = original
+            {
+                downgrade_place_to_match(
+                    game_event_index,
+                    caught_by,
+                    original_caught_by,
+                    ingest_logs,
+                    "CaughtOut caught_by",
+                );
             } else {
-                ingest_logs.warn(game_event_index, format!(
-                    "Not downgrading parsed Places because the event types don't match \
+                ingest_logs.warn(
+                    game_event_index,
+                    format!(
+                        "Not downgrading parsed Places because the event types don't match \
                     (reconstructed is {:?} and original is {:?})",
-                    ours.discriminant(), original.discriminant(),
-                ));
+                        ours.discriminant(),
+                        original.discriminant(),
+                    ),
+                );
             }
         }
         ParsedEventMessage::GroundedOut { fielders, .. } => {
-            if let ParsedEventMessage::GroundedOut { fielders: original_fielders, .. } = original {
-                downgrade_places_to_match(game_event_index, fielders, original_fielders, ingest_logs, "GroundedOut fielders");
+            if let ParsedEventMessage::GroundedOut {
+                fielders: original_fielders,
+                ..
+            } = original
+            {
+                downgrade_places_to_match(
+                    game_event_index,
+                    fielders,
+                    original_fielders,
+                    ingest_logs,
+                    "GroundedOut fielders",
+                );
             } else {
-                ingest_logs.warn(game_event_index, format!(
-                    "Not downgrading parsed Places because the event types don't match \
+                ingest_logs.warn(
+                    game_event_index,
+                    format!(
+                        "Not downgrading parsed Places because the event types don't match \
                     (reconstructed is {:?} and original is {:?})",
-                    ours.discriminant(), original.discriminant(),
-                ));
+                        ours.discriminant(),
+                        original.discriminant(),
+                    ),
+                );
             }
         }
         ParsedEventMessage::ForceOut { fielders, .. } => {
-            if let ParsedEventMessage::ForceOut { fielders: original_fielders, .. } = original {
-                downgrade_places_to_match(game_event_index, fielders, original_fielders, ingest_logs, "ForceOut fielders");
+            if let ParsedEventMessage::ForceOut {
+                fielders: original_fielders,
+                ..
+            } = original
+            {
+                downgrade_places_to_match(
+                    game_event_index,
+                    fielders,
+                    original_fielders,
+                    ingest_logs,
+                    "ForceOut fielders",
+                );
             } else {
-                ingest_logs.warn(game_event_index, format!(
-                    "Not downgrading parsed Places because the event types don't match \
+                ingest_logs.warn(
+                    game_event_index,
+                    format!(
+                        "Not downgrading parsed Places because the event types don't match \
                     (reconstructed is {:?} and original is {:?})",
-                    ours.discriminant(), original.discriminant(),
-                ));
+                        ours.discriminant(),
+                        original.discriminant(),
+                    ),
+                );
             }
         }
         ParsedEventMessage::ReachOnFieldersChoice { fielders, .. } => {
-            if let ParsedEventMessage::ReachOnFieldersChoice { fielders: original_fielders, .. } = original {
-                downgrade_places_to_match(game_event_index, fielders, original_fielders, ingest_logs, "ReachOnFieldersChoice fielders");
+            if let ParsedEventMessage::ReachOnFieldersChoice {
+                fielders: original_fielders,
+                ..
+            } = original
+            {
+                downgrade_places_to_match(
+                    game_event_index,
+                    fielders,
+                    original_fielders,
+                    ingest_logs,
+                    "ReachOnFieldersChoice fielders",
+                );
             } else {
-                ingest_logs.warn(game_event_index, format!(
-                    "Not downgrading parsed Places because the event types don't match \
+                ingest_logs.warn(
+                    game_event_index,
+                    format!(
+                        "Not downgrading parsed Places because the event types don't match \
                     (reconstructed is {:?} and original is {:?})",
-                    ours.discriminant(), original.discriminant(),
-                ));
+                        ours.discriminant(),
+                        original.discriminant(),
+                    ),
+                );
             }
         }
         ParsedEventMessage::DoublePlayGrounded { .. } => {}
@@ -145,11 +217,14 @@ fn downgrade_places_to_match(
                 downgrade_place_to_match(game_event_index, ours, original, ingest_logs, &loc);
             }
             EitherOrBoth::Left(ours) => {
-                ingest_logs.warn(game_event_index, format!(
-                    "Not downgrading parsed Place for {} because the reconstructed event's \
+                ingest_logs.warn(
+                    game_event_index,
+                    format!(
+                        "Not downgrading parsed Place for {} because the reconstructed event's \
                     {log_loc} item at index {i} had no corresponding item in the original",
-                    ours.name,
-                ));
+                        ours.name,
+                    ),
+                );
             }
             EitherOrBoth::Right(original) => {
                 ingest_logs.warn(game_event_index, format!(
@@ -169,11 +244,14 @@ fn downgrade_place_to_match(
     log_loc: &str,
 ) {
     if ours.name != original.name {
-        ingest_logs.warn(game_event_index, format!(
-            "Not downgrading parsed Place at {log_loc} because the reconstructed player's name \
+        ingest_logs.warn(
+            game_event_index,
+            format!(
+                "Not downgrading parsed Place at {log_loc} because the reconstructed player's name \
             ({}) didn't match the original's ({})",
-            ours.name, original.name,
-        ));
+                ours.name, original.name,
+            ),
+        );
     } else {
         match original.place {
             Place::Pitcher => {
@@ -181,10 +259,20 @@ fn downgrade_place_to_match(
                 ours.place = Place::Pitcher;
             }
             Place::StartingPitcher(None) => {
-                downgrade_place_to_starting_pitcher(game_event_index, &mut ours.place, ingest_logs, log_loc);
+                downgrade_place_to_starting_pitcher(
+                    game_event_index,
+                    &mut ours.place,
+                    ingest_logs,
+                    log_loc,
+                );
             }
             Place::ReliefPitcher(None) => {
-                downgrade_place_to_relief_pitcher(game_event_index, &mut ours.place, ingest_logs, log_loc);
+                downgrade_place_to_relief_pitcher(
+                    game_event_index,
+                    &mut ours.place,
+                    ingest_logs,
+                    log_loc,
+                );
             }
             _ => {
                 // Everything else doesn't need downgrading
@@ -200,13 +288,14 @@ fn downgrade_place_to_starting_pitcher(
     log_loc: &str,
 ) {
     match ours {
-        Place::StartingPitcher(_) => {
-            *ours = Place::StartingPitcher(None)
-        }
+        Place::StartingPitcher(_) => *ours = Place::StartingPitcher(None),
         _ => {
-            ingest_logs.error(game_event_index, format!(
-                "Can't \"downgrade\" {ours:?} into Place::StartingPitcher(None) at {log_loc}",
-            ));
+            ingest_logs.error(
+                game_event_index,
+                format!(
+                    "Can't \"downgrade\" {ours:?} into Place::StartingPitcher(None) at {log_loc}",
+                ),
+            );
         }
     }
 }
@@ -218,13 +307,14 @@ fn downgrade_place_to_relief_pitcher(
     log_loc: &str,
 ) {
     match ours {
-        Place::ReliefPitcher(_) => {
-            *ours = Place::ReliefPitcher(None)
-        }
+        Place::ReliefPitcher(_) => *ours = Place::ReliefPitcher(None),
         _ => {
-            ingest_logs.error(game_event_index, format!(
-                "Can't \"downgrade\" {ours:?} into Place::ReliefPitcher(None) at {log_loc}",
-            ));
+            ingest_logs.error(
+                game_event_index,
+                format!(
+                    "Can't \"downgrade\" {ours:?} into Place::ReliefPitcher(None) at {log_loc}",
+                ),
+            );
         }
     }
 }

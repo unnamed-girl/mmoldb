@@ -1,11 +1,13 @@
 use crate::db::{CompletedGameForDb, GameForDb, RowToEventError, Taxa, Timings};
 use crate::ingest::chron::{ChronEntities, ChronEntity, GameExt};
 use crate::ingest::sim::{self, Game, SimFatalError, SimStartupError};
-use crate::ingest::{check_round_trip, EventDetail, IngestConfig, IngestFatalError, IngestLog, IngestStats};
-use crate::{db, Db};
+use crate::ingest::{
+    EventDetail, IngestConfig, IngestFatalError, IngestLog, IngestStats, check_round_trip,
+};
+use crate::{Db, db};
 use chrono::Utc;
 use diesel::PgConnection;
-use itertools::{izip, Itertools};
+use itertools::{Itertools, izip};
 use log::{error, info, warn};
 use mmolb_parsing::ParsedEventMessage;
 use rocket::tokio;
@@ -330,7 +332,9 @@ fn prepare_completed_game_for_db(
             // Sim has a different IngestLogs... this made sense at the time
             let mut ingest_logs = sim::IngestLogs::new(game_event_index as i32);
 
-            let unparsed = parsed.clone().unparse(&entity.data, Some(game_event_index as _));
+            let unparsed = parsed
+                .clone()
+                .unparse(&entity.data, Some(game_event_index as _));
             if unparsed != raw.message {
                 ingest_logs.error(format!(
                     "Round-trip of raw event through ParsedEvent produced a mismatch:\n\
@@ -343,7 +347,9 @@ fn prepare_completed_game_for_db(
             let event = match game.next(game_event_index, &parsed, &raw, &mut ingest_logs) {
                 Ok(result) => result,
                 Err(e) => {
-                    ingest_logs.critical(format!("Critical error. This event will be skipped.\n\n{e}"));
+                    ingest_logs.critical(format!(
+                        "Critical error. This event will be skipped.\n\n{e}"
+                    ));
                     None
                 }
             };
@@ -436,4 +442,3 @@ impl IngestLogs {
         self.logs
     }
 }
-

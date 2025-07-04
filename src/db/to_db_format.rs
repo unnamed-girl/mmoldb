@@ -17,7 +17,9 @@ pub fn event_to_row<'e>(
         event_type: taxa.event_type_id(event.detail_type),
         hit_type: event.hit_type.map(|ty| taxa.hit_type_id(ty)),
         fair_ball_type: event.fair_ball_type.map(|ty| taxa.fair_ball_type_id(ty)),
-        fair_ball_direction: event.fair_ball_direction.map(|ty| taxa.fielder_location(ty)),
+        fair_ball_direction: event
+            .fair_ball_direction
+            .map(|ty| taxa.fielder_location(ty)),
         fielding_error_type: event
             .fielding_error_type
             .map(|ty| taxa.fielding_error_type_id(ty)),

@@ -7,8 +7,8 @@ mod taxa_schema;
 mod info_schema;
 mod ingest;
 mod models;
-mod web;
 mod parsing_extensions;
+mod web;
 
 use crate::ingest::{IngestFairing, IngestTask};
 use num_format::{Locale, ToFormattedString};
