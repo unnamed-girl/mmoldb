@@ -1,4 +1,3 @@
-// TODO: There's a lot of duplicate impls of Into and From in here. Clean them up
 use paste::paste;
 
 use super::taxa_macro::*;

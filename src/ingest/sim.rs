@@ -203,31 +203,30 @@ struct FairBall {
 }
 
 #[derive(Debug, Copy, Clone)]
-enum PhaseAfterMoundVisitOutcome<'g> {
+enum ContextAfterMoundVisitOutcome<'g> {
     ExpectNowBatting,
     ExpectPitch(&'g str),
 }
 
-impl<'g> Into<GamePhase<'g>> for PhaseAfterMoundVisitOutcome<'g> {
-    fn into(self) -> GamePhase<'g> {
+impl<'g> Into<EventContext<'g>> for ContextAfterMoundVisitOutcome<'g> {
+    fn into(self) -> EventContext<'g> {
         match self {
-            PhaseAfterMoundVisitOutcome::ExpectNowBatting => GamePhase::ExpectNowBatting,
-            PhaseAfterMoundVisitOutcome::ExpectPitch(batter_name) => {
-                GamePhase::ExpectPitch(batter_name)
+            ContextAfterMoundVisitOutcome::ExpectNowBatting => EventContext::ExpectNowBatting,
+            ContextAfterMoundVisitOutcome::ExpectPitch(batter_name) => {
+                EventContext::ExpectPitch(batter_name)
             }
         }
     }
 }
 
 #[derive(Debug, Copy, Clone)]
-// todo rename to EventContext or something like that
-enum GamePhase<'g> {
+enum EventContext<'g> {
     ExpectInningStart,
     ExpectNowBatting,
     ExpectPitch(&'g str),
     ExpectFairBallOutcome(&'g str, FairBall),
     ExpectInningEnd,
-    ExpectMoundVisitOutcome(PhaseAfterMoundVisitOutcome<'g>),
+    ExpectMoundVisitOutcome(ContextAfterMoundVisitOutcome<'g>),
     ExpectGameEnd,
     ExpectFinalScore,
     Finished,
@@ -283,7 +282,7 @@ struct RunnerOn<'g> {
 #[derive(Debug, Clone)]
 struct GameState<'g> {
     prev_event_type: ParsedEventMessageDiscriminants,
-    phase: GamePhase<'g>,
+    context: EventContext<'g>,
     home_score: u8,
     away_score: u8,
     inning_number: u8,
@@ -1149,7 +1148,7 @@ impl<'g> Game<'g> {
             },
             state: GameState {
                 prev_event_type: ParsedEventMessageDiscriminants::PlayBall,
-                phase: GamePhase::ExpectInningStart,
+                context: EventContext::ExpectInningStart,
                 home_score: 0,
                 away_score: 0,
                 inning_number: 0,
@@ -1359,17 +1358,17 @@ impl<'g> Game<'g> {
             self.end_game();
         } else if self.state.outs >= 3 {
             // Otherwise, if there's 3 outs, the inning ends
-            self.state.phase = GamePhase::ExpectInningEnd;
+            self.state.context = EventContext::ExpectInningEnd;
         } else {
             // Otherwise just go to the next batter
-            self.state.phase = GamePhase::ExpectNowBatting;
+            self.state.context = EventContext::ExpectNowBatting;
         }
     }
 
     fn end_game(&mut self) {
         self.state.runners_on.clear();
         self.state.game_finished = true;
-        self.state.phase = GamePhase::ExpectGameEnd;
+        self.state.context = EventContext::ExpectGameEnd;
     }
 
     fn is_walkoff(&self) -> bool {
@@ -1384,7 +1383,7 @@ impl<'g> Game<'g> {
         // This is usually redundant with finish_pa, but not in the case of inning-ending
         // caught stealing
         if self.state.outs >= 3 {
-            self.state.phase = GamePhase::ExpectInningEnd;
+            self.state.context = EventContext::ExpectInningEnd;
             self.state.runners_on.clear();
         }
     }
@@ -1780,7 +1779,7 @@ impl<'g> Game<'g> {
         &mut self,
         team: &EmojiTeam<&'g str>,
         ingest_logs: &mut IngestLogs,
-        interrupted_phase: PhaseAfterMoundVisitOutcome<'g>,
+        context_after: ContextAfterMoundVisitOutcome<'g>,
     ) -> Option<EventDetail<&'g str>> {
         if team.name != self.defending_team().team_name {
             ingest_logs.info(format!(
@@ -1801,7 +1800,7 @@ impl<'g> Game<'g> {
             self.defending_team_mut().team_emoji = team.emoji;
         }
 
-        self.state.phase = GamePhase::ExpectMoundVisitOutcome(interrupted_phase);
+        self.state.context = EventContext::ExpectMoundVisitOutcome(context_after);
         None
     }
 
@@ -1817,8 +1816,8 @@ impl<'g> Game<'g> {
 
         let detail_builder = self.detail_builder(self.state.clone(), game_event_index, raw_event);
 
-        let result = match self.state.phase {
-            GamePhase::ExpectInningStart => game_event!(
+        let result = match self.state.context {
+            EventContext::ExpectInningStart => game_event!(
                 (previous_event, event),
                 [ParsedEventMessageDiscriminants::InningStart]
                 ParsedEventMessage::InningStart {
@@ -1934,15 +1933,15 @@ impl<'g> Game<'g> {
                     }
 
                     self.state.outs = 0;
-                    self.state.phase = GamePhase::ExpectNowBatting;
+                    self.state.context = EventContext::ExpectNowBatting;
                     None
                 },
                 [ParsedEventMessageDiscriminants::MoundVisit]
                 ParsedEventMessage::MoundVisit { team, mound_visit_type: _ } => {
-                    self.process_mound_visit(team, ingest_logs, PhaseAfterMoundVisitOutcome::ExpectNowBatting)
+                    self.process_mound_visit(team, ingest_logs, ContextAfterMoundVisitOutcome::ExpectNowBatting)
                 },
             ),
-            GamePhase::ExpectPitch(batter_name) => {
+            EventContext::ExpectPitch(batter_name) => {
                 let pitch = raw_event.pitch.as_ref().and_then(|p| {
                     Some(Pitch {
                         pitch_speed: p.speed,
@@ -2049,7 +2048,7 @@ impl<'g> Game<'g> {
                     ParsedEventMessage::FairBall { batter, fair_ball_type, destination } => {
                         self.check_batter(batter_name, batter, ingest_logs);
 
-                        self.state.phase = GamePhase::ExpectFairBallOutcome(batter_name, FairBall {
+                        self.state.context = EventContext::ExpectFairBallOutcome(batter_name, FairBall {
                             game_event_index,
                             fair_ball_type: *fair_ball_type,
                             fair_ball_destination: *destination,
@@ -2095,7 +2094,7 @@ impl<'g> Game<'g> {
                     },
                     [ParsedEventMessageDiscriminants::MoundVisit]
                     ParsedEventMessage::MoundVisit { team, mound_visit_type: _ } => {
-                        self.process_mound_visit(team, ingest_logs, PhaseAfterMoundVisitOutcome::ExpectPitch(batter_name))
+                        self.process_mound_visit(team, ingest_logs, ContextAfterMoundVisitOutcome::ExpectPitch(batter_name))
                     },
                     [ParsedEventMessageDiscriminants::Balk]
                     ParsedEventMessage::Balk { advances, pitcher, scores } => {
@@ -2117,7 +2116,7 @@ impl<'g> Game<'g> {
                     },
                 )
             }
-            GamePhase::ExpectNowBatting => game_event!(
+            EventContext::ExpectNowBatting => game_event!(
                 (previous_event, event),
                 [ParsedEventMessageDiscriminants::NowBatting]
                 ParsedEventMessage::NowBatting { batter, stats } => {
@@ -2143,15 +2142,15 @@ impl<'g> Game<'g> {
 
                     check_now_batting_stats(&stats, self.batter_stats_mut(batter), ingest_logs);
 
-                    self.state.phase = GamePhase::ExpectPitch(batter);
+                    self.state.context = EventContext::ExpectPitch(batter);
                     None
                 },
                 [ParsedEventMessageDiscriminants::MoundVisit]
                 ParsedEventMessage::MoundVisit { team, mound_visit_type: _ } => {
-                    self.process_mound_visit(team, ingest_logs, PhaseAfterMoundVisitOutcome::ExpectNowBatting)
+                    self.process_mound_visit(team, ingest_logs, ContextAfterMoundVisitOutcome::ExpectNowBatting)
                 },
             ),
-            GamePhase::ExpectFairBallOutcome(batter_name, fair_ball) => game_event!(
+            EventContext::ExpectFairBallOutcome(batter_name, fair_ball) => game_event!(
                 (previous_event, event),
                 [ParsedEventMessageDiscriminants::CaughtOut]
                 ParsedEventMessage::CaughtOut { batter, fair_ball_type, caught_by, advances, scores, sacrifice, perfect } => {
@@ -2438,7 +2437,7 @@ impl<'g> Game<'g> {
                     }
                 },
             ),
-            GamePhase::ExpectInningEnd => game_event!(
+            EventContext::ExpectInningEnd => game_event!(
                 (previous_event, event),
                 [ParsedEventMessageDiscriminants::InningEnd]
                 ParsedEventMessage::InningEnd { number, side } => {
@@ -2501,17 +2500,17 @@ impl<'g> Game<'g> {
                     if game_finished {
                         self.end_game();
                     } else {
-                        self.state.phase = GamePhase::ExpectInningStart;
+                        self.state.context = EventContext::ExpectInningStart;
                     }
                     None
                 },
             ),
-            GamePhase::ExpectMoundVisitOutcome(interrupted_phase) => game_event!(
+            EventContext::ExpectMoundVisitOutcome(context_after) => game_event!(
                 (previous_event, event),
                 [ParsedEventMessageDiscriminants::PitcherRemains]
                 ParsedEventMessage::PitcherRemains { remaining_pitcher } => {
                     ingest_logs.info(format!("Not incrementing pitcher_count on remaining pitcher {remaining_pitcher}"));
-                    self.state.phase = interrupted_phase.into();
+                    self.state.context = context_after.into();
                     None
                 },
                 [ParsedEventMessageDiscriminants::PitcherSwap]
@@ -2523,11 +2522,11 @@ impl<'g> Game<'g> {
                     };
                     self.defending_team_mut().pitcher_count += 1;
                     ingest_logs.info(format!("Incrementing pitcher_count as {leaving_pitcher} is replaced by {arriving_pitcher_name}."));
-                    self.state.phase = interrupted_phase.into();
+                    self.state.context = context_after.into();
                     None
                 },
             ),
-            GamePhase::ExpectGameEnd => game_event!(
+            EventContext::ExpectGameEnd => game_event!(
                 (previous_event, event),
                 [ParsedEventMessageDiscriminants::GameOver]
                 ParsedEventMessage::GameOver { message } => {
@@ -2562,13 +2561,13 @@ impl<'g> Game<'g> {
                     // Note: Not setting self.state.game_finished here,
                     // because proper baserunner accounting requires it
                     // be marked as finished before we finish
-                    // processing the event that set the phase to
+                    // processing the event that set the context to
                     // ExpectGameEnd
-                    self.state.phase = GamePhase::ExpectFinalScore;
+                    self.state.context = EventContext::ExpectFinalScore;
                     None
                 },
             ),
-            GamePhase::ExpectFinalScore => game_event!(
+            EventContext::ExpectFinalScore => game_event!(
                 (previous_event, event),
                 [ParsedEventMessageDiscriminants::Recordkeeping]
                 ParsedEventMessage::Recordkeeping { winning_score, winning_team, losing_score, losing_team } => {
@@ -2605,7 +2604,7 @@ impl<'g> Game<'g> {
                         warn_if_mismatch!(ingest_logs, "losing", "team name", "home", losing_team.name, self.home.team_name);
                     }
 
-                    self.state.phase = GamePhase::Finished;
+                    self.state.context = EventContext::Finished;
                     None
                 },
                 [ParsedEventMessageDiscriminants::WeatherDelivery]
@@ -2629,7 +2628,7 @@ impl<'g> Game<'g> {
                     None
                 }
             ),
-            GamePhase::Finished => game_event!((previous_event, event)),
+            EventContext::Finished => game_event!((previous_event, event)),
         }?;
 
         self.state.prev_event_type = this_event_discriminant;
@@ -3097,7 +3096,6 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
             TaxaEventType::ForceOut => {
                 let (runner_out_name, runner_out_at_base) = exactly_one_runner_out()?;
 
-                // TODO Delete if it turns out not to be used
                 let any_existing_runner_advanced = self.baserunners.iter().any(|r| {
                     r.base_before.is_some() && // Exclude the batter-runner
                         r.base_before != Some(r.base_after) && // Exclude anyone who stayed still
