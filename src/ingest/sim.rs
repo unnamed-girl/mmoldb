@@ -25,6 +25,12 @@ use strum::IntoDiscriminant;
 use thiserror::Error;
 
 #[derive(Debug, Error, Diagnostic)]
+#[error("{message}")]
+pub struct ParseError {
+    message: String,
+}
+
+#[derive(Debug, Error, Diagnostic)]
 pub enum SimStartupError {
     #[error("This game had no events")]
     NoEvents,
@@ -33,6 +39,13 @@ pub enum SimStartupError {
     NotEnoughEvents {
         expected: &'static [ParsedEventMessageDiscriminants],
         previous: ParsedEventMessageDiscriminants,
+    },
+
+    #[error("Parse error when attempting to parse {event_type} event")]
+    ParseError {
+        event_type: String,
+        #[diagnostic_source]
+        source: ParseError,
     },
 
     #[error("Expected {expected:?} event after {previous:?}, but received {received:?}")]
@@ -50,7 +63,13 @@ pub enum SimStartupError {
 }
 
 #[derive(Debug, Error, Diagnostic)]
-pub enum SimFatalError {
+pub enum SimEventError {
+    #[error("Parse error when attempting to parse {event_type} event")]
+    ParseError {
+        event_type: String,
+        source: ParseError,
+    },
+
     #[error("Expected {expected:?} event after {previous:?}, but received {received:?}")]
     UnexpectedEventType {
         expected: &'static [ParsedEventMessageDiscriminants],
@@ -359,11 +378,15 @@ macro_rules! extract_next_game_event {
         let expected = &[$($expected,)*];
         match $iter.next(expected)? {
             $($p => Ok($e),)*
+            ParsedEventMessage::ParseError { event_type, message } => Err(SimStartupError::ParseError {
+                event_type: event_type.to_string(),
+                source: ParseError { message: message.to_string() },
+            }),
             other => Err(SimStartupError::UnexpectedEventType {
                 expected,
                 previous,
                 received: other.discriminant(),
-            })
+            }),
         }
     }};
 }
@@ -390,11 +413,15 @@ macro_rules! game_event {
             $($p => {
                 Ok($e)
             })*
-            other => Err(SimFatalError::UnexpectedEventType {
+            ParsedEventMessage::ParseError { event_type, message } => Err(SimEventError::ParseError {
+                event_type: event_type.to_string(),
+                source: ParseError { message: message.to_string() },
+            }),
+            other => Err(SimEventError::UnexpectedEventType {
                 expected,
                 previous,
                 received: other.discriminant(),
-            })
+            }),
         }
     }};
     // This arm matches when there isn't a trailing comma, adds the
@@ -497,7 +524,7 @@ impl<'g> EventDetailBuilder<'g> {
         &self,
         player: PlacedPlayer<&'g str>,
         ingest_logs: &mut IngestLogs,
-    ) -> Result<TaxaSlot, SimFatalError> {
+    ) -> Result<TaxaSlot, SimEventError> {
         Ok(match player.place {
             Place::Pitcher => {
                 if self.pitcher.name != player.name {
@@ -552,7 +579,7 @@ impl<'g> EventDetailBuilder<'g> {
         mut self,
         fielder: PlacedPlayer<&'g str>,
         ingest_logs: &mut IngestLogs,
-    ) -> Result<Self, SimFatalError> {
+    ) -> Result<Self, SimEventError> {
         if !self.fielders.is_empty() {
             warn!("EventDetailBuilder overwrote existing fielders");
         }
@@ -571,7 +598,7 @@ impl<'g> EventDetailBuilder<'g> {
         fielder: PlacedPlayer<&'g str>,
         ingest_logs: &mut IngestLogs,
         is_perfect: bool,
-    ) -> Result<Self, SimFatalError> {
+    ) -> Result<Self, SimEventError> {
         if !self.fielders.is_empty() {
             warn!("EventDetailBuilder overwrote existing fielders");
         }
@@ -589,7 +616,7 @@ impl<'g> EventDetailBuilder<'g> {
         mut self,
         fielders: impl IntoIterator<Item = PlacedPlayer<&'g str>>,
         ingest_logs: &mut IngestLogs,
-    ) -> Result<Self, SimFatalError> {
+    ) -> Result<Self, SimEventError> {
         if !self.fielders.is_empty() {
             warn!("EventDetailBuilder overwrote existing fielders");
         }
@@ -614,7 +641,7 @@ impl<'g> EventDetailBuilder<'g> {
         fielders: impl IntoIterator<Item = PlacedPlayer<&'g str>>,
         perfect_catch: bool,
         ingest_logs: &mut IngestLogs,
-    ) -> Result<Self, SimFatalError> {
+    ) -> Result<Self, SimEventError> {
         let mut me = self.fielders(fielders, ingest_logs)?;
 
         // I believe a perfect catch means a catch of the batted ball and therefore
@@ -1811,7 +1838,7 @@ impl<'g> Game<'g> {
         event: &ParsedEventMessage<&'g str>,
         raw_event: &'g mmolb_parsing::game::Event,
         ingest_logs: &mut IngestLogs,
-    ) -> Result<Option<EventDetail<&'g str>>, SimFatalError> {
+    ) -> Result<Option<EventDetail<&'g str>>, SimEventError> {
         let previous_event = self.state.prev_event_type;
         let this_event_discriminant = event.discriminant();
 
@@ -1902,7 +1929,7 @@ impl<'g> Game<'g> {
                             "Hassan Espinosa"
                         } else {
                             self.active_automatic_runner()
-                                .ok_or_else(|| SimFatalError::MissingAutomaticRunner {
+                                .ok_or_else(|| SimEventError::MissingAutomaticRunner {
                                     inning_num: *number
                                 })?
                         };

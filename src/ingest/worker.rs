@@ -6,8 +6,8 @@ use crate::{Db, db};
 use chrono::Utc;
 use diesel::PgConnection;
 use itertools::{Itertools, izip};
-use log::{error, info, warn};
-use miette::{MietteHandler, Report};
+use log::{error, info};
+use miette::{Context, Diagnostic, ReportHandler};
 use rocket::tokio;
 use rocket_sync_db_pools::ConnectionPool;
 
@@ -281,6 +281,16 @@ impl IngestWorkerInProgress {
     }
 }
 
+fn diagnostic_to_string(err: miette::Report) -> String {
+    let handler = miette::GraphicalReportHandler::new_themed(miette::GraphicalTheme::unicode_nocolor());
+
+    let mut error_message = String::new();
+    handler.render_report(&mut error_message, err.as_ref())
+        .expect("Formatting into a String buffer can't fail");
+
+    error_message
+}
+
 fn prepare_game_for_db(
     entity: &ChronEntity<mmolb_parsing::Game>,
 ) -> Option<Result<GameForDb, IngestFatalError>> {
@@ -290,17 +300,15 @@ fn prepare_game_for_db(
             raw_game: &entity.data,
         }
     } else if entity.data.is_completed() {
-        match prepare_completed_game_for_db(entity) {
+        let game_result = prepare_completed_game_for_db(entity)
+            .wrap_err("Error constructing the initial state. This entire game will be skipped.");
+        match game_result {
             Ok(game) => GameForDb::Completed(game),
             Err(err) => {
-                let handler = miette::GraphicalReportHandler::new_themed(miette::GraphicalTheme::unicode_nocolor());
-                let mut error_message = String::new();
-                handler.render_report(&mut error_message, &err)
-                    .expect("Format into a string buffer can't fail");
                 GameForDb::FatalError {
                     game_id: &entity.entity_id,
                     raw_game: &entity.data,
-                    error_message,
+                    error_message: diagnostic_to_string(err),
                 }
             }
         }
@@ -343,12 +351,15 @@ fn prepare_completed_game_for_db(
                 ));
             }
 
-            let event = match game.next(game_event_index, &parsed, &raw, &mut ingest_logs) {
+            let event_result = game.next(game_event_index, &parsed, &raw, &mut ingest_logs)
+                .wrap_err(
+                    "Error processing game event. This event will be skipped, and further \
+                    errors are likely if this error left the game in an incorrect state.",
+                );
+            let event = match event_result {
                 Ok(result) => result,
-                Err(e) => {
-                    ingest_logs.critical(format!(
-                        "Critical error. This event will be skipped.\n\n{e}"
-                    ));
+                Err(err) => {
+                    ingest_logs.critical(diagnostic_to_string(err));
                     None
                 }
             };
