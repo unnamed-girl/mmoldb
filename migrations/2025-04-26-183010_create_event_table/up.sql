@@ -240,7 +240,10 @@ create table data.events (
 
     -- player info
     pitcher_name text not null,
-    -- a number that starts at 0 and is incremented whenever a new pitcher takes the mound.
+    -- a number that starts at 0 and is incremented whenever a new pitcher takes the mound. note
+    -- that when pitchers are swapped as a result of an augment it is not considered to be a pitcher
+    -- swap and this number will not increase. and yes, augments can fire during a game. it's rare
+    -- after season 0 but it does happen.
     -- each team has a separate pitcher_count.
     pitcher_count int not null,
     batter_name text not null,
