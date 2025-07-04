@@ -1,8 +1,7 @@
-use mmolb_parsing::enums::{Place, Position, Slot, SlotDiscriminants};
+use mmolb_parsing::enums::{Place, Slot, SlotDiscriminants};
 use mmolb_parsing::parsed_event::PlacedPlayer;
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
-use strum::IntoDiscriminant;
 
 #[derive(Debug, Copy, Clone)]
 pub enum BestEffortSlot {

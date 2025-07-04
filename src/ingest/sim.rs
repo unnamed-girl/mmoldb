@@ -10,7 +10,7 @@ use mmolb_parsing::ParsedEventMessage;
 use mmolb_parsing::enums::{
     Base, BaseNameVariant, BatterStat, Day, Distance, FairBallDestination, FairBallType,
     FieldingErrorType, FoulType, GameOverMessage, HomeAway, MaybeRecognized, NowBattingStats,
-    Place, Position, Slot, SlotDiscriminants, StrikeType, TopBottom,
+    Place, StrikeType, TopBottom,
 };
 use mmolb_parsing::game::MaybePlayer;
 use mmolb_parsing::parsed_event::{
@@ -19,7 +19,7 @@ use mmolb_parsing::parsed_event::{
 };
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{Debug, Formatter};
-use std::fmt::{Display, Write};
+use std::fmt::{Write};
 use strum::IntoDiscriminant;
 use thiserror::Error;
 
@@ -2952,7 +2952,7 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
         self.runners_out_iter().collect()
     }
 
-    pub fn to_parsed(&self, game_id: &str) -> Result<ParsedEventMessage<&str>, ToParsedError> {
+    pub fn to_parsed(&self) -> Result<ParsedEventMessage<&str>, ToParsedError> {
         let exactly_one_runner_out = || {
             let runners_out = self
                 .runners_out()

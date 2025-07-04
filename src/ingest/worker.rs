@@ -1,15 +1,14 @@
-use crate::db::{CompletedGameForDb, GameForDb, RowToEventError, Taxa, Timings};
+use crate::db::{CompletedGameForDb, GameForDb, Taxa, Timings};
 use crate::ingest::chron::{ChronEntities, ChronEntity, GameExt};
-use crate::ingest::sim::{self, Game, SimFatalError, SimStartupError};
+use crate::ingest::sim::{self, Game, SimStartupError};
 use crate::ingest::{
-    EventDetail, IngestConfig, IngestFatalError, IngestLog, IngestStats, check_round_trip,
+    IngestConfig, IngestFatalError, IngestLog, IngestStats, check_round_trip,
 };
 use crate::{Db, db};
 use chrono::Utc;
 use diesel::PgConnection;
 use itertools::{Itertools, izip};
 use log::{error, info, warn};
-use mmolb_parsing::ParsedEventMessage;
 use rocket::tokio;
 use rocket_sync_db_pools::ConnectionPool;
 
@@ -175,7 +174,6 @@ impl IngestWorker {
                             &game.parsed_game[index],
                             &original_detail,
                             reconstructed_detail,
-                            &game.id,
                         );
                     }
 
@@ -186,7 +184,6 @@ impl IngestWorker {
                         &game.parsed_game[index],
                         &original_detail,
                         reconstructed_detail,
-                        &game.id,
                     );
                 }
                 let extra_ingest_logs = extra_ingest_logs.into_vec();

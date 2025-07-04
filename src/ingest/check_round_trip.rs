@@ -3,9 +3,8 @@ use crate::ingest::EventDetail;
 use crate::ingest::worker::IngestLogs;
 use itertools::{EitherOrBoth, Itertools};
 use mmolb_parsing::ParsedEventMessage;
-use mmolb_parsing::enums::{Place, Position, Slot};
+use mmolb_parsing::enums::Place;
 use mmolb_parsing::parsed_event::{KnownBug, PlacedPlayer};
-use std::fmt::format;
 use strum::IntoDiscriminant;
 
 fn log_if_error<'g, E: std::fmt::Display>(
@@ -328,7 +327,6 @@ pub fn check_round_trip(
     parsed: &ParsedEventMessage<&str>,
     original_detail: &EventDetail<&str>,
     reconstructed_detail: &Result<EventDetail<String>, RowToEventError>,
-    game_id: &str,
 ) {
     let Some(mut parsed_through_detail) = (if is_contact_event {
         log_if_error(
@@ -342,7 +340,7 @@ pub fn check_round_trip(
         log_if_error(
             ingest_logs,
             index,
-            original_detail.to_parsed(game_id),
+            original_detail.to_parsed(),
             "Attempt to round-trip event through ParsedEventMessage -> EventDetail -> \
             ParsedEventMessage failed at the EventDetail -> ParsedEventMessage step with error",
         )
@@ -403,7 +401,7 @@ pub fn check_round_trip(
         log_if_error(
             ingest_logs,
             index,
-            reconstructed_detail.to_parsed(game_id),
+            reconstructed_detail.to_parsed(),
             "Attempt to round-trip event through ParsedEventMessage -> EventDetail -> database \
             -> EventDetail -> ParsedEventMessage failed at the EventDetail -> ParsedEventMessage \
             step with error",
