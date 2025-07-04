@@ -14,7 +14,7 @@ use std::fmt::{Display, Write};
 use std::fmt::{Debug, Formatter};
 use strum::IntoDiscriminant;
 use thiserror::Error;
-use crate::parsing_extensions::BestEffortSlottedPlayer;
+use crate::parsing_extensions::{BestEffortSlot, BestEffortSlottedPlayer};
 
 #[derive(Debug, Error)]
 pub enum SimStartupError {
@@ -52,18 +52,6 @@ pub enum SimFatalError {
 
     #[error("Expected the automatic runner to be set by inning {inning_num}")]
     MissingAutomaticRunner { inning_num: u8 },
-
-    #[error(
-        "Pitcher swap named a generic pitcher (\"P\") instead of a specific roster slot \
-        (e.g. \"SP2\") or a roster slot type (e.g. \"SP\")"
-    )]
-    GenericPitcherInPitcherSwap,
-
-    #[error(
-        "A fielding event identified the pitcher as (\"P\") instead of a specific roster slot, \
-        and we don't have a record of the active pitcher's roster slot."
-    )]
-    PitcherWithUnknownSlotFieldedABall,
 }
 
 #[derive(Debug, Clone)]
@@ -272,7 +260,7 @@ pub struct TeamInGame<'g> {
     // unnecessary also made it unavailable, but take care to not set
     // it to None out of convenience, because it might lead to runtime
     // errors.
-    active_pitcher: Option<BestEffortSlottedPlayer<&'g str>>,
+    active_pitcher: BestEffortSlottedPlayer<&'g str>,
     batter_stats: HashMap<&'g str, BatterStats>,
     pitcher_count: i32,
     batter_count: i32,
@@ -459,7 +447,7 @@ struct EventDetailBuilder<'g> {
     prev_game_state: GameState<'g>,
     game_event_index: usize,
     fair_ball_event_index: Option<usize>,
-    pitcher: Option<BestEffortSlottedPlayer<&'g str>>,
+    pitcher: BestEffortSlottedPlayer<&'g str>,
     fair_ball_type: Option<TaxaFairBallType>,
     fair_ball_direction: Option<TaxaFielderLocation>,
     hit_type: Option<TaxaHitType>,
@@ -503,20 +491,16 @@ impl<'g> EventDetailBuilder<'g> {
     fn placed_player_slot(&self, player: PlacedPlayer<&'g str>, ingest_logs: &mut IngestLogs) -> Result<TaxaSlot, SimFatalError> {
         Ok(match player.place {
             Place::Pitcher => {
-                if let Some(active_pitcher) = self.pitcher {
-                    if active_pitcher.name != player.name {
-                        ingest_logs.info(format!(
-                            "Event pitcher name ({}) does not match our stored pitcher's name ({}). The \
-                            only known cause of this mismatch is an augment firing during a game, in which \
-                            case the active pitcher's position is still correct. Therefore this is not a \
-                            warning.",
-                            player.name, active_pitcher.name,
-                        ));
-                    }
-                    active_pitcher.slot.into()
-                } else {
-                    return Err(SimFatalError::PitcherWithUnknownSlotFieldedABall)
+                if self.pitcher.name != player.name {
+                    ingest_logs.info(format!(
+                        "Event pitcher name ({}) does not match our stored pitcher's name ({}). The \
+                        only known cause of this mismatch is an augment firing during a game, in which \
+                        case the active pitcher's position is still correct. Therefore this is not a \
+                        warning.",
+                        player.name, self.pitcher.name,
+                    ));
                 }
+                self.pitcher.slot.into()
             }
             Place::Catcher => { TaxaSlot::Catcher }
             Place::FirstBaseman => { TaxaSlot::FirstBase }
@@ -890,10 +874,6 @@ impl<'g> EventDetailBuilder<'g> {
             ingest_logs.error(format!("Runner(s) out not found: {:?}", extra_runners_out));
         }
 
-        if self.pitch.is_none() {
-            ingest_logs.error("Missing a pitch");
-        }
-
         EventDetail {
             game_event_index: self.game_event_index,
             fair_ball_event_index: self.fair_ball_event_index,
@@ -1112,11 +1092,11 @@ impl<'g> Game<'g> {
                 team_emoji: away_team_emoji,
                 team_id: game_data.away_team_id.as_str(),
                 automatic_runner: None,
-                active_pitcher: Some(BestEffortSlottedPlayer {
+                active_pitcher: BestEffortSlottedPlayer {
                     name: away_pitcher_name,
                     slot: game_data.away_sp.parse()
                         .map_err(|_| SimStartupError::FailedToParseStartingPitcher(game_data.away_sp.clone()))?,
-                }),
+                },
                 batter_stats: away_batter_stats,
                 pitcher_count: 0,
                 batter_count: 0,
@@ -1129,11 +1109,11 @@ impl<'g> Game<'g> {
                 team_emoji: home_team_emoji,
                 team_id: game_data.home_team_id.as_str(),
                 automatic_runner: None,
-                active_pitcher: Some(BestEffortSlottedPlayer {
+                active_pitcher: BestEffortSlottedPlayer {
                     name: home_pitcher_name,
                     slot: game_data.home_sp.parse()
                         .map_err(|_| SimStartupError::FailedToParseStartingPitcher(game_data.home_sp.clone()))?,
-                }),
+                },
                 batter_stats: home_batter_stats,
                 pitcher_count: 0,
                 batter_count: 0,
@@ -1270,13 +1250,11 @@ impl<'g> Game<'g> {
         observed_pitcher_name: &str,
         ingest_logs: &mut IngestLogs,
     ) {
-        if let Some(pitcher) = self.defending_team().active_pitcher {
-            if pitcher.name != observed_pitcher_name {
-                ingest_logs.warn(format!(
-                    "Unexpected pitcher name: Expected {}, but saw {}",
-                    pitcher.name, observed_pitcher_name,
-                ));
-            }
+        if self.defending_team().active_pitcher.name != observed_pitcher_name {
+            ingest_logs.warn(format!(
+                "Unexpected pitcher name: Expected {}, but saw {}",
+                self.defending_team().active_pitcher.name, observed_pitcher_name,
+            ));
         }
     }
 
@@ -1816,12 +1794,6 @@ impl<'g> Game<'g> {
 
         let detail_builder = self.detail_builder(self.state.clone(), game_event_index, raw_event);
 
-        if let Some(stored_pitcher) = self.defending_team().active_pitcher {
-            ingest_logs.debug(format!("Stored pitcher: {}", stored_pitcher));
-        } else {
-            ingest_logs.debug("No stored pitcher");
-        }
-
         let result = match self.state.phase {
             GamePhase::ExpectInningStart => game_event!(
                 (previous_event, event),
@@ -1880,8 +1852,7 @@ impl<'g> Game<'g> {
                             ingest_logs.info(format!("Not incrementing pitcher_count on returning pitcher {emoji} {name}"));
                         }
                         StartOfInningPitcher::Different { leaving_emoji: _, leaving_pitcher, arriving_emoji: _, arriving_pitcher } => {
-                            self.defending_team_mut().active_pitcher = Some((*arriving_pitcher).try_into()
-                                .map_err(|_| SimFatalError::GenericPitcherInPitcherSwap)?);
+                            self.defending_team_mut().active_pitcher = (*arriving_pitcher).into();
                             self.defending_team_mut().pitcher_count += 1;
                             ingest_logs.info(format!("Incrementing pitcher_count as {leaving_pitcher} is replaced by {arriving_pitcher}."));
                         }
@@ -2523,13 +2494,10 @@ impl<'g> Game<'g> {
                 [ParsedEventMessageDiscriminants::PitcherSwap]
                 ParsedEventMessage::PitcherSwap { leaving_pitcher, arriving_pitcher_name, arriving_pitcher_place } => {
                     ingest_logs.debug(format!("Arriving pitcher {arriving_pitcher_name} with place {arriving_pitcher_place:?}"));
-                    self.defending_team_mut().active_pitcher = arriving_pitcher_place
-                        .map(|place| Ok(BestEffortSlottedPlayer {
-                            name: *arriving_pitcher_name,
-                            slot: place.try_into()
-                                .map_err(|_| SimFatalError::GenericPitcherInPitcherSwap)?,
-                        }))
-                        .transpose()?;
+                    self.defending_team_mut().active_pitcher = BestEffortSlottedPlayer {
+                        name: *arriving_pitcher_name,
+                        slot: arriving_pitcher_place.map_or(BestEffortSlot::GenericPitcher, Into::into),
+                    };
                     self.defending_team_mut().pitcher_count += 1;
                     ingest_logs.info(format!("Incrementing pitcher_count as {leaving_pitcher} is replaced by {arriving_pitcher_name}."));
                     self.state.phase = interrupted_phase.into();

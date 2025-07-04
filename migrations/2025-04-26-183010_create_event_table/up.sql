@@ -37,7 +37,8 @@ create table taxa.slot (
     display_name text not null,
     abbreviation text not null,
     role text not null, check ( role in ('Pitcher', 'Batter') ),
-    pitcher_type text, check ( pitcher_type in ('Starter', 'Reliever', 'Closer') or pitcher_type is null ),
+    -- "Unknown" means we know it's a pitcher but not which type of pitcher. null means e know it's not a pitcher.
+    pitcher_type text, check ( pitcher_type in ('Starter', 'Reliever', 'Closer', 'Unknown') or pitcher_type is null ),
     -- slot_number only exists for SP and RP, otherwise it's null.
     -- NOTE: slot_number is also null for SP and RP in games before s2d152. The
     -- game didn't report the number at the time. We want to retroactively

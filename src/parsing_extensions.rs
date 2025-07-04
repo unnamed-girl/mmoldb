@@ -8,6 +8,7 @@ use strum::IntoDiscriminant;
 pub enum BestEffortSlot {
     Slot(Slot),
     SlotType(SlotDiscriminants),
+    GenericPitcher,
 }
 
 impl Display for BestEffortSlot {
@@ -16,16 +17,15 @@ impl Display for BestEffortSlot {
             BestEffortSlot::Slot(s) => write!(f, "{}", s),
             // This might not be right...
             BestEffortSlot::SlotType(st) => write!(f, "{}", st),
+            BestEffortSlot::GenericPitcher => write!(f, "P"),
         }
     }
 }
 
-impl TryFrom<Place> for BestEffortSlot {
-    type Error = ();
-
-    fn try_from(value: Place) -> Result<Self, Self::Error> {
-        Ok(match value {
-            Place::Pitcher => { return Err(()); }
+impl From<Place> for BestEffortSlot {
+    fn from(value: Place) -> Self {
+        match value {
+            Place::Pitcher => { BestEffortSlot::GenericPitcher }
             Place::Catcher => { BestEffortSlot::Slot(Slot::Catcher) }
             Place::FirstBaseman => { BestEffortSlot::Slot(Slot::FirstBaseman) }
             Place::SecondBaseman => { BestEffortSlot::Slot(Slot::SecondBaseman) }
@@ -40,7 +40,7 @@ impl TryFrom<Place> for BestEffortSlot {
             Place::DesignatedHitter => { BestEffortSlot::Slot(Slot::DesignatedHitter) }
             Place::StartingPitcher(None) => { BestEffortSlot::SlotType(SlotDiscriminants::StartingPitcher) }
             Place::ReliefPitcher(None) => { BestEffortSlot::SlotType(SlotDiscriminants::ReliefPitcher) }
-        })
+        }
     }
 }
 
@@ -59,14 +59,12 @@ pub struct BestEffortSlottedPlayer<StrT> {
     pub slot: BestEffortSlot,
 }
 
-impl<StrT> TryFrom<PlacedPlayer<StrT>> for BestEffortSlottedPlayer<StrT> {
-    type Error = <Place as TryInto<BestEffortSlot>>::Error;
-
-    fn try_from(value: PlacedPlayer<StrT>) -> Result<Self, Self::Error> {
-        Ok(BestEffortSlottedPlayer {
+impl<StrT> From<PlacedPlayer<StrT>> for BestEffortSlottedPlayer<StrT> {
+    fn from(value: PlacedPlayer<StrT>) -> Self {
+        BestEffortSlottedPlayer {
             name: value.name,
-            slot: value.place.try_into()?,
-        })
+            slot: value.place.into(),
+        }
     }
 }
 

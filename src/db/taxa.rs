@@ -345,6 +345,15 @@ taxa! {
             location: Option<i64> = Some(1), // Corresponds to a TaxaFielderLocation id
         ]
         ReliefPitcher = 20,
+        #[
+            display_name: &'a str = "Pitcher",
+            abbreviation: &'a str = "P",
+            role: &'a str = "Pitcher",
+            pitcher_type: Option<&'a str> = Some("Unknown"),
+            slot_number: Option<i55> = None,
+            location: Option<i64> = Some(1), // Corresponds to a TaxaFielderLocation id
+        ]
+        Pitcher = 21,
     }
 }
 
@@ -380,7 +389,7 @@ impl From<parsing_extensions::BestEffortSlot> for TaxaSlot {
                         "Falling back to non-numbered ReliefPitcher for relief pitcher out of \
                         range ({other}).",
                     );
-                    TaxaSlot::ReliefPitcher 
+                    TaxaSlot::ReliefPitcher
                 }
                 mmolb_parsing::enums::Slot::Closer => { TaxaSlot::Closer }
                 mmolb_parsing::enums::Slot::DesignatedHitter => { TaxaSlot::DesignatedHitter }
@@ -399,6 +408,7 @@ impl From<parsing_extensions::BestEffortSlot> for TaxaSlot {
                 mmolb_parsing::enums::SlotDiscriminants::Closer => { TaxaSlot::Closer }
                 mmolb_parsing::enums::SlotDiscriminants::DesignatedHitter => { TaxaSlot::DesignatedHitter }
             }
+            parsing_extensions::BestEffortSlot::GenericPitcher => { TaxaSlot::Pitcher }
         }
     }
 }
@@ -426,6 +436,7 @@ impl Into<mmolb_parsing::enums::Place> for TaxaSlot {
             TaxaSlot::Closer => { mmolb_parsing::enums::Place::Closer }
             TaxaSlot::StartingPitcher => { mmolb_parsing::enums::Place::StartingPitcher(None) }
             TaxaSlot::ReliefPitcher => { mmolb_parsing::enums::Place::ReliefPitcher(None) }
+            TaxaSlot::Pitcher => { mmolb_parsing::enums::Place::Pitcher }
         }
     }
 }
