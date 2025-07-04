@@ -623,16 +623,19 @@ fn insert_games_internal<'e>(
 
             let (day, superstar_day) = match &raw_game.day {
                 MaybeRecognized::Recognized(Day::SuperstarBreak) => {
+                    // TODO Convert this to a gamewide ingest log warning
                     warn!("A game happened on a non-numbered Superstar Break day.");
                     (None, None)
                 }
                 MaybeRecognized::Recognized(Day::Holiday) => {
+                    // TODO Convert this to a gamewide ingest log warning
                     warn!("A game happened on a Holiday.");
                     (None, None)
                 }
                 MaybeRecognized::Recognized(Day::Day(day)) => (Some(*day), None),
                 MaybeRecognized::Recognized(Day::SuperstarDay(day)) => (None, Some(*day)),
                 MaybeRecognized::NotRecognized(err) => {
+                    // TODO Convert this to a gamewide ingest log error
                     warn!("Day was not recognized: {err}");
                     (None, None)
                 }
@@ -942,7 +945,7 @@ pub fn insert_additional_ingest_logs(
     Ok(())
 }
 
-pub(crate) struct DbFullGameWithLogs {
+pubstruct DbFullGameWithLogs {
     pub game: DbGame,
     pub game_wide_logs: Vec<DbEventIngestLog>,
     pub raw_events_with_logs: Vec<(DbRawEvent, Vec<DbEventIngestLog>)>,
