@@ -2033,20 +2033,20 @@ impl<'g> Game<'g> {
                         self.finish_pa(batter_name);
 
                         let event_type = match (foul, strike) {
-                            (None, StrikeType::Looking) => { TaxaEventType::CalledStrike }
-                            (None, StrikeType::Swinging) => { TaxaEventType::SwingingStrike }
+                            (None, StrikeType::Looking) => { TaxaEventType::CalledStrikeout }
+                            (None, StrikeType::Swinging) => { TaxaEventType::SwingingStrikeout }
                             (Some(FoulType::Ball), _) => {
                                 ingest_logs.error(
                                     "Can't strike out on a foul ball. \
                                     Recording this as a foul tip instead.",
                                 );
-                                TaxaEventType::FoulTip
+                                TaxaEventType::FoulTipStrikeout
                             }
                             (Some(FoulType::Tip), StrikeType::Looking) => {
                                 ingest_logs.warn("Can't have a foul tip on a called strike.");
-                                TaxaEventType::FoulTip
+                                TaxaEventType::FoulTipStrikeout
                             }
-                            (Some(FoulType::Tip), StrikeType::Swinging) => { TaxaEventType::FoulTip }
+                            (Some(FoulType::Tip), StrikeType::Swinging) => { TaxaEventType::FoulTipStrikeout }
                         };
 
                         detail_builder
@@ -2267,11 +2267,11 @@ impl<'g> Game<'g> {
 
                     if *grand_slam && scores.len() != 3 {
                         ingest_logs.warn(format!(
-                            "Parsed a grand slam, but there were {} runners scored (expected 3)",
+                            "Parsed a grand slam, but {} non-batter runners scored (expected 3)",
                             scores.len(),
                         ));
                     } else if !*grand_slam && scores.len() == 3 {
-                        ingest_logs.warn("There were 3 runners scored but we didn't parse a grand slam");
+                        ingest_logs.warn("3 non-batter scored but we didn't parse a grand slam");
                     }
 
                     // This is the one situation where you can have
@@ -2288,6 +2288,7 @@ impl<'g> Game<'g> {
 
                     detail_builder
                         .fair_ball(fair_ball)
+                        .hit_type(TaxaHitType::HomeRun)
                         .runner_changes(Vec::new(), scores.clone())
                         .set_batter_scores()
                         .build_some(self, batter_name, ingest_logs, TaxaEventType::HomeRun)
@@ -2832,6 +2833,13 @@ pub enum ToParsedError<'g> {
     #[error("{event_type} must have a hit_type")]
     MissingHitType { event_type: TaxaEventType },
 
+    #[error("{event_type} hit_type must be {expected}, but it was {hit_type}")]
+    InvalidHitType{
+        event_type: TaxaEventType,
+        hit_type: TaxaHitType,
+        expected: &'static str,
+    },
+
     #[error("{event_type} must have Some described_as_sacrifice")]
     MissingDescribedAsSacrifice { event_type: TaxaEventType },
 
@@ -3046,57 +3054,48 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                 count: self.count(),
             },
             TaxaEventType::CalledStrike => {
-                let steals = self.steals();
-                let caught_steals = steals.iter().filter(|s| s.caught).count();
-                if self.outs_after > self.outs_before + (caught_steals as i32) {
-                    ParsedEventMessage::StrikeOut {
-                        foul: None,
-                        batter: self.batter_name.as_ref(),
-                        strike: StrikeType::Looking,
-                        steals: self.steals(),
-                    }
-                } else {
-                    ParsedEventMessage::Strike {
-                        strike: StrikeType::Looking,
-                        steals: self.steals(),
-                        count: self.count(),
-                    }
+                ParsedEventMessage::Strike {
+                    strike: StrikeType::Looking,
+                    steals: self.steals(),
+                    count: self.count(),
+                }
+            }
+            TaxaEventType::CalledStrikeout => {
+                ParsedEventMessage::StrikeOut {
+                    foul: None,
+                    batter: self.batter_name.as_ref(),
+                    strike: StrikeType::Looking,
+                    steals: self.steals(),
                 }
             }
             TaxaEventType::SwingingStrike => {
-                let steals = self.steals();
-                let caught_steals = steals.iter().filter(|s| s.caught).count();
-                if self.outs_after > self.outs_before + (caught_steals as i32) {
-                    ParsedEventMessage::StrikeOut {
-                        foul: None,
-                        batter: self.batter_name.as_ref(),
-                        strike: StrikeType::Swinging,
-                        steals,
-                    }
-                } else {
-                    ParsedEventMessage::Strike {
-                        strike: StrikeType::Swinging,
-                        steals,
-                        count: self.count(),
-                    }
+                ParsedEventMessage::Strike {
+                    strike: StrikeType::Swinging,
+                    steals: self.steals(),
+                    count: self.count(),
+                }
+            }
+            TaxaEventType::SwingingStrikeout => {
+                ParsedEventMessage::StrikeOut {
+                    foul: None,
+                    batter: self.batter_name.as_ref(),
+                    strike: StrikeType::Swinging,
+                    steals: self.steals(),
                 }
             }
             TaxaEventType::FoulTip => {
-                let steals = self.steals();
-                let caught_steals = steals.iter().filter(|s| s.caught).count();
-                if self.outs_after > self.outs_before + (caught_steals as i32) {
-                    ParsedEventMessage::StrikeOut {
-                        foul: Some(FoulType::Tip),
-                        batter: self.batter_name.as_ref(),
-                        strike: StrikeType::Swinging,
-                        steals,
-                    }
-                } else {
-                    ParsedEventMessage::Foul {
-                        foul: FoulType::Tip,
-                        steals: self.steals(),
-                        count: self.count(),
-                    }
+                ParsedEventMessage::Foul {
+                    foul: FoulType::Tip,
+                    steals: self.steals(),
+                    count: self.count(),
+                }
+            }
+            TaxaEventType::FoulTipStrikeout => {
+                ParsedEventMessage::StrikeOut {
+                    foul: Some(FoulType::Tip),
+                    batter: self.batter_name.as_ref(),
+                    strike: StrikeType::Swinging,
+                    steals: self.steals(),
                 }
             }
             TaxaEventType::FoulBall => ParsedEventMessage::Foul {
@@ -3115,6 +3114,13 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                     Some(TaxaHitType::Single) => Distance::Single,
                     Some(TaxaHitType::Double) => Distance::Double,
                     Some(TaxaHitType::Triple) => Distance::Triple,
+                    Some(other) => {
+                        return Err(ToParsedError::InvalidHitType {
+                            event_type: self.detail_type,
+                            hit_type: other,
+                            expected: "Single, Double, or Triple",
+                        })
+                    },
                 },
                 fair_ball_type: mandatory_fair_ball_type()?,
                 fielder: exactly_one_fielder()?,
@@ -3215,6 +3221,22 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                 // If I supported emitting warnings from this function, I would emit one if
                 // there's no scores or if the last score doesn't match the batter's name.
                 scores.pop();
+
+                match self.hit_type {
+                    None => {
+                        return Err(ToParsedError::MissingHitType {
+                            event_type: self.detail_type,
+                        });
+                    }
+                    Some(TaxaHitType::HomeRun) => {},
+                    Some(other) => {
+                        return Err(ToParsedError::InvalidHitType {
+                            event_type: self.detail_type,
+                            hit_type: other,
+                            expected: "HomeRun",
+                        });
+                    },
+                }
 
                 let grand_slam = scores.len() == 3;
                 ParsedEventMessage::HomeRun {

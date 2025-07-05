@@ -21,6 +21,16 @@ pub mod taxa {
             id -> Int8,
             name -> Text,
             display_name -> Text,
+            ends_plate_appearance -> Bool,
+            is_in_play -> Bool,
+            is_hit -> Bool,
+            is_ball -> Bool,
+            is_strike -> Bool,
+            is_strikeout -> Bool,
+            is_basic_strike -> Bool,
+            is_foul -> Bool,
+            is_foul_tip -> Bool,
+            batter_swung -> Bool,
         }
     }
 
@@ -53,7 +63,7 @@ pub mod taxa {
         taxa.hit_type (id) {
             id -> Int8,
             name -> Text,
-            base_number -> Int8,
+            base_number -> Int4,
         }
     }
 

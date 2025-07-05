@@ -5,13 +5,31 @@ create table taxa.event_type (
     id bigserial primary key not null,
     name text not null,
     display_name text not null,
+    ends_plate_appearance bool not null,
+    is_in_play bool not null,
+    is_hit bool not null, -- currently Hit and HomeRun
+    is_ball bool not null, -- currently Ball and Walk
+
+    -- note: *anything* the batter swung at is a strike, including Hit and fielding outs.
+    -- if you want the smaller category of "things which increase the strike count, but
+    -- either don't end the PA or end the PA specifically by reaching strike 3", look at
+    -- is_basic_strike
+    is_strike bool not null, -- anything the batter swung at, plus StrikeLooking and StrikeoutLooking
+    is_strikeout bool not null, -- currently StrikeoutSwinging, StrikeoutLooking, and FoulTipStrikeout
+
+    -- a strike which either doesn't end the PA or ends the PA specifically by reaching strike 3
+    is_basic_strike bool not null, -- currently StrikeLooking, StrikeSwinging, FoulBall, and everything in is_strikeout
+
+    is_foul bool not null, -- currently FoulBall and anything in is_foul_tip
+    is_foul_tip bool not null, -- currently FoulTip and FoulTipStrikeout
+    batter_swung bool not null, -- anything the player swung at
     unique (name)
 );
 
 create table taxa.hit_type (
     id bigserial primary key not null,
     name text not null,
-    base_number bigint not null,
+    base_number int not null,
     unique (name)
 );
 
@@ -213,11 +231,17 @@ create table data.events (
     fair_ball_direction bigint references taxa.fielder_location,
     -- populated when there's a fielding error
     fielding_error_type bigint references taxa.fielding_error_type,
-    -- should always be populated for current list of events
+    -- null on a balk, and potentially future events that don't have a pitch.
+    -- pitch_type, pitch_speed, and pitch_zone should either be all null or
+    -- all non-null
     pitch_type bigint references taxa.pitch_type,
-    -- should always be populated for current list of events
+    -- null on a balk, and potentially future events that don't have a pitch.
+    -- pitch_type, pitch_speed, and pitch_zone should either be all null or
+    -- all non-null
     pitch_speed float8,
-    -- should always be populated for current list of events
+    -- null on a balk, and potentially future events that don't have a pitch.
+    -- pitch_type, pitch_speed, and pitch_zone should either be all null or
+    -- all non-null
     pitch_zone int,
     -- this is specifically *described* as sacrifice, because there is
     -- or was a bug that caused plays to incorrectly be called

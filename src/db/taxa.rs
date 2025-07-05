@@ -16,40 +16,287 @@ taxa! {
         id_column = crate::taxa_schema::taxa::event_type::dsl::id,
     ]
     pub enum TaxaEventType {
-        #[display_name: &'a str = "ball"]
+        #[
+            display_name: &'a str = "ball",
+            ends_plate_appearance: bool = false,
+            is_in_play: bool = false,
+            is_hit: bool = false,
+            is_ball: bool = true,
+            is_strike: bool = false,
+            is_strikeout: bool = false,
+            is_basic_strike: bool = false,
+            is_foul: bool = false,
+            is_foul_tip: bool = false,
+            batter_swung: bool = false,
+        ]
         Ball = 0,
-        #[display_name: &'a str = "called strike"]
+        #[
+            display_name: &'a str = "called strike",
+            ends_plate_appearance: bool = false,
+            is_in_play: bool = false,
+            is_hit: bool = false,
+            is_ball: bool = false,
+            is_strike: bool = true,
+            is_strikeout: bool = false,
+            is_basic_strike: bool = true,
+            is_foul: bool = false,
+            is_foul_tip: bool = false,
+            batter_swung: bool = false,
+        ]
         CalledStrike = 1,
-        #[display_name: &'a str = "swinging strike"]
+        #[
+            display_name: &'a str = "swinging strike",
+            ends_plate_appearance: bool = false,
+            is_in_play: bool = false,
+            is_hit: bool = false,
+            is_ball: bool = false,
+            is_strike: bool = true,
+            is_strikeout: bool = false,
+            is_basic_strike: bool = true,
+            is_foul: bool = false,
+            is_foul_tip: bool = false,
+            batter_swung: bool = false,
+        ]
         SwingingStrike = 2,
-        #[display_name: &'a str = "foul tip"]
+        #[
+            display_name: &'a str = "foul tip",
+            ends_plate_appearance: bool = false,
+            is_in_play: bool = false,
+            is_hit: bool = false,
+            is_ball: bool = false,
+            is_strike: bool = true,
+            is_strikeout: bool = false, // FoulTipStrikeout is a separate event
+            is_basic_strike: bool = true,
+            is_foul: bool = true,
+            is_foul_tip: bool = true,
+            batter_swung: bool = true,
+        ]
         FoulTip = 3,
-        #[display_name: &'a str = "foul ball"]
+        #[
+            display_name: &'a str = "foul ball",
+            ends_plate_appearance: bool = false,
+            is_in_play: bool = false,
+            is_hit: bool = false,
+            is_ball: bool = false,
+            is_strike: bool = true,
+            is_strikeout: bool = false,
+            is_basic_strike: bool = true,
+            is_foul: bool = true,
+            is_foul_tip: bool = false,
+            batter_swung: bool = true,
+        ]
         FoulBall = 4,
-        #[display_name: &'a str = "hit"]
+        #[
+            display_name: &'a str = "hit",
+            ends_plate_appearance: bool = true,
+            is_in_play: bool = true,
+            is_hit: bool = true,
+            is_ball: bool = false,
+            is_strike: bool = true,
+            is_strikeout: bool = false,
+            is_basic_strike: bool = false,
+            is_foul: bool = false,
+            is_foul_tip: bool = false,
+            batter_swung: bool = true,
+        ]
         Hit = 5,
-        #[display_name: &'a str = "force out"]
+        #[
+            display_name: &'a str = "force out",
+            ends_plate_appearance: bool = true,
+            is_in_play: bool = true,
+            is_hit: bool = false,
+            is_ball: bool = false,
+            is_strike: bool = true,
+            is_strikeout: bool = false,
+            is_basic_strike: bool = false,
+            is_foul: bool = false,
+            is_foul_tip: bool = false,
+            batter_swung: bool = true,
+        ]
         ForceOut = 6,
-        #[display_name: &'a str = "caught out"]
+        #[
+            display_name: &'a str = "caught out",
+            ends_plate_appearance: bool = true,
+            is_in_play: bool = true,
+            is_hit: bool = false,
+            is_ball: bool = false,
+            is_strike: bool = true,
+            is_strikeout: bool = false,
+            is_basic_strike: bool = false,
+            is_foul: bool = false,
+            is_foul_tip: bool = false,
+            batter_swung: bool = true,
+        ]
         CaughtOut = 7,
-        #[display_name: &'a str = "grounded out"]
+        #[
+            display_name: &'a str = "grounded out",
+            ends_plate_appearance: bool = true,
+            is_in_play: bool = true,
+            is_hit: bool = false,
+            is_ball: bool = false,
+            is_strike: bool = true,
+            is_strikeout: bool = false,
+            is_basic_strike: bool = false,
+            is_foul: bool = false,
+            is_foul_tip: bool = false,
+            batter_swung: bool = true,
+        ]
         GroundedOut = 8,
-        #[display_name: &'a str = "walk"]
+        #[
+            display_name: &'a str = "walk",
+            ends_plate_appearance: bool = true,
+            is_in_play: bool = false,
+            is_hit: bool = false,
+            is_ball: bool = true,
+            is_strike: bool = false,
+            is_strikeout: bool = false,
+            is_basic_strike: bool = false,
+            is_foul: bool = false,
+            is_foul_tip: bool = false,
+            batter_swung: bool = false,
+        ]
         Walk = 9,
-        #[display_name: &'a str = "home run"]
+        #[
+            display_name: &'a str = "home run",
+            ends_plate_appearance: bool = true,
+            is_in_play: bool = false,
+            is_hit: bool = true,
+            is_ball: bool = false,
+            is_strike: bool = true,
+            is_strikeout: bool = false,
+            is_basic_strike: bool = false,
+            is_foul: bool = false,
+            is_foul_tip: bool = false,
+            batter_swung: bool = true,
+        ]
         HomeRun = 10,
-        #[display_name: &'a str = "fielding error"]
+        #[
+            display_name: &'a str = "fielding error",
+            ends_plate_appearance: bool = true,
+            is_in_play: bool = false, // not sure about this
+            is_hit: bool = false,
+            is_ball: bool = false,
+            is_strike: bool = true,
+            is_strikeout: bool = false,
+            is_basic_strike: bool = false,
+            is_foul: bool = false,
+            is_foul_tip: bool = false,
+            batter_swung: bool = true,
+        ]
         FieldingError = 11,
-        #[display_name: &'a str = "hit by pitch"]
+        #[
+            display_name: &'a str = "hit by pitch",
+            ends_plate_appearance: bool = true,
+            is_in_play: bool = false,
+            is_hit: bool = false,
+            is_ball: bool = true, // it's recorded as a Ball for the pitcher
+            is_strike: bool = false,
+            is_strikeout: bool = false,
+            is_basic_strike: bool = false,
+            is_foul: bool = false,
+            is_foul_tip: bool = false,
+            batter_swung: bool = false,
+        ]
         HitByPitch = 12,
-        #[display_name: &'a str = "double play"]
+        #[
+            display_name: &'a str = "double play",
+            ends_plate_appearance: bool = true,
+            is_in_play: bool = true,
+            is_hit: bool = false,
+            is_ball: bool = false,
+            is_strike: bool = true,
+            is_strikeout: bool = false,
+            is_basic_strike: bool = false,
+            is_foul: bool = false,
+            is_foul_tip: bool = false,
+            batter_swung: bool = true,
+        ]
         DoublePlay = 13,
-        #[display_name: &'a str = "fielder's choice"]
+        #[
+            display_name: &'a str = "fielder's choice",
+            ends_plate_appearance: bool = true,
+            is_in_play: bool = true,
+            is_hit: bool = false,
+            is_ball: bool = false,
+            is_strike: bool = true,
+            is_strikeout: bool = false,
+            is_basic_strike: bool = false,
+            is_foul: bool = false,
+            is_foul_tip: bool = false,
+            batter_swung: bool = true,
+        ]
         FieldersChoice = 14,
-        #[display_name: &'a str = "error on fielder's choice"]
+        #[
+            display_name: &'a str = "error on fielder's choice",
+            ends_plate_appearance: bool = true,
+            is_in_play: bool = false, // not sure about this
+            is_hit: bool = false,
+            is_ball: bool = false,
+            is_strike: bool = true,
+            is_strikeout: bool = false,
+            is_basic_strike: bool = false,
+            is_foul: bool = false,
+            is_foul_tip: bool = false,
+            batter_swung: bool = true,
+        ]
         ErrorOnFieldersChoice = 15,
-        #[display_name: &'a str = "balk"]
+        #[
+            display_name: &'a str = "balk",
+            ends_plate_appearance: bool = false,
+            is_in_play: bool = false,
+            is_hit: bool = false,
+            is_ball: bool = false,
+            is_strike: bool = false,
+            is_strikeout: bool = false,
+            is_basic_strike: bool = false,
+            is_foul: bool = false,
+            is_foul_tip: bool = false,
+            batter_swung: bool = false,
+        ]
         Balk = 16,
+        // These used to be folded into strikes but they're now separate
+        #[
+            display_name: &'a str = "called strikeout",
+            ends_plate_appearance: bool = true,
+            is_in_play: bool = false,
+            is_hit: bool = false,
+            is_ball: bool = false,
+            is_strike: bool = true,
+            is_strikeout: bool = true,
+            is_basic_strike: bool = true,
+            is_foul: bool = false,
+            is_foul_tip: bool = false,
+            batter_swung: bool = false,
+        ]
+        CalledStrikeout = 17,
+        #[
+            display_name: &'a str = "swinging strikeout",
+            ends_plate_appearance: bool = true,
+            is_in_play: bool = false,
+            is_hit: bool = false,
+            is_ball: bool = false,
+            is_strike: bool = true,
+            is_strikeout: bool = true,
+            is_basic_strike: bool = true,
+            is_foul: bool = false,
+            is_foul_tip: bool = false,
+            batter_swung: bool = true,
+        ]
+        SwingingStrikeout = 18,
+        #[
+            display_name: &'a str = "foul tip strikeout",
+            ends_plate_appearance: bool = true,
+            is_in_play: bool = false,
+            is_hit: bool = false,
+            is_ball: bool = false,
+            is_strike: bool = true,
+            is_strikeout: bool = true,
+            is_basic_strike: bool = true,
+            is_foul: bool = true,
+            is_foul_tip: bool = true,
+            batter_swung: bool = true,
+        ]
+        FoulTipStrikeout = 19,
     }
 }
 
@@ -60,21 +307,26 @@ taxa! {
         id_column = crate::taxa_schema::taxa::hit_type::dsl::id,
     ]
     pub enum TaxaHitType {
-        #[base_number: i64 = 1]
+        #[base_number: i32 = 1]
         Single = 1,
-        #[base_number: i64 = 2]
+        #[base_number: i32 = 2]
         Double = 2,
-        #[base_number: i64 = 3]
+        #[base_number: i32 = 3]
         Triple = 3,
+        #[base_number: i32 = 0]
+        HomeRun = 4,
     }
 }
 
-impl Into<mmolb_parsing::enums::Distance> for TaxaHitType {
-    fn into(self) -> mmolb_parsing::enums::Distance {
+impl TryInto<mmolb_parsing::enums::Distance> for TaxaHitType {
+    type Error = ();
+
+    fn try_into(self) -> Result<mmolb_parsing::enums::Distance, Self::Error> {
         match self {
-            Self::Single => mmolb_parsing::enums::Distance::Single,
-            Self::Double => mmolb_parsing::enums::Distance::Double,
-            Self::Triple => mmolb_parsing::enums::Distance::Triple,
+            Self::Single => Ok(mmolb_parsing::enums::Distance::Single),
+            Self::Double => Ok(mmolb_parsing::enums::Distance::Double),
+            Self::Triple => Ok(mmolb_parsing::enums::Distance::Triple),
+            Self::HomeRun => Err(()),
         }
     }
 }

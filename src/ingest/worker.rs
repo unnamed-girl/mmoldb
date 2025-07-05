@@ -7,7 +7,7 @@ use chrono::Utc;
 use diesel::PgConnection;
 use itertools::{Itertools, izip};
 use log::{error, info};
-use miette::{Context, Diagnostic, ReportHandler};
+use miette::Context;
 use rocket::tokio;
 use rocket_sync_db_pools::ConnectionPool;
 

@@ -945,7 +945,7 @@ pub fn insert_additional_ingest_logs(
     Ok(())
 }
 
-pubstruct DbFullGameWithLogs {
+pub(crate) struct DbFullGameWithLogs {
     pub game: DbGame,
     pub game_wide_logs: Vec<DbEventIngestLog>,
     pub raw_events_with_logs: Vec<(DbRawEvent, Vec<DbEventIngestLog>)>,
