@@ -12,7 +12,11 @@ networks:
     ipam:
       driver: default
       config:
-        - subnet: 172.142.0.0/16
+        # Note: This value must be entirely contained within the subnet that
+        # postgres is configured to accept connections from in
+        # docker-prod/pg_conf/pg_hba.conf, otherwise the app will not be
+        # allowed to connect to the database
+        - subnet: ${MMOLDB_DOCKER_SUBNET:-172.142.0.0/16}
 
 services:
   app:
@@ -27,7 +31,7 @@ services:
     env_file:
         - .env
     ports:
-      - "42424:42424"
+      - "${MMOLDB_MAP_APP_PORT:-42424}:42424"
     depends_on:
       - db
   db:
@@ -43,7 +47,7 @@ services:
     env_file:
         - .env
     ports:
-      - "42416:5432"
+      - "${MMOLDB_MAP_DB_PORT:-42416}:5432"
     # Usage limits to prevent DOS on prod
     cpus: 4
     mem_limit: 4g

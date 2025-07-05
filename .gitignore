@@ -2,4 +2,4 @@
 /http-cacache
 /measure
 .db_admin_password
-.env.local
+.env
