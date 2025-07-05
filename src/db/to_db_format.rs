@@ -28,6 +28,7 @@ pub fn event_to_row<'e>(
         pitch_speed: event.pitch_speed,
         pitch_zone: event.pitch_zone,
         described_as_sacrifice: event.described_as_sacrifice,
+        is_toasty: event.is_toasty,
         count_balls: event.count_balls as i32,
         count_strikes: event.count_strikes as i32,
         outs_before: event.outs_before,
@@ -80,7 +81,6 @@ pub fn event_to_fielders<'e>(
             fielder_name: fielder.name,
             fielder_slot: taxa.slot_id(fielder.slot),
             play_order: i as i32,
-            perfect_catch: fielder.is_perfect_catch,
         })
         .collect()
 }
@@ -121,7 +121,6 @@ pub fn row_to_event<'e>(
             EventDetailFielder {
                 name: f.fielder_name,
                 slot: taxa.slot_from_id(f.fielder_slot).into(),
-                is_perfect_catch: f.perfect_catch,
             }
         })
         .collect();
@@ -158,6 +157,7 @@ pub fn row_to_event<'e>(
         pitch_speed: event.pitch_speed,
         pitch_zone: event.pitch_zone,
         described_as_sacrifice: event.described_as_sacrifice,
+        is_toasty: event.is_toasty,
         fielders,
         baserunners,
         pitcher_count: event.pitcher_count,

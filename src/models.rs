@@ -94,6 +94,7 @@ pub struct NewEvent<'a> {
     pub pitch_speed: Option<f64>,
     pub pitch_zone: Option<i32>,
     pub described_as_sacrifice: Option<bool>,
+    pub is_toasty: Option<bool>,
     pub count_balls: i32,
     pub count_strikes: i32,
     pub outs_before: i32,
@@ -127,6 +128,7 @@ pub struct DbEvent {
     pub pitch_speed: Option<f64>,
     pub pitch_zone: Option<i32>,
     pub described_as_sacrifice: Option<bool>,
+    pub is_toasty: Option<bool>,
     pub count_balls: i32,
     pub count_strikes: i32,
     pub home_team_score_before: i32,
@@ -284,7 +286,6 @@ pub struct NewFielder<'a> {
     pub fielder_name: &'a str,
     pub fielder_slot: i64,
     pub play_order: i32,
-    pub perfect_catch: Option<bool>,
 }
 
 #[derive(Identifiable, Queryable, Selectable, Associations)]
@@ -297,5 +298,4 @@ pub struct DbFielder {
     pub fielder_name: String,
     pub fielder_slot: i64,
     pub play_order: i32,
-    pub perfect_catch: Option<bool>,
 }

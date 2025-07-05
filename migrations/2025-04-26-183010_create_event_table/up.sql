@@ -251,6 +251,14 @@ create table data.events (
     -- this is null for events that can never be called sacrifices
     -- (those that can are caught outs and grounded double plays)
     described_as_sacrifice bool,
+    -- "toasty" is an easter egg that Danny (the creator of MMOLB) has said
+    -- is there to prevent what would otherwise be a crash in the sim. in s2
+    -- and earlier it manifests as the text "Perfect catch!" at the end of an
+    -- event. during the s2 postseason Danny shared his intent to change the
+    -- message to "Amazing throw!" for ground balls. that's also where how
+    -- know that "toasty" is the generic term for those messages:
+    -- https://discord.com/channels/1136709081319604324/1364685052419510404/1390859849524314212
+    is_toasty bool, -- null indicates an event that, as far as we know, can never be toasty
     count_balls int not null,
     count_strikes int not null,
     outs_before int not null,
@@ -341,8 +349,7 @@ create table data.event_fielders (
     -- actual data
     fielder_name text not null,
     fielder_slot bigint references taxa.slot not null,
-    play_order int not null,
-    perfect_catch bool -- null indicates this was not a catch
+    play_order int not null
 );
 
 -- `on delete cascade` is very slow without the appropriate index

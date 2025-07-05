@@ -21,7 +21,6 @@ pub mod data {
             fielder_name -> Text,
             fielder_slot -> Int8,
             play_order -> Int4,
-            perfect_catch -> Nullable<Bool>,
         }
     }
 
@@ -42,6 +41,7 @@ pub mod data {
             pitch_speed -> Nullable<Float8>,
             pitch_zone -> Nullable<Int4>,
             described_as_sacrifice -> Nullable<Bool>,
+            is_toasty -> Nullable<Bool>,
             count_balls -> Int4,
             count_strikes -> Int4,
             outs_before -> Int4,

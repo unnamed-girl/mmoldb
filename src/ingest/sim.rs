@@ -95,7 +95,6 @@ pub struct EventDetailRunner<StrT: Clone> {
 pub struct EventDetailFielder<StrT: Clone> {
     pub name: StrT,
     pub slot: TaxaSlot,
-    pub is_perfect_catch: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -125,6 +124,7 @@ pub struct EventDetail<StrT: Clone> {
     pub pitch_speed: Option<f64>,
     pub pitch_zone: Option<i32>,
     pub described_as_sacrifice: Option<bool>,
+    pub is_toasty: Option<bool>,
 
     pub baserunners: Vec<EventDetailRunner<StrT>>,
     pub pitcher_count: i32,
@@ -486,6 +486,7 @@ struct EventDetailBuilder<'g> {
     fielding_error_type: Option<TaxaFieldingErrorType>,
     pitch: Option<Pitch>,
     described_as_sacrifice: Option<bool>,
+    is_toasty: Option<bool>,
     fielders: Vec<EventDetailFielder<&'g str>>,
     advances: Vec<RunnerAdvance<&'g str>>,
     scores: Vec<&'g str>,
@@ -517,6 +518,12 @@ impl<'g> EventDetailBuilder<'g> {
     //noinspection RsSelfConvention
     fn described_as_sacrifice(mut self, described_as_sacrifice: bool) -> Self {
         self.described_as_sacrifice = Some(described_as_sacrifice);
+        self
+    }
+
+    //noinspection RsSelfConvention
+    fn is_toasty(mut self, is_toasty: bool) -> Self {
+        self.is_toasty = Some(is_toasty);
         self
     }
 
@@ -587,26 +594,6 @@ impl<'g> EventDetailBuilder<'g> {
         self.fielders = vec![EventDetailFielder {
             name: fielder.name,
             slot: self.placed_player_slot(fielder, ingest_logs)?,
-            is_perfect_catch: None,
-        }];
-
-        Ok(self)
-    }
-
-    fn catch_fielder(
-        mut self,
-        fielder: PlacedPlayer<&'g str>,
-        ingest_logs: &mut IngestLogs,
-        is_perfect: bool,
-    ) -> Result<Self, SimEventError> {
-        if !self.fielders.is_empty() {
-            warn!("EventDetailBuilder overwrote existing fielders");
-        }
-
-        self.fielders = vec![EventDetailFielder {
-            name: fielder.name,
-            slot: self.placed_player_slot(fielder, ingest_logs)?,
-            is_perfect_catch: Some(is_perfect),
         }];
 
         Ok(self)
@@ -628,31 +615,11 @@ impl<'g> EventDetailBuilder<'g> {
                     .map(|slot| EventDetailFielder {
                         name: f.name,
                         slot,
-                        is_perfect_catch: None,
                     })
             })
             .collect::<Result<_, _>>()?;
 
         Ok(self)
-    }
-
-    fn fielders_with_perfect_catch(
-        self,
-        fielders: impl IntoIterator<Item = PlacedPlayer<&'g str>>,
-        perfect_catch: bool,
-        ingest_logs: &mut IngestLogs,
-    ) -> Result<Self, SimEventError> {
-        let mut me = self.fielders(fielders, ingest_logs)?;
-
-        // I believe a perfect catch means a catch of the batted ball and therefore
-        // will always be the first listed fielder's catch
-        if let Some(first_fielder) = me.fielders.first_mut() {
-            first_fielder.is_perfect_catch = Some(perfect_catch);
-        } else {
-            ingest_logs.error("There were no fielders on an event with a perfect catch");
-        }
-
-        Ok(me)
     }
 
     fn set_batter_scores(mut self) -> Self {
@@ -956,6 +923,7 @@ impl<'g> EventDetailBuilder<'g> {
             pitch_speed: self.pitch.map(|pitch| pitch.pitch_speed as f64),
             pitch_zone: self.pitch.map(|pitch| pitch.pitch_zone as i32),
             described_as_sacrifice: self.described_as_sacrifice,
+            is_toasty: self.is_toasty,
             baserunners,
             pitcher_count: game.defending_team().pitcher_count,
             batter_count: game.batting_team().batter_count,
@@ -1359,6 +1327,7 @@ impl<'g> Game<'g> {
             fielding_error_type: None,
             pitch: None,
             described_as_sacrifice: None,
+            is_toasty: None,
             scores: Vec::new(),
             steals: Vec::new(),
             runner_added: None,
@@ -2196,7 +2165,8 @@ impl<'g> Game<'g> {
                     detail_builder
                         .fair_ball(fair_ball)
                         .described_as_sacrifice(*sacrifice)
-                        .catch_fielder(*caught_by, ingest_logs, *perfect)?
+                        .is_toasty(*perfect)
+                        .fielder(*caught_by, ingest_logs)?
                         .runner_changes(advances.clone(), scores.clone())
                         .build_some(self, batter_name, ingest_logs, TaxaEventType::CaughtOut)
                 },
@@ -2214,7 +2184,8 @@ impl<'g> Game<'g> {
 
                     detail_builder
                         .fair_ball(fair_ball)
-                        .fielders_with_perfect_catch(fielders.clone(), *perfect, ingest_logs)?
+                        .is_toasty(*perfect)
+                        .fielders(fielders.clone(), ingest_logs)?
                         .runner_changes(advances.clone(), scores.clone())
                         .build_some(self, batter_name, ingest_logs, TaxaEventType::GroundedOut)
                 },
@@ -2869,8 +2840,8 @@ pub enum ToParsedError<'g> {
         actual: usize,
     },
 
-    #[error("{event_type} fielder(s) must have a Some() perfect catch")]
-    MissingPerfectCatch { event_type: TaxaEventType },
+    #[error("{event_type} must have a non-null is_toasty")]
+    MissingIsToasty { event_type: TaxaEventType },
 }
 
 #[derive(Debug, Error, Diagnostic)]
@@ -3172,9 +3143,8 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
 
                 let caught_by = placed_player_as_ref(&fielder);
                 let perfect =
-                    fielder
-                        .is_perfect_catch
-                        .ok_or_else(|| ToParsedError::MissingPerfectCatch {
+                    self.is_toasty
+                        .ok_or_else(|| ToParsedError::MissingIsToasty {
                             event_type: self.detail_type,
                         })?;
 
@@ -3189,23 +3159,14 @@ impl<StrT: AsRef<str> + Clone> EventDetail<StrT> {
                 }
             }
             TaxaEventType::GroundedOut => {
-                let fielders = self.fielders();
-                let perfect = if let Some(first_fielder) = self.fielders.first() {
-                    first_fielder.is_perfect_catch.ok_or_else(|| {
-                        ToParsedError::MissingPerfectCatch {
-                            event_type: self.detail_type,
-                        }
-                    })?
-                } else {
-                    false
-                };
-
                 ParsedEventMessage::GroundedOut {
                     batter: self.batter_name.as_ref(),
-                    fielders,
+                    fielders: self.fielders(),
                     scores: self.scores(),
                     advances: self.advances(false),
-                    perfect,
+                    perfect: self.is_toasty.ok_or_else(|| ToParsedError::MissingIsToasty {
+                        event_type: self.detail_type,
+                    })?,
                 }
             }
             TaxaEventType::Walk => ParsedEventMessage::Walk {
