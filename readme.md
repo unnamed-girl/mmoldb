@@ -52,15 +52,11 @@ First-run Setup
 Running
 -------
 
-1. From the root `mmoldb` directory, start the database container: 
-   `docker compose up -d db`. This command will run the database container in 
-   the background (remove `-d` if you want it to run in the foreground). It 
-   will build the container first if necessary.
-2. Once the database is up (you can verify that it's up by running 
-   `docker compose logs db` and looking for "database system is ready to accept 
-   connections"), run the app: `docker compose up -d app`. As before, it will
-   be built if necessary and `-d` makes it run in the background.
-3. Visit localhost:42424 to see the MMOLDB status page.
+1. From the root `mmoldb` directory, run the database and apps containers:
+   `docker compose up -d`. This command will run the all the containers in 
+   the background (remove `-d` if you want them to run in the foreground). 
+   It will build the containers first if necessary.
+2. Visit localhost:42424 to see the MMOLDB status page.
 
 Updating
 --------
