@@ -41,9 +41,9 @@ pub enum SimStartupError {
         previous: ParsedEventMessageDiscriminants,
     },
 
-    #[error("Parse error when attempting to parse {event_type} event")]
+    #[error("Parse error when attempting to parse {raw_event_type} event")]
     ParseError {
-        event_type: String,
+        raw_event_type: String,
         #[diagnostic_source]
         source: ParseError,
     },
@@ -64,9 +64,9 @@ pub enum SimStartupError {
 
 #[derive(Debug, Error, Diagnostic)]
 pub enum SimEventError {
-    #[error("Parse error when attempting to parse {event_type} event")]
+    #[error("Parse error when attempting to parse {raw_event_type} event")]
     ParseError {
-        event_type: String,
+        raw_event_type: String,
         source: ParseError,
     },
 
@@ -378,8 +378,8 @@ macro_rules! extract_next_game_event {
         let expected = &[$($expected,)*];
         match $iter.next(expected)? {
             $($p => Ok($e),)*
-            ParsedEventMessage::ParseError { event_type, message } => Err(SimStartupError::ParseError {
-                event_type: event_type.to_string(),
+            ParsedEventMessage::ParseError { raw_event_type, message } => Err(SimStartupError::ParseError {
+                raw_event_type: raw_event_type.to_string(),
                 source: ParseError { message: message.to_string() },
             }),
             other => Err(SimStartupError::UnexpectedEventType {
@@ -413,8 +413,8 @@ macro_rules! game_event {
             $($p => {
                 Ok($e)
             })*
-            ParsedEventMessage::ParseError { event_type, message } => Err(SimEventError::ParseError {
-                event_type: event_type.to_string(),
+            ParsedEventMessage::ParseError { raw_event_type, message } => Err(SimEventError::ParseError {
+                raw_event_type: raw_event_type.to_string(),
                 source: ParseError { message: message.to_string() },
             }),
             other => Err(SimEventError::UnexpectedEventType {
@@ -1102,7 +1102,7 @@ impl<'g> Game<'g> {
                 MaybeRecognized::Recognized(day) => *day,
                 MaybeRecognized::NotRecognized(error) => {
                     return Err(SimStartupError::FailedToParseGameDay {
-                        error: error.clone(),
+                        error: error.to_string(),
                     });
                 }
             },
@@ -2612,11 +2612,6 @@ impl<'g> Game<'g> {
                     // TODO Don't ignore weather delivery
                     None
                 },
-                [ParsedEventMessageDiscriminants::WeatherDeliveryDiscard]
-                ParsedEventMessage::WeatherDeliveryDiscard { .. } => {
-                    // TODO Don't ignore weather delivery discard
-                    None
-                },
                 [ParsedEventMessageDiscriminants::WeatherShipment]
                 ParsedEventMessage::WeatherShipment { .. } => {
                     // TODO Don't ignore weather shipment
@@ -2684,7 +2679,7 @@ fn check_now_batting_stats(
                 );
             }
         }
-        NowBattingStats::Stats { stats } => {
+        NowBattingStats::Stats(stats) => {
             let mut their_stats = stats.iter();
 
             match their_stats.next() {
