@@ -634,6 +634,26 @@ fn insert_games_internal<'e>(
                 }
                 MaybeRecognized::Recognized(Day::Day(day)) => (Some(*day), None),
                 MaybeRecognized::Recognized(Day::SuperstarDay(day)) => (None, Some(*day)),
+                MaybeRecognized::Recognized(Day::Election) => {
+                    // TODO Convert this to a gamewide ingest log warning
+                    warn!("A game happened on a Election.");
+                    (None, None)
+                },
+                MaybeRecognized::Recognized(Day::PostseasonPreview) => {
+                    // TODO Convert this to a gamewide ingest log warning
+                    warn!("A game happened on Postseason Preview.");
+                    (None, None)
+                },
+                MaybeRecognized::Recognized(Day::Preseason) => {
+                    // TODO Convert this to a gamewide ingest log warning
+                    warn!("A game happened on a Preseason.");
+                    (None, None)
+                },
+                MaybeRecognized::Recognized(Day::PostseasonRound(_)) => {
+                    // TODO Convert this to a gamewide ingest log warning
+                    warn!("A game happened on a Postseason Round (so far this type of day only shows up on player's birthdays).");
+                    (None, None)
+                },
                 MaybeRecognized::NotRecognized(err) => {
                     // TODO Convert this to a gamewide ingest log error
                     warn!("Day was not recognized: {err}");

@@ -1176,6 +1176,10 @@ impl<'g> Game<'g> {
             Day::Holiday => true,
             Day::Day(day) => day <= day_threshold,
             Day::SuperstarDay(_) => true,
+            Day::PostseasonRound(_) => false,
+            Day::PostseasonPreview => true,
+            Day::Preseason => true,
+            Day::Election => true,
         }
     }
 
