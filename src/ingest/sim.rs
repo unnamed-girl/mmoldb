@@ -55,8 +55,8 @@ pub enum SimStartupError {
         received: ParsedEventMessageDiscriminants,
     },
 
-    #[error("Couldn't parse game day: {error}")]
-    FailedToParseGameDay { error: String },
+    #[error("Couldn't parse game day: {day}")]
+    FailedToParseGameDay { day: serde_json::Value },
 
     #[error("Couldn't parse starting pitcher \"{0}\"")]
     FailedToParseStartingPitcher(String),
@@ -1100,9 +1100,9 @@ impl<'g> Game<'g> {
             season: game_data.season.into(),
             day: match &game_data.day {
                 MaybeRecognized::Recognized(day) => *day,
-                MaybeRecognized::NotRecognized(error) => {
+                MaybeRecognized::NotRecognized(day) => {
                     return Err(SimStartupError::FailedToParseGameDay {
-                        error: error.to_string(),
+                        day: day.clone(),
                     });
                 }
             },

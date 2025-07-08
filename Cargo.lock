@@ -1677,6 +1677,7 @@ dependencies = [
  "rocket_dyn_templates",
  "rocket_sync_db_pools",
  "serde",
+ "serde_json",
  "sled",
  "strum",
  "thiserror",

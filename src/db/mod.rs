@@ -654,9 +654,9 @@ fn insert_games_internal<'e>(
                     warn!("A game happened on a Postseason Round (so far this type of day only shows up on player's birthdays).");
                     (None, None)
                 },
-                MaybeRecognized::NotRecognized(err) => {
+                MaybeRecognized::NotRecognized(day) => {
                     // TODO Convert this to a gamewide ingest log error
-                    warn!("Day was not recognized: {err}");
+                    warn!("Day was not recognized: {day}");
                     (None, None)
                 }
             };
