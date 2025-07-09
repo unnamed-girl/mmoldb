@@ -1638,7 +1638,7 @@ dependencies = [
 [[package]]
 name = "mmolb_parsing"
 version = "0.1.0"
-source = "git+https://github.com/unnamed-girl/mmolb_parsing.git#923194a283873e0448fbb5cad12c696d3a63b993"
+source = "git+https://github.com/unnamed-girl/mmolb_parsing.git#83a798755f22abcb1831bf1aa7689c7eead6bf5e"
 dependencies = [
  "nom",
  "nom-language",
@@ -1649,6 +1649,7 @@ dependencies = [
  "serde_json",
  "serde_with",
  "strum",
+ "thiserror",
  "tracing",
 ]
 
@@ -1677,7 +1678,6 @@ dependencies = [
  "rocket_dyn_templates",
  "rocket_sync_db_pools",
  "serde",
- "serde_json",
  "sled",
  "strum",
  "thiserror",
