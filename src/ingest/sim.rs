@@ -52,8 +52,8 @@ pub enum SimStartupError {
         received: ParsedEventMessageDiscriminants,
     },
 
-    #[error("Couldn't parse game day: {}", day.0)]
-    FailedToParseGameDay { day: mmolb_parsing::NotRecognized },
+    #[error("Couldn't parse game day")]
+    FailedToParseGameDay { source: mmolb_parsing::NotRecognized },
 
     #[error("Couldn't parse starting pitcher \"{0}\"")]
     FailedToParseStartingPitcher(String),
@@ -1095,9 +1095,9 @@ impl<'g> Game<'g> {
             season: game_data.season.into(),
             day: match &game_data.day {
                 Ok(day) => *day,
-                Err(day) => {
+                Err(error) => {
                     return Err(SimStartupError::FailedToParseGameDay {
-                        day: day.clone(),
+                        source: error.clone(),
                     });
                 }
             },
